@@ -1,0 +1,28 @@
+Subject: Exam Invitation: {{ exam_title }}
+
+Dear {{ student_name }},
+
+You have been invited to take an exam: {{ exam_title }}
+
+{% if exam_description %}
+Description: {{ exam_description }}
+{% endif %}
+
+Exam Details:
+- Start Date: {{ start_date|date:"F d, Y \a\t g:i A" }}
+- End Date: {{ end_date|date:"F d, Y \a\t g:i A" }}
+- Duration: {{ duration_minutes }} minutes
+- Invited by: {{ teacher_name }}
+
+{% if custom_message %}
+Personal Message from {{ teacher_name }}:
+{{ custom_message }}
+{% endif %}
+
+To accept or decline this invitation, please click the link below:
+{{ invitation_url }}
+
+If you have any questions, please contact {{ teacher_name }}.
+
+Best regards,
+Exam Flow System

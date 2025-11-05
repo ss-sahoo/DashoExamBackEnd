@@ -1,0 +1,14 @@
+Subject: Student Accepted Exam Invitation: {{ exam_title }}
+
+Dear {{ teacher_name }},
+
+Good news! {{ student_name }} has accepted the exam invitation for: {{ exam_title }}
+
+Student: {{ student_name }}
+Exam: {{ exam_title }}
+Accepted at: {{ accepted_at|date:"F d, Y \a\t g:i A" }}
+
+The student is now enrolled in the exam and can access it during the scheduled time.
+
+Best regards,
+Exam Flow System

@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Exam Invitation: {{ exam_title }}</title>
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }
+        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+        .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
+        .content { background: #f8f9fa; padding: 30px; border-radius: 0 0 10px 10px; }
+        .exam-card { background: white; padding: 25px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); margin: 20px 0; }
+        .exam-title { font-size: 24px; font-weight: bold; color: #2c3e50; margin-bottom: 15px; }
+        .exam-details { background: #f8f9fa; padding: 15px; border-radius: 5px; margin: 15px 0; }
+        .detail-row { display: flex; justify-content: space-between; margin: 8px 0; padding: 5px 0; border-bottom: 1px solid #eee; }
+        .detail-label { font-weight: bold; color: #555; }
+        .detail-value { color: #333; }
+        .cta-button { display: inline-block; background: #28a745; color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; font-weight: bold; margin: 20px 0; }
+        .cta-button:hover { background: #218838; }
+        .personal-message { background: #e3f2fd; padding: 15px; border-left: 4px solid #2196f3; margin: 15px 0; }
+        .footer { text-align: center; margin-top: 30px; color: #666; font-size: 14px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📚 Exam Invitation</h1>
+            <p>You've been invited to take an exam</p>
+        </div>
+        
+        <div class="content">
+            <div class="exam-card">
+                <div class="exam-title">{{ exam_title }}</div>
+                
+                {% if exam_description %}
+                <p style="color: #666; margin-bottom: 20px;">{{ exam_description }}</p>
+                {% endif %}
+                
+                <div class="exam-details">
+                    <div class="detail-row">
+                        <span class="detail-label">📅 Start Date:</span>
+                        <span class="detail-value">{{ start_date|date:"F d, Y \a\t g:i A" }}</span>
+                    </div>
+                    <div class="detail-row">
+                        <span class="detail-label">⏰ End Date:</span>
+                        <span class="detail-value">{{ end_date|date:"F d, Y \a\t g:i A" }}</span>
+                    </div>
+                    <div class="detail-row">
+                        <span class="detail-label">⏱️ Duration:</span>
+                        <span class="detail-value">{{ duration_minutes }} minutes</span>
+                    </div>
+                    <div class="detail-row">
+                        <span class="detail-label">👨‍🏫 Invited by:</span>
+                        <span class="detail-value">{{ teacher_name }}</span>
+                    </div>
+                </div>
+                
+                {% if custom_message %}
+                <div class="personal-message">
+                    <strong>Personal Message from {{ teacher_name }}:</strong><br>
+                    {{ custom_message }}
+                </div>
+                {% endif %}
+                
+                <div style="text-align: center;">
+                    <a href="{{ invitation_url }}" class="cta-button">Accept or Decline Invitation</a>
+                </div>
+            </div>
+            
+            <div class="footer">
+                <p>If you have any questions, please contact {{ teacher_name }}.</p>
+                <p>Best regards,<br>Exam Flow System</p>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
