@@ -62,10 +62,16 @@ class Question(models.Model):
     subtopic = models.CharField(max_length=100, blank=True)
     tags = models.JSONField(default=list, blank=True)
     
-    # Pattern Section Assignment (optional)
-    pattern_section = models.ForeignKey('patterns.PatternSection', on_delete=models.SET_NULL, null=True, blank=True, related_name='questions')
-    # Position within the overall pattern (1-based). Helps map to /pattern/:id/question/:n
-    question_number_in_pattern = models.IntegerField(null=True, blank=True, db_index=True)
+    # IMPORTANT: Questions belong to EXAMS, not Patterns
+    # Patterns are templates only - questions are linked via ExamQuestion model
+    exam = models.ForeignKey(Exam, on_delete=models.CASCADE, related_name='questions', help_text='Exam this question belongs to')
+    
+    # Pattern section reference (for structure/organization only, not a foreign key)
+    pattern_section_id = models.IntegerField(null=True, blank=True, help_text='Reference to pattern section for organization')
+    pattern_section_name = models.CharField(max_length=200, blank=True, help_text='Name of the pattern section')
+    
+    # Position within the exam (1-based)
+    question_number = models.IntegerField(validators=[MinValueValidator(1)], help_text='Question number in the exam')
     
     # References
     question_bank = models.ForeignKey(QuestionBank, on_delete=models.CASCADE, related_name='questions', null=True, blank=True)
@@ -86,10 +92,11 @@ class Question(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        ordering = ['-created_at']
+        ordering = ['exam', 'question_number']
+        unique_together = ['exam', 'question_number']
 
     def __str__(self):
-        return f"Q{self.id}: {self.question_text[:50]}..."
+        return f"Exam {self.exam_id} - Q{self.question_number}: {self.question_text[:50]}..."
 
     def increment_usage(self):
         self.usage_count += 1

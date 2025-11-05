@@ -23,13 +23,15 @@ class QuestionSerializer(serializers.ModelSerializer):
     verified_by_name = serializers.CharField(source='verified_by.get_full_name', read_only=True)
     images = QuestionImageSerializer(many=True, read_only=True)
     comments = QuestionCommentSerializer(many=True, read_only=True)
+    exam_title = serializers.CharField(source='exam.title', read_only=True)
 
     class Meta:
         model = Question
         fields = [
             'id', 'question_text', 'question_type', 'difficulty', 'options', 'correct_answer',
             'solution', 'explanation', 'marks', 'negative_marks', 'subject', 'topic', 'subtopic',
-            'tags', 'question_bank', 'pattern_section', 'question_number_in_pattern', 'institute', 'created_by', 'created_by_name',
+            'tags', 'question_bank', 'exam', 'exam_title', 'question_number', 
+            'pattern_section_id', 'pattern_section_name', 'institute', 'created_by', 'created_by_name',
             'is_active', 'is_verified', 'verified_by', 'verified_by_name', 'verified_at',
             'usage_count', 'success_rate', 'images', 'comments', 'created_at', 'updated_at'
         ]
@@ -45,14 +47,22 @@ class QuestionCreateSerializer(serializers.ModelSerializer):
         fields = [
             'question_text', 'question_type', 'difficulty', 'options', 'correct_answer',
             'solution', 'explanation', 'marks', 'negative_marks', 'subject', 'topic',
-            'subtopic', 'tags', 'question_bank', 'pattern_section', 'question_number_in_pattern'
+            'subtopic', 'tags', 'question_bank', 'exam', 'question_number',
+            'pattern_section_id', 'pattern_section_name'
         ]
 
-    def validate_options(self, value):
-        question_type = self.initial_data.get('question_type')
-        if question_type == 'mcq' and (not value or len(value) < 2):
-            raise serializers.ValidationError("MCQ questions must have at least 2 options")
-        return value
+    def validate(self, data):
+        # Ensure exam is provided
+        if 'exam' not in data:
+            raise serializers.ValidationError({'exam': 'Exam is required. Questions must belong to an exam.'})
+        
+        # Validate options for MCQ
+        question_type = data.get('question_type')
+        options = data.get('options', [])
+        if question_type in ['single_mcq', 'multiple_mcq'] and (not options or len(options) < 2):
+            raise serializers.ValidationError({'options': 'MCQ questions must have at least 2 options'})
+        
+        return data
 
 
 class QuestionBankSerializer(serializers.ModelSerializer):
