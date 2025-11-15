@@ -222,6 +222,7 @@ except ModuleNotFoundError:
         """
         def __init__(self, *args, **kwargs):
             kwargs.setdefault("default", list)
+            kwargs.pop("dimensions", None)
             super().__init__(*args, **kwargs)
 else:
     class VectorField(_PgVectorField):  # type: ignore
