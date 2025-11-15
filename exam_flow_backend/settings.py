@@ -75,10 +75,47 @@ TEMPLATES = [
 WSGI_APPLICATION = 'exam_flow_backend.wsgi.application'
 
 # Database
-import dj_database_url
-DATABASES = {
-    'default': dj_database_url.parse(DATABASE_URL)
-}
+# Parse DATABASE_URL or use individual components
+if DATABASE_URL and DATABASE_URL.startswith('postgresql'):
+    # Parse DATABASE_URL manually for Python 3.8 compatibility
+    import re
+    match = re.match(r'postgresql://([^:]+):([^@]+)@([^:]+):(\d+)/(.+)', DATABASE_URL)
+    if match:
+        db_user, db_password, db_host, db_port, db_name = match.groups()
+        DATABASES = {
+            'default': {
+                'ENGINE': 'django.db.backends.postgresql',
+                'NAME': db_name,
+                'USER': db_user,
+                'PASSWORD': db_password,
+                'HOST': db_host,
+                'PORT': db_port,
+            }
+        }
+    else:
+        # Fallback to default
+        DATABASES = {
+            'default': {
+                'ENGINE': 'django.db.backends.postgresql',
+                'NAME': os.getenv('DB_NAME', 'exam_flow_db'),
+                'USER': os.getenv('DB_USER', 'exam_flow_user'),
+                'PASSWORD': os.getenv('DB_PASSWORD', ''),
+                'HOST': os.getenv('DB_HOST', 'localhost'),
+                'PORT': os.getenv('DB_PORT', '5432'),
+            }
+        }
+else:
+    # Use individual environment variables
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': os.getenv('DB_NAME', 'exam_flow_db'),
+            'USER': os.getenv('DB_USER', 'exam_flow_user'),
+            'PASSWORD': os.getenv('DB_PASSWORD', ''),
+            'HOST': os.getenv('DB_HOST', 'localhost'),
+            'PORT': os.getenv('DB_PORT', '5432'),
+        }
+    }
 
 # Password validation
 AUTH_PASSWORD_VALIDATORS = [
@@ -149,6 +186,11 @@ CSRF_TRUSTED_ORIGINS = [
     'http://127.0.0.1:5173',
     'http://localhost:3000',
     'http://127.0.0.1:3000',
+    'http://128.199.17.132',
+    'http://exams.dashoapp.com',
+    'http://exam.dashoapp.com',
+    'https://exams.dashoapp.com',
+    'https://exam.dashoapp.com',
 ]
 
 # Disable CSRF for API endpoints (since we're using JWT)
@@ -182,3 +224,30 @@ SIMPLE_JWT = {
     'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
     'ROTATE_REFRESH_TOKENS': True,
 }
+
+# Timezone choices for UI dropdowns
+TIMEZONE_CHOICES = [
+    'UTC',
+    'Europe/London',
+    'Europe/Paris',
+    'Europe/Berlin',
+    'Europe/Madrid',
+    'Europe/Rome',
+    'Africa/Cairo',
+    'Africa/Johannesburg',
+    'Asia/Kolkata',
+    'Asia/Dubai',
+    'Asia/Singapore',
+    'Asia/Tokyo',
+    'Asia/Shanghai',
+    'Asia/Hong_Kong',
+    'Asia/Seoul',
+    'Australia/Sydney',
+    'Australia/Melbourne',
+    'America/New_York',
+    'America/Los_Angeles',
+    'America/Chicago',
+    'America/Toronto',
+    'America/Mexico_City',
+    'America/Sao_Paulo',
+]

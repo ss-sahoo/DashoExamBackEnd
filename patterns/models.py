@@ -88,8 +88,8 @@ class PatternSection(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        ordering = ['order', 'start_question']
-        unique_together = ['pattern', 'start_question', 'end_question']
+        ordering = ['subject', 'order', 'start_question']
+        unique_together = ['pattern', 'subject', 'start_question', 'end_question']
 
     def __str__(self):
         return f"{self.pattern.name} - {self.name} ({self.subject})"
@@ -99,19 +99,26 @@ class PatternSection(models.Model):
         if self.start_question >= self.end_question:
             raise ValidationError("Start question must be less than end question")
         
+        total_questions = (self.end_question - self.start_question) + 1
+        if total_questions <= 0:
+            raise ValidationError("Section must contain at least one question")
+        self.min_questions_to_attempt = total_questions
+        
         # Subjective questions should have no negative marking
         if self.question_type == 'subjective' and self.negative_marking != 0:
             self.negative_marking = 0
         
-        # Check for overlapping question ranges within the same pattern
+        # Check for overlapping question ranges within the same pattern AND same subject
+        # Different subjects can have overlapping question numbers (subject-wise numbering)
         overlapping = PatternSection.objects.filter(
-            pattern=self.pattern
+            pattern=self.pattern,
+            subject=self.subject  # Only check within the same subject
         ).exclude(pk=self.pk).filter(
             start_question__lte=self.end_question,
             end_question__gte=self.start_question
         )
         if overlapping.exists():
-            raise ValidationError("Question ranges cannot overlap within the same pattern")
+            raise ValidationError(f"Question ranges cannot overlap within the same subject ({self.subject})")
 
     def save(self, *args, **kwargs):
         self.clean()

@@ -107,6 +107,22 @@ class ExamPatternDetailView(generics.RetrieveUpdateDestroyAPIView):
             raise permissions.PermissionDenied("You don't have permission to update patterns")
         serializer.save()
 
+    def perform_destroy(self, instance):
+        # Clear legacy question references that still store pattern_section_id
+        section_ids = list(instance.sections.values_list('id', flat=True))
+        if section_ids:
+            try:
+                Question.objects.filter(pattern_section_id__in=section_ids).update(
+                    pattern_section_id=None,
+                    pattern_section_name=''
+                )
+            except Exception:
+                # Column may not exist in legacy databases; ignore and continue
+                Question.objects.filter(pattern_section_id__in=section_ids).update(
+                    pattern_section_id=None
+                )
+        super().perform_destroy(instance)
+
 
 class PatternSectionListView(generics.ListCreateAPIView):
     """List and create pattern sections"""
@@ -244,11 +260,12 @@ def get_pattern_questions(request, pattern_id):
         
         pattern_questions = []
         for section in sections:
-            # Get questions for this section
+            # Get questions for this section (pattern templates)
             questions = Question.objects.filter(
-                pattern_section=section,
+                pattern_section_id=section.id,
                 institute=user.institute,
-                is_active=True
+                is_active=True,
+                exam__isnull=True
             ).order_by('question_number_in_pattern')
             
             section_questions = []
@@ -337,11 +354,16 @@ def assign_pattern_questions_to_exam(request):
             with transaction.atomic():
                 for section in sections:
                     # Get questions for this section
-                    questions = Question.objects.filter(
-                        pattern_section=section,
+                    questions_qs = Question.objects.filter(
+                        pattern_section_id=section.id,
                         institute=user.institute,
                         is_active=True
-                    ).order_by('question_number_in_pattern')
+                    )
+                    exam_filter = request.data.get('exam_id')
+                    if exam_filter:
+                        questions_qs = questions_qs.filter(exam_id=exam_filter)
+
+                    questions = questions_qs.order_by('question_number_in_pattern')
                     
                     for question in questions:
                         exam_question = ExamQuestion.objects.create(

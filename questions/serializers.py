@@ -30,14 +30,14 @@ class QuestionSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'question_text', 'question_type', 'difficulty', 'options', 'correct_answer',
             'solution', 'explanation', 'marks', 'negative_marks', 'subject', 'topic', 'subtopic',
-            'tags', 'question_bank', 'exam', 'exam_title', 'question_number', 
+            'tags', 'question_bank', 'exam', 'exam_title', 'question_number', 'question_number_in_pattern',
             'pattern_section_id', 'pattern_section_name', 'institute', 'created_by', 'created_by_name',
             'is_active', 'is_verified', 'verified_by', 'verified_by_name', 'verified_at',
             'usage_count', 'success_rate', 'images', 'comments', 'created_at', 'updated_at'
         ]
         read_only_fields = [
             'id', 'created_by', 'verified_by', 'verified_at', 'usage_count', 'success_rate',
-            'created_at', 'updated_at'
+            'created_at', 'updated_at', 'question_number_in_pattern'
         ]
 
 
@@ -48,13 +48,52 @@ class QuestionCreateSerializer(serializers.ModelSerializer):
             'question_text', 'question_type', 'difficulty', 'options', 'correct_answer',
             'solution', 'explanation', 'marks', 'negative_marks', 'subject', 'topic',
             'subtopic', 'tags', 'question_bank', 'exam', 'question_number',
-            'pattern_section_id', 'pattern_section_name'
+            'pattern_section_id', 'pattern_section_name', 'question_number_in_pattern'
         ]
+        extra_kwargs = {
+            'exam': {'required': False, 'allow_null': True, 'default': None},
+            'question_number': {'required': False, 'allow_null': True},
+            'pattern_section_id': {'required': False, 'allow_null': True},
+            'pattern_section_name': {'required': False, 'allow_null': True},
+            'question_number_in_pattern': {'required': False, 'allow_null': True},
+        }
 
     def validate(self, data):
-        # Ensure exam is provided
-        if 'exam' not in data:
-            raise serializers.ValidationError({'exam': 'Exam is required. Questions must belong to an exam.'})
+        initial = getattr(self, 'initial_data', {})
+
+        exam = data.get('exam')
+        pattern_section_id = data.get('pattern_section_id') or initial.get('pattern_section_id')
+
+        # Allow pattern-only questions (no exam) but ensure at least one context is provided
+        if not exam and not pattern_section_id:
+            raise serializers.ValidationError({
+                'exam': 'Provide an exam or pattern_section_id to associate this question.'
+            })
+
+        # Ensure question number exists (fallback to supplied question_number_in_pattern/current number)
+        question_number = data.get('question_number')
+        if question_number in (None, ''):
+            fallback_number = initial.get('question_number') or initial.get('question_number_in_pattern')
+            if fallback_number:
+                data['question_number'] = fallback_number
+            else:
+                raise serializers.ValidationError({'question_number': 'Question number is required.'})
+
+        # Store pattern-level question number if provided
+        if 'question_number_in_pattern' not in data:
+            fallback_pattern_number = initial.get('question_number_in_pattern') or data.get('question_number')
+            data['question_number_in_pattern'] = fallback_pattern_number
+
+        # Auto-populate pattern section name if missing
+        if pattern_section_id:
+            try:
+                from patterns.models import PatternSection
+                section = PatternSection.objects.get(id=pattern_section_id)
+                data['pattern_section_name'] = section.name
+            except PatternSection.DoesNotExist:
+                data['pattern_section_name'] = ''
+        else:
+            data['pattern_section_name'] = ''
         
         # Validate options for MCQ
         question_type = data.get('question_type')

@@ -1,15 +1,19 @@
 from rest_framework import generics, permissions, status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
-from django.db import transaction
+from django.db import transaction, IntegrityError
 from django.utils import timezone
-from django.db.models import Q, Count, Avg, Sum
+from django.db.models import Q, Count, Avg, Sum, Value
+from django.db.models.functions import Concat
 from django.contrib.auth import get_user_model
+from django.conf import settings
+from django.shortcuts import get_object_or_404
 from django.http import HttpResponse, JsonResponse
 from decimal import Decimal
 import json
 import csv
 import io
+import uuid
 import pandas as pd
 from datetime import datetime
 from reportlab.lib.pagesizes import letter, A4
@@ -18,7 +22,18 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 from reportlab.lib.units import inch
 import xlsxwriter
-from .models import Exam, ExamAttempt, ExamResult, ExamInvitation, ExamAnalytics, ExamViolation, ExamProctoring, QuestionAnalytics, QuestionEvaluation
+from .models import (
+    Exam,
+    ExamAttempt,
+    ExamResult,
+    ExamInvitation,
+    ExamAnalytics,
+    ExamViolation,
+    ExamProctoring,
+    QuestionAnalytics,
+    QuestionEvaluation,
+    PublicExamAccessLog,
+)
 from questions.models import Question
 from .serializers import (
     ExamSerializer, ExamCreateSerializer, ExamAttemptSerializer, ExamResultSerializer,
@@ -155,21 +170,119 @@ class ExamAttemptListView(generics.ListCreateAPIView):
             return ExamAttempt.objects.filter(exam_id=exam_id)
 
 
+def filter_all_exam_attempts(request):
+    """Shared filtering logic for listing/exporting exam attempts across exams."""
+    user = request.user
+
+    # Students are not allowed to view/export all attempts
+    if getattr(user, 'role', None) == 'student':
+        return ExamAttempt.objects.none()
+
+    queryset = ExamAttempt.objects.select_related('exam', 'student', 'result').filter(
+        exam__institute=user.institute
+    )
+
+    exam_id = request.query_params.get('exam_id')
+    if exam_id:
+        try:
+            queryset = queryset.filter(exam_id=int(exam_id))
+        except (TypeError, ValueError):
+            queryset = queryset.none()
+
+    status = request.query_params.get('status')
+    if status:
+        queryset = queryset.filter(status=status)
+
+    student_name = request.query_params.get('student_name')
+    if student_name:
+        student_name = student_name.strip()
+        tokens = [token.strip() for token in student_name.split() if token.strip()]
+        queryset = queryset.annotate(
+            student_full_name=Concat('student__first_name', Value(' '), 'student__last_name')
+        )
+
+        if tokens:
+            for token in tokens:
+                queryset = queryset.filter(
+                    Q(student__first_name__icontains=token) |
+                    Q(student__last_name__icontains=token) |
+                    Q(student__email__icontains=token) |
+                    Q(student_full_name__icontains=token)
+                )
+        else:
+            queryset = queryset.filter(
+                Q(student__first_name__icontains=student_name) |
+                Q(student__last_name__icontains=student_name) |
+                Q(student__email__icontains=student_name) |
+                Q(student_full_name__icontains=student_name)
+            )
+
+    start_date = request.query_params.get('start_date')
+    if start_date:
+        try:
+            start_datetime = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
+            queryset = queryset.filter(started_at__gte=start_datetime)
+        except (ValueError, AttributeError):
+            pass
+
+    end_date = request.query_params.get('end_date')
+    if end_date:
+        try:
+            end_datetime = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
+            queryset = queryset.filter(started_at__lte=end_datetime)
+        except (ValueError, AttributeError):
+            pass
+
+    return queryset.order_by('-created_at')
+
+
+def get_client_ip(request):
+    x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
+    if x_forwarded_for:
+        return x_forwarded_for.split(',')[0].strip()
+    return request.META.get('REMOTE_ADDR')
+
+
+def clean_ip_ranges(ip_entries):
+    if not ip_entries:
+        return []
+
+    candidates = []
+    if isinstance(ip_entries, str):
+        portions = ip_entries.replace(',', '\n').splitlines()
+        candidates = [portion.strip() for portion in portions]
+    else:
+        for entry in ip_entries:
+            if isinstance(entry, str):
+                portions = entry.replace(',', '\n').splitlines()
+                candidates.extend(part.strip() for part in portions)
+            elif entry is not None:
+                candidates.append(str(entry).strip())
+
+    cleaned = []
+    for candidate in candidates:
+        if not candidate:
+            continue
+        try:
+            if '/' in candidate:
+                ipaddress.ip_network(candidate, strict=False)
+            else:
+                ipaddress.ip_address(candidate)
+            cleaned.append(candidate)
+        except ValueError:
+            continue
+
+    return cleaned
+
+
 class AllExamAttemptsListView(generics.ListAPIView):
-    """List all exam attempts across all exams (for admins)"""
+    """List all exam attempts across all exams (for admins) with filtering support"""
     serializer_class = ExamAttemptSerializer
     permission_classes = [permissions.IsAuthenticated]
     pagination_class = None  # Disable pagination for this view
 
     def get_queryset(self):
-        user = self.request.user
-        
-        # Only allow non-student users to see all attempts
-        if user.role == 'student':
-            return ExamAttempt.objects.none()  # Students can't see all attempts
-        
-        # For admins, return all attempts
-        return ExamAttempt.objects.select_related('exam', 'student').order_by('-created_at')
+        return filter_all_exam_attempts(self.request)
 
 
 class ExamAttemptDetailView(generics.RetrieveUpdateAPIView):
@@ -671,37 +784,35 @@ def get_exam_result(request, attempt_id):
     
     # Get section-wise results
     section_results = {}
-    for section in pattern.sections.all():
-        # Calculate section score from evaluations
-        section_evaluations = QuestionEvaluation.objects.filter(
-            attempt=attempt,
-            question_number__gte=section.start_question,
-            question_number__lte=section.end_question
-        )
-        
-        section_score = sum(eval.marks_obtained for eval in section_evaluations)
-        max_marks = section.marks_per_question * (section.end_question - section.start_question + 1)
-        
-        # For objective questions, show immediate results
-        if section.question_type in ['mcq', 'single_mcq', 'multiple_mcq', 'numerical']:
-            section_results[str(section.id)] = {
-                'section_name': section.name,
-                'question_type': section.question_type,
-                'score': section_score,
-                'max_marks': max_marks,
-                'status': 'available',
-                'feedback': 'Immediate feedback available'
-            }
-        else:
-            # For subjective questions, show pending status
-            section_results[str(section.id)] = {
-                'section_name': section.name,
-                'question_type': section.question_type,
-                'score': section_score if section_evaluations.exists() else None,
-                'max_marks': max_marks,
-                'status': 'available' if section_evaluations.exists() else 'pending_review',
-                'feedback': 'Graded' if section_evaluations.exists() else 'Under teacher review'
-            }
+    if pattern:
+        for section in pattern.sections.all():
+            section_evaluations = QuestionEvaluation.objects.filter(
+                attempt=attempt,
+                question_number__gte=section.start_question,
+                question_number__lte=section.end_question
+            )
+            
+            section_score = sum(eval.marks_obtained for eval in section_evaluations)
+            max_marks = section.marks_per_question * (section.end_question - section.start_question + 1)
+            
+            if section.question_type in ['mcq', 'single_mcq', 'multiple_mcq', 'numerical', 'true_false', 'fill_blank']:
+                section_results[str(section.id)] = {
+                    'section_name': section.name,
+                    'question_type': section.question_type,
+                    'score': section_score,
+                    'max_marks': max_marks,
+                    'status': 'available',
+                    'feedback': 'Immediate feedback available'
+                }
+            else:
+                section_results[str(section.id)] = {
+                    'section_name': section.name,
+                    'question_type': section.question_type,
+                    'score': section_score if section_evaluations.exists() else None,
+                    'max_marks': max_marks,
+                    'status': 'available' if section_evaluations.exists() else 'pending_review',
+                    'feedback': 'Graded' if section_evaluations.exists() else 'Under teacher review'
+                }
     
     # Get detailed answers with evaluation data
     detailed_answers = {}
@@ -720,26 +831,25 @@ def get_exam_result(request, attempt_id):
             'explanation': evaluation.evaluation_notes or 'No explanation available'
         }
     
-    # Calculate correct answers from evaluations
-    correct_answers_count = QuestionEvaluation.objects.filter(
-        attempt=attempt,
-        is_correct=True
-    ).count()
+    # Calculate aggregates from evaluations
+    evaluations_qs = QuestionEvaluation.objects.filter(attempt=attempt)
+    correct_answers_count = evaluations_qs.filter(is_correct=True).count()
+    attempted_questions = evaluations_qs.filter(is_answered=True).count()
+    marks_obtained = sum(eval.marks_obtained for eval in evaluations_qs)
+    total_marks_available = sum(eval.max_marks for eval in evaluations_qs) or exam.total_marks
     
-    # Calculate total questions from pattern or evaluations
-    if result:
-        total_questions = result.total_questions_attempted
-    else:
-        # Count from evaluations or pattern
-        total_questions = QuestionEvaluation.objects.filter(attempt=attempt).count()
-        if total_questions == 0:
-            # Fallback to pattern total questions
-            total_questions = exam.total_questions
+    # Determine total questions from pattern/exam definition
+    total_questions = exam.total_questions
+    if not total_questions:
+        total_questions = evaluations_qs.count() or Question.objects.filter(exam=exam).count() or (result.total_questions_attempted if result else 0)
     
     return Response({
         'attempt': ExamAttemptSerializer(attempt).data,
-        'overall_score': correct_answers_count,  # Use actual correct answers count
+        'overall_score': correct_answers_count,
         'total_questions': total_questions,
+        'attempted_questions': attempted_questions,
+        'total_marks': total_marks_available,
+        'marks_obtained': marks_obtained,
         'percentage': attempt.percentage,
         'section_results': section_results,
         'detailed_answers': detailed_answers,
@@ -1308,58 +1418,133 @@ def admin_dashboard_data(request):
         }
     })
 
+@api_view(['GET'])
+@permission_classes([permissions.AllowAny])
+def public_exam_details(request, token):
+    """Fetch public exam details using the secure token."""
+    try:
+        token_uuid = uuid.UUID(str(token))
+    except ValueError:
+        return Response({'error': 'Invalid exam link'}, status=status.HTTP_404_NOT_FOUND)
+
+    exam = get_object_or_404(Exam.objects.select_related('pattern', 'institute', 'created_by'), public_access_token=token_uuid)
+
+    if not exam.is_public:
+        return Response({'error': 'This exam is not publicly accessible'}, status=status.HTTP_403_FORBIDDEN)
+
+    if exam.is_public_link_expired():
+        return Response({'error': 'This exam link has expired.'}, status=status.HTTP_403_FORBIDDEN)
+
+    now = timezone.now()
+    if now < exam.start_date:
+        return Response({'error': 'This exam has not started yet'}, status=status.HTTP_403_FORBIDDEN)
+
+    if now > exam.end_date:
+        return Response({'error': 'This exam has ended'}, status=status.HTTP_403_FORBIDDEN)
+
+    pattern = exam.pattern
+
+    return Response({
+        'exam_id': exam.id,
+        'token': str(exam.public_access_token),
+        'title': exam.title,
+        'description': exam.description,
+        'start_date': exam.start_date,
+        'end_date': exam.end_date,
+        'duration_minutes': exam.duration_minutes,
+        'total_questions': exam.total_questions,
+        'total_marks': exam.total_marks,
+        'max_attempts': exam.max_attempts,
+        'is_public': exam.is_public,
+        'institute_name': exam.institute.name,
+        'created_by_name': exam.created_by.get_full_name() if exam.created_by else '',
+        'pattern': {
+            'id': pattern.id if pattern else None,
+            'name': pattern.name if pattern else '',
+            'total_questions': pattern.total_questions if pattern else 0,
+            'total_duration': pattern.total_duration if pattern else 0,
+            'total_marks': pattern.total_marks if pattern else 0,
+        },
+        'public_allow_multiple_devices': exam.public_allow_multiple_devices,
+        'public_allowed_ip_ranges': exam.public_allowed_ip_ranges,
+        'public_token_expires_at': exam.public_token_expires_at,
+    })
+
+
 @api_view(['POST'])
 @permission_classes([permissions.AllowAny])
 def public_exam_access(request):
-    """Allow public access to exams with temporary user creation"""
+    """Allow public access to exams with secure token validation and logging."""
+    token_value = request.data.get('token')
+    first_name = request.data.get('first_name')
+    last_name = request.data.get('last_name')
+    email = request.data.get('email')
+    phone = request.data.get('phone', '')
+    student_id = request.data.get('student_id', '')
+
+    if not token_value:
+        return Response({'error': 'Exam link token is required'}, status=status.HTTP_400_BAD_REQUEST)
+
     try:
-        exam_id = request.data.get('exam_id')
-        first_name = request.data.get('first_name')
-        last_name = request.data.get('last_name')
-        email = request.data.get('email')
-        phone = request.data.get('phone', '')
-        student_id = request.data.get('student_id', '')
-        
-        if not all([exam_id, first_name, last_name, email]):
-            return Response({
-                'error': 'Missing required fields: exam_id, first_name, last_name, email'
-            }, status=status.HTTP_400_BAD_REQUEST)
-        
-        # Get the exam
+        token_uuid = uuid.UUID(str(token_value))
+        exam = Exam.objects.select_related('institute').get(public_access_token=token_uuid)
+    except (ValueError, Exam.DoesNotExist):
+        return Response({'error': 'Invalid or expired exam link'}, status=status.HTTP_404_NOT_FOUND)
+
+    if not all([first_name, last_name, email]):
+        return Response({'error': 'Missing required fields: first_name, last_name, email'}, status=status.HTTP_400_BAD_REQUEST)
+
+    client_ip = get_client_ip(request)
+    user_agent = request.META.get('HTTP_USER_AGENT', '')
+
+    def deny(message, reason, status_code=status.HTTP_403_FORBIDDEN):
+        PublicExamAccessLog.objects.create(
+            exam=exam,
+            access_token=exam.public_access_token,
+            status='denied',
+            reason=reason,
+            student_email=email or '',
+            ip_address=client_ip,
+            user_agent=user_agent or ''
+        )
+        return Response({'error': message}, status=status_code)
+
+    if not exam.is_public:
+        return deny('This exam is not publicly accessible', 'exam_not_public')
+
+    if exam.is_public_link_expired():
+        return deny('This exam link has expired.', 'link_expired')
+
+    now = timezone.now()
+    if now < exam.start_date:
+        return deny('This exam has not started yet', 'exam_not_started')
+
+    if now > exam.end_date:
+        return deny('This exam has ended', 'exam_ended')
+
+    if not exam.is_ip_allowed(client_ip):
+        return deny('This exam link is not available from your location.', 'ip_not_allowed')
+
+    if not exam.public_allow_multiple_devices:
+        existing_granted = PublicExamAccessLog.objects.filter(
+            exam=exam,
+            access_token=exam.public_access_token,
+            status='granted'
+        ).first()
+        if existing_granted and (existing_granted.ip_address and client_ip and existing_granted.ip_address != client_ip):
+            return deny('This exam link is restricted to a single device.', 'multiple_devices_blocked')
+
+    # Create or fetch a temporary user
+    username = f"temp_{email}_{exam.id}_{int(timezone.now().timestamp())}"
+    existing_user = User.objects.filter(email=email).first()
+
+    if existing_user:
+        user = existing_user
+        if existing_user.institute_id != exam.institute_id:
+            existing_user.institute = exam.institute
+            existing_user.save(update_fields=['institute'])
+    else:
         try:
-            exam = Exam.objects.get(id=exam_id)
-        except Exam.DoesNotExist:
-            return Response({
-                'error': 'Exam not found'
-            }, status=status.HTTP_404_NOT_FOUND)
-        
-        # Check if exam is public and within time window
-        now = timezone.now()
-        if not exam.is_public:
-            return Response({
-                'error': 'This exam is not publicly accessible'
-            }, status=status.HTTP_403_FORBIDDEN)
-        
-        if now < exam.start_date:
-            return Response({
-                'error': 'This exam has not started yet'
-            }, status=status.HTTP_403_FORBIDDEN)
-        
-        if now > exam.end_date:
-            return Response({
-                'error': 'This exam has ended'
-            }, status=status.HTTP_403_FORBIDDEN)
-        
-        # Create or get a temporary user for this exam
-        username = f"temp_{email}_{exam_id}_{int(timezone.now().timestamp())}"
-        
-        # Check if user already exists with this email for this exam
-        existing_user = User.objects.filter(email=email, institute=exam.institute).first()
-        
-        if existing_user:
-            user = existing_user
-        else:
-            # Create temporary user
             user = User.objects.create_user(
                 username=username,
                 email=email,
@@ -1371,41 +1556,127 @@ def public_exam_access(request):
                 is_active=True,
                 is_verified=False
             )
-            user.set_unusable_password()  # No password for temporary users
+            user.set_unusable_password()
             user.save()
-        
-        # Generate JWT token for the user
-        tokens = get_tokens_for_user(user)
-        
-        return Response({
-            'access_token': tokens['access'],
-            'refresh_token': tokens['refresh'],
-            'user': {
-                'id': user.id,
-                'email': user.email,
-                'first_name': user.first_name,
-                'last_name': user.last_name,
-                'role': user.role,
-                'institute': {
-                    'id': exam.institute.id,
-                    'name': exam.institute.name
-                }
-            },
-            'exam': {
-                'id': exam.id,
-                'title': exam.title,
-                'duration_minutes': exam.duration_minutes,
-                'total_questions': exam.total_questions,
-                'total_marks': exam.total_marks
-            },
-            'message': 'Access granted successfully'
-        })
-        
-    except Exception as e:
-        return Response({
-            'error': 'Failed to grant exam access',
-            'detail': str(e)
-        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        except IntegrityError:
+            # Email was created concurrently or belongs to another institute. Reuse existing record.
+            user = User.objects.get(email=email)
+            if user.institute_id != exam.institute_id:
+                user.institute = exam.institute
+                user.save(update_fields=['institute'])
+
+    tokens = get_tokens_for_user(user)
+
+    exam.public_link_usage_count += 1
+    exam.public_link_last_used_at = timezone.now()
+    exam.save(update_fields=['public_link_usage_count', 'public_link_last_used_at'])
+
+    PublicExamAccessLog.objects.create(
+        exam=exam,
+        access_token=exam.public_access_token,
+        status='granted',
+        reason='access_granted',
+        student_email=email or '',
+        ip_address=client_ip,
+        user_agent=user_agent or ''
+    )
+
+    return Response({
+        'access_token': tokens['access'],
+        'refresh_token': tokens['refresh'],
+        'exam_id': exam.id,
+        'user': {
+            'id': user.id,
+            'email': user.email,
+            'first_name': user.first_name,
+            'last_name': user.last_name,
+            'role': user.role,
+            'institute': {
+                'id': exam.institute.id,
+                'name': exam.institute.name
+            }
+        },
+        'exam': {
+            'id': exam.id,
+            'title': exam.title,
+            'duration_minutes': exam.duration_minutes,
+            'total_questions': exam.total_questions,
+            'total_marks': exam.total_marks
+        },
+        'message': 'Access granted successfully'
+    })
+
+
+@api_view(['GET', 'POST'])
+@permission_classes([permissions.IsAuthenticated])
+def public_exam_link_details(request, exam_id):
+    """View or update public exam link configuration for an exam."""
+    exam = get_object_or_404(Exam, id=exam_id)
+
+    if exam.institute != request.user.institute or not request.user.can_manage_exams():
+        return Response({'error': 'Access denied'}, status=status.HTTP_403_FORBIDDEN)
+
+    if request.method == 'POST':
+        regenerate = request.data.get('regenerate_token', False)
+        expires_at_raw = request.data.get('expires_at')
+        allowed_ips_raw = request.data.get('allowed_ips')
+        allow_multiple_devices = request.data.get('allow_multiple_devices')
+
+        update_fields = []
+
+        if regenerate:
+            exam.regenerate_public_token()
+            exam.refresh_from_db()
+
+        if expires_at_raw is not None:
+            if expires_at_raw == '' or expires_at_raw is False:
+                exam.public_token_expires_at = None
+            else:
+                try:
+                    expires_at = datetime.fromisoformat(str(expires_at_raw).replace('Z', '+00:00'))
+                    if timezone.is_naive(expires_at):
+                        expires_at = timezone.make_aware(expires_at, timezone.get_current_timezone())
+                    exam.public_token_expires_at = expires_at
+                except ValueError:
+                    return Response({'error': 'Invalid expiry datetime format'}, status=status.HTTP_400_BAD_REQUEST)
+            update_fields.append('public_token_expires_at')
+
+        if allowed_ips_raw is not None:
+            exam.public_allowed_ip_ranges = clean_ip_ranges(allowed_ips_raw)
+            update_fields.append('public_allowed_ip_ranges')
+
+        if allow_multiple_devices is not None:
+            exam.public_allow_multiple_devices = bool(allow_multiple_devices)
+            update_fields.append('public_allow_multiple_devices')
+
+        if update_fields:
+            exam.save(update_fields=update_fields)
+            exam.refresh_from_db()
+
+    recent_logs = exam.public_access_logs.all().order_by('-accessed_at')[:5]
+    recent_logs_data = [
+        {
+            'status': log.status,
+            'reason': log.reason,
+            'student_email': log.student_email,
+            'ip_address': log.ip_address,
+            'accessed_at': log.accessed_at,
+        }
+        for log in recent_logs
+    ]
+
+    return Response({
+        'token': str(exam.public_access_token),
+        'share_url': f"{settings.FRONTEND_URL}/public-exam/{exam.public_access_token}",
+        'expires_at': exam.public_token_expires_at,
+        'allowed_ips': exam.public_allowed_ip_ranges,
+        'allow_multiple_devices': exam.public_allow_multiple_devices,
+        'usage_count': exam.public_link_usage_count,
+        'last_used_at': exam.public_link_last_used_at,
+        'created_at': exam.public_link_created_at,
+        'is_expired': exam.is_public_link_expired(),
+        'recent_logs': recent_logs_data,
+    })
 
 
 # Export Data APIs
@@ -1992,3 +2263,54 @@ def export_exam_results_pdf(request, exam_id):
         return Response({'error': 'Exam not found'}, status=status.HTTP_404_NOT_FOUND)
     except Exception as e:
         return Response({'error': f'Export failed: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def export_all_attempts(request):
+    """Export filtered exam attempts across all exams (CSV only for now)."""
+    if getattr(request.user, 'role', None) == 'student':
+        return Response({'error': 'Access denied'}, status=status.HTTP_403_FORBIDDEN)
+
+    export_format = request.query_params.get('format', 'csv').lower()
+    queryset = filter_all_exam_attempts(request)
+
+    if export_format != 'csv':
+        return Response({'error': 'Only CSV export is supported currently.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    filename = f"all_exam_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+    response = HttpResponse(content_type='text/csv')
+    response['Content-Disposition'] = f'attachment; filename="{filename}"'
+
+    writer = csv.writer(response)
+    writer.writerow([
+        'Exam ID', 'Exam Title', 'Student ID', 'Student Name', 'Email', 'Status',
+        'Score', 'Percentage', 'Time Spent (seconds)', 'Started At', 'Submitted At',
+        'Violations', 'Attempt Number'
+    ])
+
+    for attempt in queryset:
+        if attempt.percentage is not None:
+            percentage = float(attempt.percentage)
+        elif attempt.score is not None and attempt.exam.total_marks:
+            percentage = float(attempt.score) / attempt.exam.total_marks * 100
+        else:
+            percentage = 0.0
+
+        writer.writerow([
+            attempt.exam.id,
+            attempt.exam.title,
+            attempt.student.id,
+            f"{attempt.student.first_name} {attempt.student.last_name}".strip(),
+            attempt.student.email,
+            attempt.status,
+            attempt.score or 0,
+            f"{percentage:.2f}",
+            attempt.time_spent or 0,
+            attempt.started_at.isoformat() if attempt.started_at else '',
+            attempt.submitted_at.isoformat() if attempt.submitted_at else '',
+            attempt.violations_count,
+            attempt.attempt_number,
+        ])
+
+    return response

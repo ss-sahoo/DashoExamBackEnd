@@ -74,14 +74,18 @@ class InstituteInvitationSerializer(serializers.ModelSerializer):
             'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'invited_by', 'status', 'created_at', 'updated_at']
+        extra_kwargs = {
+            'expires_at': {'required': False, 'allow_null': True}
+        }
     
     def get_is_expired(self, obj):
         return obj.is_expired()
     
     def create(self, validated_data):
-        """Create invitation with 7-day expiration"""
+        """Create invitation with default 7-day expiration"""
         validated_data['invited_by'] = self.context['request'].user
-        validated_data['expires_at'] = timezone.now() + timedelta(days=7)
+        if not validated_data.get('expires_at'):
+            validated_data['expires_at'] = timezone.now() + timedelta(days=7)
         return super().create(validated_data)
 
 

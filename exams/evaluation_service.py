@@ -145,14 +145,50 @@ class EvaluationService:
             }
     
     def _get_exam_questions(self) -> List[Question]:
-        """Get all questions for the exam from pattern sections"""
-        questions = []
-        for section in self.exam.pattern.sections.all():
-            section_questions = Question.objects.filter(
-                pattern_section=section
-            ).order_by('question_number_in_pattern')
-            questions.extend(section_questions)
-        return questions
+        """Get all questions for the exam honoring pattern sections with safe fallbacks"""
+        collected: List[Question] = []
+        seen_ids = set()
+
+        def add_questions(queryset):
+            for question in queryset:
+                if question.id not in seen_ids:
+                    collected.append(question)
+                    seen_ids.add(question.id)
+
+        pattern = getattr(self.exam, 'pattern', None)
+        if pattern and hasattr(pattern, 'sections'):
+            for section in pattern.sections.all().order_by('start_question'):
+                before_count = len(collected)
+
+                add_questions(
+                    Question.objects.filter(
+                        pattern_section_id=section.id
+                    ).order_by('question_number_in_pattern', 'question_number', 'id')
+                )
+
+                if len(collected) == before_count and section.name:
+                    add_questions(
+                        Question.objects.filter(
+                            exam=self.exam,
+                            pattern_section_name=section.name
+                        ).order_by('question_number_in_pattern', 'question_number', 'id')
+                    )
+
+                if len(collected) == before_count:
+                    add_questions(
+                        Question.objects.filter(
+                            exam=self.exam,
+                            question_number__gte=section.start_question,
+                            question_number__lte=section.end_question
+                        ).order_by('question_number', 'id')
+                    )
+
+        if not collected:
+            add_questions(
+                Question.objects.filter(exam=self.exam).order_by('question_number_in_pattern', 'question_number', 'id')
+            )
+
+        return collected
     
     def _get_question_number(self, question: Question) -> int:
         """Get the question number within the exam"""

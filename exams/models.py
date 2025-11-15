@@ -1,8 +1,10 @@
 from django.db import models
 from django.core.validators import MinValueValidator, MaxValueValidator
+from django.utils import timezone as dj_timezone
 from accounts.models import Institute, User
 from patterns.models import ExamPattern
 import uuid
+import ipaddress
 
 
 class Exam(models.Model):
@@ -19,7 +21,7 @@ class Exam(models.Model):
     description = models.TextField(blank=True)
     institute = models.ForeignKey(Institute, on_delete=models.CASCADE, related_name='exams')
     pattern = models.ForeignKey(ExamPattern, on_delete=models.CASCADE, related_name='exams')
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='published')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='draft')
     
     # Timing
     start_date = models.DateTimeField()
@@ -50,6 +52,13 @@ class Exam(models.Model):
     
     # Access control
     is_public = models.BooleanField(default=True)
+    public_access_token = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    public_token_expires_at = models.DateTimeField(null=True, blank=True)
+    public_allowed_ip_ranges = models.JSONField(default=list, blank=True, help_text="List of allowed IPv4 / IPv6 addresses or CIDR ranges")
+    public_allow_multiple_devices = models.BooleanField(default=True)
+    public_link_created_at = models.DateTimeField(default=dj_timezone.now)
+    public_link_last_used_at = models.DateTimeField(null=True, blank=True)
+    public_link_usage_count = models.IntegerField(default=0)
     allowed_users = models.ManyToManyField(User, blank=True, related_name='allowed_exams')
     
     # Metadata
@@ -78,6 +87,37 @@ class Exam(models.Model):
             total += section.marks_per_question * questions_count
         return total
 
+    @property
+    def questions_added(self):
+        return self.questions.filter(is_active=True).count()
+
+    @property
+    def questions_required(self):
+        return self.total_questions
+
+    @property
+    def questions_remaining(self):
+        required = self.questions_required
+        added = self.questions_added
+        remaining = required - added
+        return remaining if remaining > 0 else 0
+
+    @property
+    def question_completion_percent(self):
+        required = self.questions_required
+        if required <= 0:
+            return 0
+        added = self.questions_added
+        effective_added = min(added, required)
+        return round((effective_added / required) * 100, 2)
+
+    @property
+    def is_question_complete(self):
+        required = self.questions_required
+        if required <= 0:
+            return False
+        return self.questions_added >= required
+
     class Meta:
         ordering = ['-created_at']
 
@@ -94,13 +134,13 @@ class Exam(models.Model):
 
     def save(self, *args, **kwargs):
         self.clean()
+        if not self.public_link_created_at:
+            self.public_link_created_at = dj_timezone.now()
         super().save(*args, **kwargs)
 
-    @property
     def is_active(self):
-        from django.utils import timezone
         import pytz
-        now = timezone.now()
+        now = dj_timezone.now()
         
         # Convert to exam timezone for comparison
         exam_tz = pytz.timezone(self.timezone)
@@ -110,14 +150,12 @@ class Exam(models.Model):
         
         return self.status == 'active' and start_in_exam_tz <= now_in_exam_tz <= end_in_exam_tz
 
-    @property
     def is_accessible(self):
         """Check if exam is accessible (within buffer time)"""
-        from django.utils import timezone
         import pytz
         from datetime import timedelta
         
-        now = timezone.now()
+        now = dj_timezone.now()
         exam_tz = pytz.timezone(self.timezone)
         now_in_exam_tz = now.astimezone(exam_tz)
         start_in_exam_tz = self.start_date.astimezone(exam_tz)
@@ -125,17 +163,15 @@ class Exam(models.Model):
         
         return self.status in ['published', 'active'] and buffer_start <= now_in_exam_tz
 
-    @property
     def is_available_for_reschedule(self):
         """Check if exam can be rescheduled"""
-        from django.utils import timezone
         import pytz
         
         if not self.reschedule_allowed:
             return False
             
         if self.reschedule_deadline:
-            now = timezone.now()
+            now = dj_timezone.now()
             exam_tz = pytz.timezone(self.timezone)
             now_in_exam_tz = now.astimezone(exam_tz)
             deadline_in_exam_tz = self.reschedule_deadline.astimezone(exam_tz)
@@ -156,11 +192,10 @@ class Exam(models.Model):
 
     def get_remaining_time(self):
         """Get remaining time until exam starts/ends"""
-        from django.utils import timezone
         import pytz
         from datetime import timedelta
         
-        now = timezone.now()
+        now = dj_timezone.now()
         exam_tz = pytz.timezone(self.timezone)
         now_in_exam_tz = now.astimezone(exam_tz)
         start_in_exam_tz = self.start_date.astimezone(exam_tz)
@@ -190,13 +225,51 @@ class Exam(models.Model):
                 'message': 'Exam has ended'
             }
 
-    @property
-    def total_questions(self):
-        return self.pattern.total_questions
+    def regenerate_public_token(self):
+        self.public_access_token = uuid.uuid4()
+        self.public_link_created_at = dj_timezone.now()
+        self.public_link_last_used_at = None
+        self.public_link_usage_count = 0
+        self.save(update_fields=[
+            'public_access_token',
+            'public_link_created_at',
+            'public_link_last_used_at',
+            'public_link_usage_count'
+        ])
 
-    @property
-    def total_marks(self):
-        return self.pattern.total_marks
+    def is_public_link_expired(self):
+        if not self.public_token_expires_at:
+            return False
+        return dj_timezone.now() > self.public_token_expires_at
+
+    def is_ip_allowed(self, ip_address):
+        if not ip_address:
+            return True
+        if not self.public_allowed_ip_ranges:
+            return True
+
+        try:
+            ip_obj = ipaddress.ip_address(ip_address)
+        except ValueError:
+            # If the IP cannot be parsed, deny access for safety
+            return False
+
+        for pattern in self.public_allowed_ip_ranges:
+            if not pattern:
+                continue
+            pattern = pattern.strip()
+            try:
+                if '/' in pattern:
+                    network = ipaddress.ip_network(pattern, strict=False)
+                    if ip_obj in network:
+                        return True
+                else:
+                    if ip_obj == ipaddress.ip_address(pattern):
+                        return True
+            except ValueError:
+                # Skip invalid patterns silently
+                continue
+        return False
 
 
 class ExamReschedule(models.Model):
@@ -285,8 +358,7 @@ class ExamAttempt(models.Model):
     def time_remaining(self):
         if not self.started_at:
             return None
-        from django.utils import timezone
-        elapsed = timezone.now() - self.started_at
+        elapsed = dj_timezone.now() - self.started_at
         remaining_seconds = (self.exam.duration_minutes * 60) - elapsed.total_seconds()
         return max(0, remaining_seconds)
 
@@ -396,8 +468,7 @@ class ExamInvitation(models.Model):
     
     def is_valid_now(self):
         """Check if invitation is valid at current time"""
-        from django.utils import timezone
-        now = timezone.now()
+        now = dj_timezone.now()
         
         if not self.is_active:
             return False
@@ -687,3 +758,25 @@ class EvaluationRubric(models.Model):
     
     def __str__(self):
         return f"Rubric for Q{self.question.id} - {self.rubric_name}"
+
+
+class PublicExamAccessLog(models.Model):
+    ACCESS_STATUS_CHOICES = [
+        ('granted', 'Granted'),
+        ('denied', 'Denied'),
+    ]
+
+    exam = models.ForeignKey(Exam, on_delete=models.CASCADE, related_name='public_access_logs')
+    access_token = models.UUIDField()
+    status = models.CharField(max_length=20, choices=ACCESS_STATUS_CHOICES)
+    reason = models.TextField(blank=True)
+    student_email = models.CharField(max_length=255, blank=True)
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    user_agent = models.TextField(blank=True)
+    accessed_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-accessed_at']
+
+    def __str__(self):
+        return f"{self.exam.title} ({self.status}) @ {self.accessed_at}"

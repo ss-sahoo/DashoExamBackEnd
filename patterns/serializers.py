@@ -60,27 +60,33 @@ class ExamPatternSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_by', 'created_at', 'updated_at']
 
     def validate(self, attrs):
-        # Validate that sections don't overlap and cover all questions
+        # Validate that sections don't overlap WITHIN THE SAME SUBJECT
+        # With subject-wise numbering, different subjects can have same question numbers
         sections = self.initial_data.get('sections', [])
         if sections:
-            total_questions = attrs.get('total_questions', 0)
-            covered_questions = set()
-            
+            # Group sections by subject
+            subject_sections = {}
             for section in sections:
-                start = section['start_question']
-                end = section['end_question']
-                
-                # Check for overlaps
-                section_questions = set(range(start, end + 1))
-                if covered_questions.intersection(section_questions):
-                    raise serializers.ValidationError("Question ranges cannot overlap")
-                
-                covered_questions.update(section_questions)
+                subject = section.get('subject', '')
+                if subject not in subject_sections:
+                    subject_sections[subject] = []
+                subject_sections[subject].append(section)
             
-            # Check if all questions are covered
-            expected_questions = set(range(1, total_questions + 1))
-            if covered_questions != expected_questions:
-                raise serializers.ValidationError("All questions must be covered by sections")
+            # Check for overlaps within each subject
+            for subject, subject_section_list in subject_sections.items():
+                covered_questions = set()
+                for section in subject_section_list:
+                    start = section['start_question']
+                    end = section['end_question']
+                    
+                    # Check for overlaps within this subject
+                    section_questions = set(range(start, end + 1))
+                    if covered_questions.intersection(section_questions):
+                        raise serializers.ValidationError(
+                            f"Question ranges cannot overlap within subject '{subject}'"
+                        )
+                    
+                    covered_questions.update(section_questions)
         
         return attrs
 

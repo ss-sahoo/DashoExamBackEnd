@@ -17,6 +17,7 @@ from .serializers import (
     InstituteSettingsSerializer, ChangePasswordSerializer, InstituteInvitationSerializer
 )
 from .jwt_utils import get_tokens_for_user
+from rest_framework.exceptions import PermissionDenied
 
 
 @api_view(['POST'])
@@ -107,7 +108,7 @@ def user_logout_view(request):
 
 
 class UserProfileView(generics.RetrieveUpdateAPIView):
-    """Get and update user profile"""
+    """Get or update authenticated user's profile"""
     serializer_class = UserSerializer
     permission_classes = [permissions.IsAuthenticated]
 
@@ -173,8 +174,8 @@ class UserListView(generics.ListAPIView):
         return User.objects.filter(id=user.id)
 
 
-class UserDetailView(generics.RetrieveAPIView):
-    """Get user details"""
+class UserDetailView(generics.RetrieveUpdateDestroyAPIView):
+    """Get, update, or delete a user"""
     serializer_class = UserSerializer
     permission_classes = [permissions.IsAuthenticated]
 
@@ -183,6 +184,41 @@ class UserDetailView(generics.RetrieveAPIView):
         if user.is_institute_admin():
             return User.objects.filter(institute=user.institute)
         return User.objects.filter(id=user.id)
+
+    def perform_update(self, serializer):
+        actor = self.request.user
+        instance = serializer.instance
+
+        # Allow institute admins to update users in their institute or users updating themselves
+        if actor.is_institute_admin() and instance.institute == actor.institute:
+            serializer.save()
+            return
+
+        if actor.id == instance.id:
+            serializer.save()
+            return
+
+        raise PermissionDenied("You do not have permission to update this user.")
+
+    def perform_destroy(self, instance):
+        actor = self.request.user
+
+        if not actor.is_institute_admin():
+            raise PermissionDenied("You do not have permission to delete users.")
+
+        if instance.id == actor.id:
+            raise PermissionDenied("You cannot delete your own account from this screen.")
+
+        if instance.institute_id != actor.institute_id:
+            raise PermissionDenied("You can only delete users from your institute.")
+
+        # Prevent deleting the last institute admin
+        if instance.role == 'institute_admin':
+            admin_count = User.objects.filter(institute=instance.institute, role='institute_admin').exclude(id=instance.id).count()
+            if admin_count == 0:
+                raise PermissionDenied("You cannot remove the only institute admin.")
+
+        instance.delete()
 
 
 class UserPermissionListView(generics.ListCreateAPIView):

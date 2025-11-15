@@ -8,12 +8,16 @@ import pandas as pd
 import io
 import csv
 import json
+import re
 from .models import Question, QuestionBank, ExamQuestion, QuestionImage, QuestionComment, QuestionTemplate
 from .serializers import (
     QuestionSerializer, QuestionCreateSerializer, QuestionBankSerializer,
     ExamQuestionSerializer, QuestionTemplateSerializer, QuestionSearchSerializer,
     BulkQuestionImportSerializer
 )
+from .rag_utils import configure_gemini
+from google.api_core import exceptions as google_exceptions
+import google.generativeai as genai
 
 
 class QuestionListView(generics.ListCreateAPIView):
@@ -53,6 +57,13 @@ class QuestionListView(generics.ListCreateAPIView):
         
         if difficulty:
             queryset = queryset.filter(difficulty=difficulty)
+
+        exam_param = self.request.query_params.get('exam')
+        if exam_param:
+            try:
+                queryset = queryset.filter(exam_id=int(exam_param))
+            except (TypeError, ValueError):
+                queryset = queryset.none()
         
         if question_type:
             queryset = queryset.filter(question_type=question_type)
@@ -66,12 +77,18 @@ class QuestionListView(generics.ListCreateAPIView):
         # Filter by pattern section
         pattern_section = self.request.query_params.get('pattern_section')
         if pattern_section:
-            queryset = queryset.filter(pattern_section_id=pattern_section)
+            try:
+                queryset = queryset.filter(pattern_section_id=int(pattern_section))
+            except (TypeError, ValueError):
+                queryset = queryset.none()
         
         # Filter by absolute question number within pattern
         question_number = self.request.query_params.get('question_number')
         if question_number:
-            queryset = queryset.filter(question_number_in_pattern=question_number)
+            try:
+                queryset = queryset.filter(question_number=int(question_number))
+            except (TypeError, ValueError):
+                queryset = queryset.none()
         
         return queryset.order_by('-created_at')
 
@@ -431,6 +448,240 @@ def download_import_template(request):
     response['Content-Type'] = 'text/csv'
     
     return response
+
+
+def _build_ai_prompt(question_type: str, subject: str, topic: str, difficulty: str, instructions: str, marks: int, pattern_section: str, question_number: int):
+    question_type_display = question_type.replace('_', ' ').title()
+    subject_line = f"Subject: {subject}" if subject else "Subject: General Knowledge"
+    topic_line = f"Topic: {topic}" if topic else "Topic: Mixed Concepts"
+    section_line = f"Pattern Section: {pattern_section}" if pattern_section else ""
+    question_number_line = f"Question Number in Paper: {question_number}" if question_number else ""
+    marks_line = f"This question carries {marks} mark(s)." if marks else "This question carries 1 mark."
+    instructions_line = instructions.strip() if instructions else "Focus on concept clarity and avoid unnecessary complexity."
+
+    guidance = ""
+    normalized_type = question_type.lower()
+    if normalized_type in ['single_mcq', 'mcq', 'single correct mcq']:
+        guidance = "Provide exactly four high-quality options with only one correct answer."
+    elif normalized_type in ['multiple_mcq', 'multiple correct mcq']:
+        guidance = "Provide five options with at least two correct answers. Return the correct answers as an array containing the exact option text."
+    elif normalized_type in ['true_false', 'true/false']:
+        guidance = "Use options ['True', 'False'] and ensure the correct answer is either 'True' or 'False'."
+    elif normalized_type in ['numerical', 'numerical question']:
+        guidance = "Ensure the correct answer is a numerical value. Provide a clear, step-by-step solution."
+    elif normalized_type in ['subjective', 'descriptive']:
+        guidance = "Frame the question to elicit a descriptive answer. Provide an ideal answer in the explanation."
+
+    return f"""
+You are an expert assessment designer. Generate one {difficulty} level {question_type_display} question.
+{subject_line}
+{topic_line}
+{section_line}
+{question_number_line}
+{marks_line}
+
+Additional author instructions:
+{instructions_line}
+
+Output must be a single JSON object with the following keys:
+  "question_text": string (use minimal HTML, keep it clean)
+  "options": array of answer option strings (empty array for numerical or subjective questions; for true/false use ["True","False"])
+  "correct_answer": for single choice / numerical / true_false return a string; for multiple correct return an array of exact option texts
+  "solution": detailed worked solution or model answer (string)
+  "explanation": conceptual explanation or key takeaways (string)
+  "difficulty": one of ["easy","medium","hard"]
+  "topic": short topic descriptor string
+  "tags": array of short tags (optional)
+
+Guidelines:
+{guidance}
+- Do NOT include any text outside of the JSON object. No markdown fences, no commentary.
+- Options must be unique, well-structured, and aligned with the correct answer.
+- Ensure factual accuracy and avoid ambiguity.
+"""
+
+
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+def generate_ai_question(request):
+    """Generate a draft question using Google Gemini"""
+    user = request.user
+    if not user.can_manage_exams():
+        return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
+
+    payload = request.data
+    question_type = payload.get('question_type') or 'single_mcq'
+    subject = payload.get('subject', '')
+    topic = payload.get('topic', '')
+    difficulty = (payload.get('difficulty') or 'medium').lower()
+    instructions = payload.get('instructions', '')
+    marks = payload.get('marks') or 1
+    pattern_section_name = payload.get('pattern_section_name', '')
+    question_number = payload.get('question_number') or 0
+
+    if difficulty not in ['easy', 'medium', 'hard']:
+        difficulty = 'medium'
+
+    if not configure_gemini():
+        return Response(
+            {'error': 'Gemini API is not configured on the server.'},
+            status=status.HTTP_503_SERVICE_UNAVAILABLE
+        )
+
+    prompt = _build_ai_prompt(
+        question_type=question_type,
+        subject=subject,
+        topic=topic,
+        difficulty=difficulty,
+        instructions=instructions,
+        marks=marks,
+        pattern_section=pattern_section_name,
+        question_number=question_number
+    )
+
+    try:
+        model = genai.GenerativeModel('gemini-2.5-flash')
+        response = model.generate_content(
+            prompt,
+            generation_config={
+                "temperature": 0.7,
+                "top_p": 0.9,
+                "max_output_tokens": 4096,
+            }
+        )
+
+        text = ""
+        try:
+            raw_text = getattr(response, 'text', None)
+        except Exception:
+            raw_text = None
+        if raw_text:
+            text = str(raw_text).strip()
+        finish_reasons = []
+        candidates = getattr(response, 'candidates', None) or []
+        if candidates:
+            finish_reasons = [str(getattr(candidate, 'finish_reason', None)) for candidate in candidates]
+        if not text and candidates:
+            for candidate in response.candidates:
+                content = getattr(candidate, 'content', None)
+                if content and getattr(content, 'parts', None):
+                    for part in content.parts:
+                        part_text = getattr(part, 'text', None)
+                        if part_text:
+                            text += part_text
+                if text:
+                    break
+            text = text.strip()
+        if not text:
+            raise ValueError(f"AI returned no content (finish reasons: {finish_reasons or 'unknown'}). Consider simplifying the prompt.")
+
+        match = re.search(r'\{.*\}', text, re.DOTALL)
+        if match:
+            ai_data = json.loads(match.group(0))
+        else:
+            # Attempt to parse full response as JSON array/object
+            try:
+                ai_data = json.loads(text)
+                if isinstance(ai_data, list) and ai_data:
+                    ai_data = ai_data[0]
+                if not isinstance(ai_data, dict):
+                    raise ValueError("AI response JSON is not an object.")
+            except Exception:
+                raise ValueError("AI response did not contain a valid JSON object.")
+
+        question_text = ai_data.get('question_text', '').strip()
+        options = ai_data.get('options', [])
+        correct_answer = ai_data.get('correct_answer', '')
+        solution = ai_data.get('solution', '').strip()
+        explanation = ai_data.get('explanation', '').strip()
+        ai_difficulty = (ai_data.get('difficulty') or difficulty).lower()
+        ai_topic = ai_data.get('topic', topic).strip()
+        tags = ai_data.get('tags', [])
+
+        if not isinstance(options, list):
+            options = []
+        options = [str(opt).strip() for opt in options if str(opt).strip()]
+
+        def map_answer_value(value):
+            if isinstance(value, (int, float)):
+                index = int(value) - 1
+                if 0 <= index < len(options):
+                    return options[index]
+                return str(value)
+            if isinstance(value, str):
+                candidate = value.strip()
+                if len(candidate) == 1 and candidate.upper().isalpha():
+                    idx = ord(candidate.upper()) - 65
+                    if 0 <= idx < len(options):
+                        return options[idx]
+                return candidate
+            return str(value)
+
+        normalized_type = question_type.lower()
+        if normalized_type in ['multiple_mcq', 'multiple correct mcq']:
+            if isinstance(correct_answer, list):
+                normalized_answers = [map_answer_value(ans) for ans in correct_answer if str(ans).strip()]
+            elif isinstance(correct_answer, str):
+                parts = [part for part in re.split(r'[|,]', correct_answer) if part.strip()]
+                normalized_answers = [map_answer_value(part) for part in parts]
+            else:
+                normalized_answers = [map_answer_value(correct_answer)]
+            correct_answer_value = '|'.join(dict.fromkeys(filter(None, normalized_answers)))
+        else:
+            if isinstance(correct_answer, list):
+                correct_answer_value = map_answer_value(correct_answer[0]) if correct_answer else ''
+            else:
+                correct_answer_value = map_answer_value(correct_answer)
+
+        if normalized_type in ['true_false', 'true/false']:
+            options = ['True', 'False']
+            if correct_answer_value.lower() in ['true', 'false']:
+                correct_answer_value = correct_answer_value.capitalize()
+
+        question_payload = {
+            'question_text': question_text,
+            'options': options,
+            'correct_answer': correct_answer_value,
+            'solution': solution,
+            'explanation': explanation or solution,
+            'difficulty': ai_difficulty if ai_difficulty in ['easy', 'medium', 'hard'] else difficulty,
+            'topic': ai_topic,
+            'tags': tags,
+        }
+
+        return Response({
+            'question': question_payload,
+            'message': 'AI generated a draft question. Review and adjust before saving.'
+        })
+
+    except google_exceptions.ResourceExhausted as exc:
+        retry_seconds = None
+        details = str(exc)
+        retry_delay = getattr(exc, 'retry_delay', None)
+        if retry_delay is not None and getattr(retry_delay, 'seconds', None) is not None:
+            retry_seconds = retry_delay.seconds
+        message = "Gemini API free-tier quota reached. Please wait a minute and try again."
+        if retry_seconds:
+            message = f"Gemini API free-tier quota reached. Please wait about {retry_seconds} seconds and try again."
+        return Response(
+            {'error': message, 'details': details},
+            status=status.HTTP_429_TOO_MANY_REQUESTS
+        )
+    except google_exceptions.GoogleAPIError as exc:
+        return Response(
+            {'error': f'Gemini API error: {exc}'},
+            status=status.HTTP_502_BAD_GATEWAY
+        )
+    except json.JSONDecodeError:
+        return Response(
+            {'error': 'AI response could not be parsed. Please try again.'},
+            status=status.HTTP_502_BAD_GATEWAY
+        )
+    except Exception as exc:
+        return Response(
+            {'error': f'Question generation failed: {exc}'},
+            status=status.HTTP_502_BAD_GATEWAY
+        )
 
 
 @api_view(['POST'])

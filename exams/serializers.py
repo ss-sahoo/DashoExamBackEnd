@@ -1,3 +1,4 @@
+from django.conf import settings
 from rest_framework import serializers
 from .models import (
     Exam, ExamAttempt, ExamResult, ExamInvitation, ExamAnalytics, ExamViolation, ExamProctoring, QuestionAnalytics,
@@ -16,6 +17,12 @@ class ExamSerializer(serializers.ModelSerializer):
     total_questions = serializers.ReadOnlyField()
     total_marks = serializers.ReadOnlyField()
     allowed_users_data = UserSerializer(source='allowed_users', many=True, read_only=True)
+    questions_added = serializers.ReadOnlyField()
+    questions_required = serializers.ReadOnlyField()
+    questions_remaining = serializers.ReadOnlyField()
+    question_completion_percent = serializers.ReadOnlyField()
+    is_question_complete = serializers.ReadOnlyField()
+    share_url = serializers.SerializerMethodField()
 
     class Meta:
         model = Exam
@@ -24,18 +31,62 @@ class ExamSerializer(serializers.ModelSerializer):
             'status', 'start_date', 'end_date', 'duration_minutes', 'max_attempts',
             'allow_late_submission', 'late_submission_penalty', 'require_fullscreen',
             'disable_copy_paste', 'disable_right_click', 'enable_webcam_proctoring',
-            'allow_tab_switching', 'is_public', 'allowed_users', 'allowed_users_data',
+            'allow_tab_switching', 'is_public', 'public_access_token', 'public_token_expires_at',
+            'public_allowed_ip_ranges', 'public_allow_multiple_devices', 'public_link_created_at',
+            'public_link_last_used_at', 'public_link_usage_count',
+            'allowed_users', 'allowed_users_data',
             'created_by', 'created_by_name', 'is_active', 'total_questions', 'total_marks',
             'timezone', 'grace_period_minutes', 'buffer_time_minutes', 'auto_start', 'auto_end',
             'reschedule_allowed', 'max_reschedules', 'reschedule_deadline',
-            'created_at', 'updated_at'
+            'created_at', 'updated_at',
+            'questions_added', 'questions_required', 'questions_remaining',
+            'question_completion_percent', 'is_question_complete', 'share_url'
         ]
-        read_only_fields = ['id', 'created_by', 'created_at', 'updated_at']
+        read_only_fields = [
+            'id', 'created_by', 'created_at', 'updated_at',
+            'questions_added', 'questions_required', 'questions_remaining',
+            'question_completion_percent', 'is_question_complete',
+            'public_access_token', 'public_link_created_at', 'public_link_last_used_at',
+            'public_link_usage_count'
+        ]
 
     def validate(self, attrs):
-        if attrs['start_date'] >= attrs['end_date']:
+        start_date = attrs.get('start_date') or getattr(self.instance, 'start_date', None)
+        end_date = attrs.get('end_date') or getattr(self.instance, 'end_date', None)
+
+        if start_date and end_date and start_date >= end_date:
             raise serializers.ValidationError("Start date must be before end date")
         return attrs
+
+    def validate_status(self, value):
+        if value in ['published', 'active']:
+            exam = self.instance
+            if not exam:
+                raise serializers.ValidationError(
+                    "Add all required questions before publishing the exam."
+                )
+
+            required = exam.questions_required
+            if 'pattern_id' in self.initial_data:
+                from patterns.models import ExamPattern
+                try:
+                    pattern = ExamPattern.objects.get(id=self.initial_data['pattern_id'])
+                    required = pattern.total_questions
+                except ExamPattern.DoesNotExist:
+                    pass
+            added = exam.questions_added
+
+            if required <= 0:
+                raise serializers.ValidationError(
+                    "Exam pattern does not define any questions."
+                )
+
+            if added < required:
+                raise serializers.ValidationError(
+                    f"Add all {required} questions before publishing (currently {added})."
+                )
+
+        return value
 
     def create(self, validated_data):
         # Automatically set duration_minutes from the pattern
@@ -53,18 +104,42 @@ class ExamSerializer(serializers.ModelSerializer):
             validated_data['duration_minutes'] = pattern.total_duration
         return super().update(instance, validated_data)
 
+    def get_share_url(self, obj):
+        frontend_url = getattr(settings, 'FRONTEND_URL', '').rstrip('/')
+        if not frontend_url:
+            return None
+        return f"{frontend_url}/public-exam/{obj.public_access_token}"
+
 
 class ExamCreateSerializer(serializers.ModelSerializer):
     pattern_id = serializers.IntegerField(write_only=True)
+    id = serializers.IntegerField(read_only=True)
+    public_access_token = serializers.UUIDField(read_only=True)
+    public_token_expires_at = serializers.DateTimeField(read_only=True)
+    public_allowed_ip_ranges = serializers.ListField(child=serializers.CharField(), read_only=True)
+    public_allow_multiple_devices = serializers.BooleanField(read_only=True)
+    public_link_created_at = serializers.DateTimeField(read_only=True)
+    public_link_last_used_at = serializers.DateTimeField(read_only=True)
+    public_link_usage_count = serializers.IntegerField(read_only=True)
+    share_url = serializers.SerializerMethodField()
     
     class Meta:
         model = Exam
         fields = [
-            'title', 'description', 'pattern_id', 'start_date', 'end_date',
+            'id', 'title', 'description', 'pattern_id', 'start_date', 'end_date',
             'max_attempts', 'allow_late_submission', 'late_submission_penalty',
             'require_fullscreen', 'disable_copy_paste', 'disable_right_click',
             'enable_webcam_proctoring', 'allow_tab_switching', 'is_public', 'allowed_users',
-            'status'
+            'status', 'timezone', 'grace_period_minutes', 'buffer_time_minutes', 'auto_start',
+            'auto_end', 'reschedule_allowed', 'max_reschedules', 'reschedule_deadline',
+            'public_access_token', 'public_token_expires_at', 'public_allowed_ip_ranges',
+            'public_allow_multiple_devices', 'public_link_created_at', 'public_link_last_used_at',
+            'public_link_usage_count', 'share_url'
+        ]
+        read_only_fields = [
+            'id', 'public_access_token', 'public_token_expires_at', 'public_allowed_ip_ranges',
+            'public_allow_multiple_devices', 'public_link_created_at', 'public_link_last_used_at',
+            'public_link_usage_count', 'share_url'
         ]
 
     def create(self, validated_data):
@@ -75,10 +150,16 @@ class ExamCreateSerializer(serializers.ModelSerializer):
         validated_data['pattern'] = pattern
         validated_data['duration_minutes'] = pattern.total_duration
         
-        # Set status to 'active' so students can see the exam immediately
-        validated_data['status'] = 'active'
+        # Set status to 'draft' until questions are added
+        validated_data['status'] = 'draft'
         
         return super().create(validated_data)
+
+    def get_share_url(self, obj):
+        frontend_url = getattr(settings, 'FRONTEND_URL', '').rstrip('/')
+        if not frontend_url:
+            return None
+        return f"{frontend_url}/public-exam/{obj.public_access_token}"
 
 
 class ExamAttemptSerializer(serializers.ModelSerializer):

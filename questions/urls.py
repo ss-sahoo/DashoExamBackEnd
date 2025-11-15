@@ -1,5 +1,7 @@
 from django.urls import path
-from . import views, rag_views
+from . import views
+# Temporarily disabled AI/RAG features for deployment
+# from . import rag_views
 
 urlpatterns = [
     # Questions
@@ -21,6 +23,9 @@ urlpatterns = [
     path('templates/categories/', views.get_template_categories, name='template-categories'),
     path('templates/<int:template_id>/use/', views.use_question_template, name='use-question-template'),
     
+    # AI Generation
+    path('ai/generate-question/', views.generate_ai_question, name='ai-generate-question'),
+    
     # Bulk operations
     path('bulk-import/', views.bulk_import_questions, name='bulk-import-questions'),
     path('bulk-import-csv/', views.bulk_import_csv, name='bulk-import-csv'),
@@ -30,11 +35,12 @@ urlpatterns = [
     # Statistics
     path('statistics/', views.question_statistics, name='question-statistics'),
     
-    # AI & RAG Endpoints
-    path('semantic-search/', rag_views.semantic_search_view, name='semantic-search'),
-    path('chatbot/', rag_views.chatbot_query_view, name='chatbot-query'),
-    path('chat-history/', rag_views.chat_history_view, name='chat-history'),
-    path('<int:question_id>/embed/', rag_views.embed_single_question_view, name='embed-question'),
-    path('bulk-embed/', rag_views.bulk_embed_questions_view, name='bulk-embed'),
-    path('embedding-stats/', rag_views.embedding_stats_view, name='embedding-stats'),
+    # AI & RAG Endpoints - Temporarily disabled for deployment
+    # Uncomment these when you have more server resources and install AI packages
+    # path('semantic-search/', rag_views.semantic_search_view, name='semantic-search'),
+    # path('chatbot/', rag_views.chatbot_query_view, name='chatbot-query'),
+    # path('chat-history/', rag_views.chat_history_view, name='chat-history'),
+    # path('<int:question_id>/embed/', rag_views.embed_single_question_view, name='embed-question'),
+    # path('bulk-embed/', rag_views.bulk_embed_questions_view, name='bulk-embed'),
+    # path('embedding-stats/', rag_views.embedding_stats_view, name='embedding-stats'),
 ]

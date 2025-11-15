@@ -10,6 +10,7 @@ urlpatterns = [
     # Exam attempts
     path('exams/<int:exam_id>/attempts/', views.ExamAttemptListView.as_view(), name='exam-attempt-list'),
     path('attempts/', views.AllExamAttemptsListView.as_view(), name='all-exam-attempts-list'),
+    path('attempts/export/', views.export_all_attempts, name='export-all-exam-attempts'),
     path('attempts/<int:pk>/', views.ExamAttemptDetailView.as_view(), name='exam-attempt-detail'),
     
     # Exam actions
@@ -57,6 +58,8 @@ urlpatterns = [
     path('admin-dashboard/', views.admin_dashboard_data, name='admin-dashboard'),
     
     # Public Exam Access
+    path('exams/<int:exam_id>/public-link/', views.public_exam_link_details, name='public-exam-link-details'),
+    path('public-access/<uuid:token>/', views.public_exam_details, name='public-exam-details'),
     path('public-access/', views.public_exam_access, name='public-exam-access'),
     
     # Student Analytics
