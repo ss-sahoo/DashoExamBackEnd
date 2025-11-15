@@ -205,15 +205,20 @@ class QuestionTemplate(models.Model):
 
 
 # AI & Vector Search Models
+import os
 from django.db import models
 
+_ENABLE_PGVECTOR = os.getenv("ENABLE_PGVECTOR", "").lower() in ("1", "true", "yes")
+
 try:
-    from pgvector.django import VectorField as _PgVectorField
+    if not _ENABLE_PGVECTOR:
+        raise ModuleNotFoundError("pgvector disabled via env")
+    from pgvector.django import VectorField as _PgVectorField  # type: ignore
 except ModuleNotFoundError:
     class VectorField(models.JSONField):  # type: ignore
         """
-        Lightweight fallback when pgvector extension isn't available.
-        Stores embeddings as JSON so that core flows keep working.
+        JSON fallback when pgvector extension isn't available.
+        Stores embeddings as lists so core flows keep working.
         """
         def __init__(self, *args, **kwargs):
             kwargs.setdefault("default", list)
