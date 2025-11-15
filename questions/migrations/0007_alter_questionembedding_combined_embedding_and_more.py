@@ -4,7 +4,10 @@ from django.db import migrations, models
 
 try:
     from pgvector.django import VectorField as MigrationVectorField
+    PGVECTOR_AVAILABLE = True
 except ImportError:
+    PGVECTOR_AVAILABLE = False
+
     class MigrationVectorField(models.JSONField):
         def __init__(self, *args, **kwargs):
             kwargs.setdefault("default", list)
@@ -17,15 +20,18 @@ class Migration(migrations.Migration):
         ('questions', '0006_add_question_number_in_pattern'),
     ]
 
-    operations = [
-        migrations.AlterField(
-            model_name='questionembedding',
-            name='combined_embedding',
-            field=MigrationVectorField(blank=True, null=True),
-        ),
-        migrations.AlterField(
-            model_name='questionembedding',
-            name='text_embedding',
-            field=MigrationVectorField(),
-        ),
-    ]
+    if PGVECTOR_AVAILABLE:
+        operations = [
+            migrations.AlterField(
+                model_name='questionembedding',
+                name='combined_embedding',
+                field=MigrationVectorField(blank=True, null=True),
+            ),
+            migrations.AlterField(
+                model_name='questionembedding',
+                name='text_embedding',
+                field=MigrationVectorField(),
+            ),
+        ]
+    else:
+        operations = []
