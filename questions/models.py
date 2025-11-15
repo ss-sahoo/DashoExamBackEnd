@@ -64,14 +64,16 @@ class Question(models.Model):
     
     # IMPORTANT: Questions belong to EXAMS, not Patterns
     # Patterns are templates only - questions are linked via ExamQuestion model
-    exam = models.ForeignKey(Exam, on_delete=models.CASCADE, related_name='questions', help_text='Exam this question belongs to')
+    exam = models.ForeignKey(Exam, on_delete=models.CASCADE, related_name='questions', help_text='Exam this question belongs to', null=True, blank=True)
     
     # Pattern section reference (for structure/organization only, not a foreign key)
     pattern_section_id = models.IntegerField(null=True, blank=True, help_text='Reference to pattern section for organization')
     pattern_section_name = models.CharField(max_length=200, blank=True, help_text='Name of the pattern section')
     
     # Position within the exam (1-based)
-    question_number = models.IntegerField(validators=[MinValueValidator(1)], help_text='Question number in the exam')
+    question_number = models.IntegerField(validators=[MinValueValidator(1)], help_text='Question number in the exam', null=True, blank=True)
+    # Position within the pattern (subject-wise numbering)
+    question_number_in_pattern = models.IntegerField(null=True, blank=True, help_text='Question number within the pattern/subject grouping')
     
     # References
     question_bank = models.ForeignKey(QuestionBank, on_delete=models.CASCADE, related_name='questions', null=True, blank=True)
@@ -92,7 +94,7 @@ class Question(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        ordering = ['exam', 'question_number']
+        ordering = ['question_number', 'created_at']
         unique_together = ['exam', 'question_number']
 
     def __str__(self):
@@ -203,7 +205,22 @@ class QuestionTemplate(models.Model):
 
 
 # AI & Vector Search Models
-from pgvector.django import VectorField
+from django.db import models
+
+try:
+    from pgvector.django import VectorField as _PgVectorField
+except ModuleNotFoundError:
+    class VectorField(models.JSONField):  # type: ignore
+        """
+        Lightweight fallback when pgvector extension isn't available.
+        Stores embeddings as JSON so that core flows keep working.
+        """
+        def __init__(self, *args, **kwargs):
+            kwargs.setdefault("default", list)
+            super().__init__(*args, **kwargs)
+else:
+    class VectorField(_PgVectorField):  # type: ignore
+        pass
 
 
 class QuestionEmbedding(models.Model):

@@ -4,31 +4,6 @@ import django.db.models.deletion
 from django.conf import settings
 from django.db import migrations, models
 
-# Handle optional pgvector import
-try:
-    import pgvector.django.vector
-    PGVECTOR_AVAILABLE = True
-except ImportError:
-    PGVECTOR_AVAILABLE = False
-    # Create a dummy vector field for migration compatibility
-    class DummyVectorField(models.TextField):
-        def __init__(self, *args, **kwargs):
-            # Remove pgvector-specific parameters
-            kwargs.pop('dimensions', None)
-            kwargs['default'] = ''
-            super().__init__(*args, **kwargs)
-    
-    class VectorField(DummyVectorField):
-        pass
-    
-    pgvector = type('pgvector', (), {
-        'django': type('django', (), {
-            'vector': type('vector', (), {
-                'VectorField': VectorField
-            })()
-        })()
-    })()
-
 
 class Migration(migrations.Migration):
 
@@ -42,8 +17,8 @@ class Migration(migrations.Migration):
             name='QuestionEmbedding',
             fields=[
                 ('question', models.OneToOneField(on_delete=django.db.models.deletion.CASCADE, primary_key=True, related_name='embedding', serialize=False, to='questions.question')),
-                ('text_embedding', pgvector.django.vector.VectorField(dimensions=1536)),
-                ('combined_embedding', pgvector.django.vector.VectorField(blank=True, dimensions=1536, null=True)),
+                ('text_embedding', models.JSONField(default=list)),
+                ('combined_embedding', models.JSONField(blank=True, null=True)),
                 ('embedding_model', models.CharField(default='text-embedding-ada-002', max_length=100)),
                 ('created_at', models.DateTimeField(auto_now_add=True)),
                 ('updated_at', models.DateTimeField(auto_now=True)),
