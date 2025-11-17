@@ -335,6 +335,10 @@ class ExamAttempt(models.Model):
     # Answers (for auto-save during exam)
     answers = models.JSONField(default=dict, blank=True, help_text="Student answers during exam (auto-saved)")
     
+    # Generated artifacts
+    answer_sheet_pdf = models.FileField(upload_to='answer_sheets/', null=True, blank=True)
+    answer_sheet_generated_at = models.DateTimeField(null=True, blank=True)
+    
     # Proctoring settings
     proctoring_enabled = models.BooleanField(default=True)
     max_violations_allowed = models.IntegerField(default=5)

@@ -50,6 +50,7 @@ from .evaluation_views import (
     update_evaluation_settings, get_pending_evaluations, batch_ai_evaluate
 )
 from .ai_proctoring import AIProctoringSystem
+from .pdf_utils import ensure_answer_sheet_pdf
 
 # Create a global instance
 proctoring_analyzer = AIProctoringSystem()
@@ -843,6 +844,25 @@ def get_exam_result(request, attempt_id):
     if not total_questions:
         total_questions = evaluations_qs.count() or Question.objects.filter(exam=exam).count() or (result.total_questions_attempted if result else 0)
     
+    answer_sheet_payload = ensure_answer_sheet_pdf(attempt)
+    answer_sheet_data = None
+    if answer_sheet_payload and getattr(attempt, 'answer_sheet_pdf', None):
+        pdf_url = attempt.answer_sheet_pdf.url if attempt.answer_sheet_pdf else None
+        if pdf_url:
+            pdf_url = request.build_absolute_uri(pdf_url)
+        branding_info = answer_sheet_payload.get('branding', {})
+        answer_sheet_data = {
+            'url': pdf_url,
+            'generated_at': attempt.answer_sheet_generated_at,
+            'branding': {
+                'logo_url': branding_info.get('institute_logo_url'),
+                'primary_hex': branding_info.get('primary_hex'),
+            },
+            'grading': answer_sheet_payload.get('grading'),
+            'invigilator_placeholders': answer_sheet_payload.get('invigilator_placeholders'),
+            'question_breakdown': answer_sheet_payload.get('question_breakdown'),
+        }
+    
     return Response({
         'attempt': ExamAttemptSerializer(attempt).data,
         'overall_score': correct_answers_count,
@@ -854,7 +874,50 @@ def get_exam_result(request, attempt_id):
         'section_results': section_results,
         'detailed_answers': detailed_answers,
         'submitted_at': attempt.submitted_at,
-        'time_spent': attempt.time_spent
+        'time_spent': attempt.time_spent,
+        'answer_sheet_pdf': answer_sheet_data
+    })
+
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def get_answer_sheet_pdf(request, attempt_id):
+    """Return (and optionally regenerate) the answer sheet PDF link for an attempt."""
+    try:
+        if request.user.role == 'student':
+            attempt = ExamAttempt.objects.get(id=attempt_id, student=request.user)
+        else:
+            attempt = ExamAttempt.objects.get(id=attempt_id)
+    except ExamAttempt.DoesNotExist:
+        return Response({'error': 'Exam attempt not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    if request.user.role != 'student' and request.user.role != 'super_admin':
+        if attempt.exam.institute != request.user.institute:
+            return Response({'error': 'Access denied'}, status=status.HTTP_403_FORBIDDEN)
+
+    regenerate_flag = str(request.query_params.get('regenerate', '')).lower() in ['1', 'true', 'yes']
+    context = ensure_answer_sheet_pdf(
+        attempt,
+        force_regenerate=regenerate_flag and request.user.role != 'student'
+    )
+    if not context or not attempt.answer_sheet_pdf:
+        return Response(
+            {'error': 'No evaluated questions available to build the answer sheet.'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    pdf_url = request.build_absolute_uri(attempt.answer_sheet_pdf.url)
+    branding_info = context.get('branding', {})
+    return Response({
+        'pdf_url': pdf_url,
+        'generated_at': attempt.answer_sheet_generated_at,
+        'branding': {
+            'logo_url': branding_info.get('institute_logo_url'),
+            'primary_hex': branding_info.get('primary_hex'),
+        },
+        'grading': context.get('grading'),
+        'invigilator_placeholders': context.get('invigilator_placeholders'),
+        'question_breakdown': context.get('question_breakdown'),
     })
 
 

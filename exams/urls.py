@@ -50,6 +50,7 @@ urlpatterns = [
     path('attempts/<int:attempt_id>/auto-save/', views.auto_save_answers, name='auto-save-answers'),
     path('validate-access/', views.validate_exam_access, name='validate-exam-access'),
     path('attempts/<int:attempt_id>/results/', views.get_exam_result, name='get-exam-result'),
+    path('attempts/<int:attempt_id>/answer-sheet/', views.get_answer_sheet_pdf, name='get-answer-sheet-pdf'),
     path('exams/<int:exam_id>/attempts/latest/', views.get_latest_exam_attempt, name='get-latest-exam-attempt'),
     path('violation-dashboard/', views.violation_dashboard, name='violation-dashboard'),
     path('student-dashboard/', views.student_dashboard_data, name='student-dashboard'),
