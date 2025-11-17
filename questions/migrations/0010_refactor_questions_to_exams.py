@@ -25,7 +25,19 @@ class Migration(migrations.Migration):
                 null=True  # Temporarily allow null for migration
             ),
         ),
-        
+
+        # Remove old pattern_section foreign key first (drops pattern_section_id column)
+        migrations.RemoveField(
+            model_name='question',
+            name='pattern_section',
+        ),
+
+        # Remove old question_number_in_pattern field (will be re-added later in 0012)
+        migrations.RemoveField(
+            model_name='question',
+            name='question_number_in_pattern',
+        ),
+
         # Add pattern section reference fields (not foreign keys)
         migrations.AddField(
             model_name='question',
@@ -45,7 +57,7 @@ class Migration(migrations.Migration):
                 max_length=200
             ),
         ),
-        
+
         # Add question_number field
         migrations.AddField(
             model_name='question',
@@ -56,19 +68,7 @@ class Migration(migrations.Migration):
                 null=True  # Temporarily allow null for migration
             ),
         ),
-        
-        # Remove old pattern_section foreign key
-        migrations.RemoveField(
-            model_name='question',
-            name='pattern_section',
-        ),
-        
-        # Remove old question_number_in_pattern field
-        migrations.RemoveField(
-            model_name='question',
-            name='question_number_in_pattern',
-        ),
-        
+
         # Update Meta
         migrations.AlterUniqueTogether(
             name='question',
