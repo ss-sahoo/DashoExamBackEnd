@@ -13,8 +13,15 @@ import hashlib
 import re
 
 import base64
-import cv2
-import numpy as np
+
+# OpenCV import - handle gracefully if not available
+try:
+    import cv2
+    OPENCV_AVAILABLE = True
+except ImportError as e:
+    logger.warning("OpenCV not available: %s. Face detection will be disabled.", e)
+    cv2 = None
+    OPENCV_AVAILABLE = False
 
 from .models import (
     Exam, ExamAttempt, ExamProctoring, ExamViolation, 
@@ -51,21 +58,34 @@ class AIProctoringSystem:
         }
         
         # Initialize lightweight face detector (Haar cascade)
-        try:
-            self.face_detector = cv2.CascadeClassifier(
-                cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
-            )
-            if self.face_detector.empty():
-                raise ValueError("Failed to load haarcascade_frontalface_default.xml")
-        except Exception as exc:
-            logger.error("Failed to initialize face detector: %s", exc)
-            self.face_detector = None
+        self.face_detector = None
+        if OPENCV_AVAILABLE and cv2 is not None:
+            try:
+                self.face_detector = cv2.CascadeClassifier(
+                    cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+                )
+                if self.face_detector.empty():
+                    logger.warning("Failed to load haarcascade_frontalface_default.xml - face detector disabled")
+                    self.face_detector = None
+            except Exception as exc:
+                logger.error("Failed to initialize face detector: %s", exc)
+                self.face_detector = None
 
     def analyze_snapshot(self, image_data: str) -> Dict:
         """
         Perform lightweight analysis on a webcam snapshot.
         Returns success flag, detected faces, and violation list.
         """
+        if not OPENCV_AVAILABLE or cv2 is None:
+            logger.warning("OpenCV not available; snapshot stored without analysis")
+            return {
+                'success': False,
+                'error': 'OpenCV not available',
+                'message': 'OpenCV library not installed or not available',
+                'violations': [],
+                'faces_detected': 0
+            }
+        
         try:
             img_bytes = base64.b64decode(image_data)
             np_arr = np.frombuffer(img_bytes, np.uint8)
