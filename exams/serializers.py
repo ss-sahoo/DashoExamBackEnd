@@ -1,4 +1,5 @@
 from django.conf import settings
+from django.utils import timezone
 from rest_framework import serializers
 from .models import (
     Exam, ExamAttempt, ExamResult, ExamInvitation, ExamAnalytics, ExamViolation, ExamProctoring, QuestionAnalytics,
@@ -234,10 +235,20 @@ class ExamProctoringSerializer(serializers.ModelSerializer):
         model = ExamProctoring
         fields = [
             'id', 'attempt', 'attempt_student', 'attempt_exam', 'webcam_enabled',
-            'snapshots', 'face_verification_passed', 'total_violations',
+            'snapshots', 'incidents', 'face_verification_passed', 'total_violations',
             'auto_disqualified', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
+
+
+class ProctoringIncidentSerializer(serializers.Serializer):
+    event_type = serializers.CharField(max_length=64)
+    timestamp = serializers.DateTimeField(required=False)
+    severity = serializers.ChoiceField(choices=['info', 'low', 'medium', 'high'], default='info')
+    details = serializers.JSONField(default=dict)
+
+    def validate_timestamp(self, value):
+        return value or timezone.now()
 
 
 class ExamAnalyticsSerializer(serializers.ModelSerializer):

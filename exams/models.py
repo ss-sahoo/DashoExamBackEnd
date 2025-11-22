@@ -423,6 +423,7 @@ class ExamProctoring(models.Model):
     attempt = models.OneToOneField(ExamAttempt, on_delete=models.CASCADE, related_name='proctoring')
     webcam_enabled = models.BooleanField(default=False)
     snapshots = models.JSONField(default=list, help_text="List of snapshot URLs with timestamps")
+    incidents = models.JSONField(default=list, help_text="Client-side proctoring incidents")
     face_verification_passed = models.BooleanField(default=False)
     total_violations = models.IntegerField(default=0)
     auto_disqualified = models.BooleanField(default=False)

@@ -40,7 +40,8 @@ from .serializers import (
     ExamInvitationSerializer, ExamAnalyticsSerializer, ExamStartSerializer, ExamSubmitSerializer,
     ExamViolationSerializer, ExamProctoringSerializer, ViolationLogSerializer, 
     ExamAccessSerializer, SnapshotUploadSerializer, ExamRescheduleSerializer,
-    ExamRescheduleRequestSerializer, ExamRescheduleReviewSerializer, TimezoneListSerializer
+    ExamRescheduleRequestSerializer, ExamRescheduleReviewSerializer, TimezoneListSerializer,
+    ProctoringIncidentSerializer
 )
 
 # Import evaluation views
@@ -599,7 +600,14 @@ def get_violations(request, attempt_id):
 @api_view(['POST'])
 @permission_classes([permissions.IsAuthenticated])
 def upload_snapshot(request, attempt_id):
-    """Upload webcam snapshot for proctoring analysis"""
+    """
+    Upload webcam snapshot for proctoring analysis.
+    
+    Storage Optimization (Selective Storage):
+    - If violations detected: Store full snapshot (timestamp, metadata, full analysis)
+    - If no violations: Store minimal metadata only (timestamp, face count, success flag)
+    This reduces storage by ~90% since most snapshots have no violations.
+    """
     try:
         attempt = ExamAttempt.objects.get(id=attempt_id, student=request.user)
     except ExamAttempt.DoesNotExist:
@@ -638,18 +646,43 @@ def upload_snapshot(request, attempt_id):
                     'message': 'AI analysis failed but snapshot stored'
                 }
         
-        # Store snapshot info
-        snapshot_info = {
-            'timestamp': serializer.validated_data['timestamp'].isoformat(),
-            'metadata': serializer.validated_data['metadata'],
-            'analysis': analysis
-        }
+        # Selective storage: Only store full snapshot when violations detected
+        # This reduces storage by ~90% since most snapshots have no violations
+        has_violations = (
+            not is_identity_verification 
+            and analysis.get('success') 
+            and analysis.get('violations') 
+            and len(analysis.get('violations', [])) > 0
+        )
         
-        proctoring.snapshots.append(snapshot_info)
+        if has_violations:
+            # Store full snapshot info with image data (violation detected - admin needs to see image)
+            snapshot_info = {
+                'timestamp': serializer.validated_data['timestamp'].isoformat(),
+                'metadata': serializer.validated_data['metadata'],
+                'analysis': analysis,
+                'image_data': serializer.validated_data['image_data'],  # Store base64 image for admin review
+                'stored_reason': 'violation_detected'
+            }
+            proctoring.snapshots.append(snapshot_info)
+        else:
+            # Store minimal metadata only (no violations - just audit trail)
+            minimal_info = {
+                'timestamp': serializer.validated_data['timestamp'].isoformat(),
+                'faces_detected': analysis.get('faces_detected', 0),
+                'success': analysis.get('success', False),
+                'stored_reason': 'metadata_only',
+                'has_violations': False
+            }
+            # Only include error if analysis failed
+            if not analysis.get('success'):
+                minimal_info['error'] = analysis.get('error', 'Unknown error')
+            proctoring.snapshots.append(minimal_info)
+        
         proctoring.save()
         
         # Log any violations found (only for proctoring snapshots, not identity verification)
-        if not is_identity_verification and analysis.get('success') and analysis.get('violations'):
+        if has_violations:
             for violation_data in analysis['violations']:
                 ExamViolation.objects.create(
                     attempt=attempt,
@@ -677,10 +710,156 @@ def upload_snapshot(request, attempt_id):
             'snapshot_uploaded': True,
             'analysis': analysis,
             'violation_count': attempt.violations_count,
-            'auto_disqualified': attempt.status == 'disqualified'
+            'auto_disqualified': attempt.status == 'disqualified',
+            'storage_type': 'full' if has_violations else 'metadata_only'  # Indicates what was stored
         }, status=status.HTTP_200_OK)
     
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+def log_proctoring_incident(request, attempt_id):
+    """Persist client-side proctoring incidents (tab switch, camera errors, etc.)."""
+    try:
+        attempt = ExamAttempt.objects.get(id=attempt_id, student=request.user)
+    except ExamAttempt.DoesNotExist:
+        return Response({'error': 'Exam attempt not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    if attempt.status in ['submitted', 'completed', 'disqualified']:
+        return Response({'error': 'Exam attempt already finished'}, status=status.HTTP_400_BAD_REQUEST)
+
+    serializer = ProctoringIncidentSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+
+    incident = serializer.validated_data
+    timestamp = incident.get('timestamp') or timezone.now()
+
+    proctoring, _ = ExamProctoring.objects.get_or_create(attempt=attempt)
+    entry = {
+        'event_type': incident['event_type'],
+        'severity': incident.get('severity', 'info'),
+        'timestamp': timestamp.isoformat(),
+        'details': incident.get('details', {})
+    }
+
+    incidents = list(proctoring.incidents or [])
+    incidents.append(entry)
+    proctoring.incidents = incidents[-200:]  # keep recent incidents
+    proctoring.save(update_fields=['incidents'])
+
+    violation_map = {
+        'tab_hidden': 'tab_switch',
+        'window_blur': 'window_blur',
+        'camera_error': 'no_face',
+        'camera_denied': 'no_face',
+        'snapshot_failed': 'no_face'
+    }
+
+    violation_created = False
+    mapped_violation = violation_map.get(incident['event_type'])
+
+    if mapped_violation and incident.get('severity') in ['medium', 'high']:
+        ExamViolation.objects.create(
+            attempt=attempt,
+            violation_type=mapped_violation,
+            metadata={
+                'source': 'client_incident',
+                'incident': entry
+            }
+        )
+        attempt.violations_count += 1
+        attempt.save(update_fields=['violations_count'])
+        proctoring.total_violations = attempt.violations_count
+        proctoring.save(update_fields=['total_violations'])
+        violation_created = True
+
+        if attempt.violations_count >= attempt.max_violations_allowed:
+            attempt.status = 'disqualified'
+            attempt.save(update_fields=['status'])
+            proctoring.auto_disqualified = True
+            proctoring.save(update_fields=['auto_disqualified'])
+
+    return Response({
+        'incident_logged': True,
+        'violation_created': violation_created,
+        'violation_count': attempt.violations_count,
+        'auto_disqualified': attempt.status == 'disqualified'
+    }, status=status.HTTP_200_OK)
+
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def get_proctoring_snapshots(request, attempt_id):
+    """
+    Get all proctoring snapshots for an attempt (admin view).
+    Returns snapshots with images (base64) for violation review.
+    """
+    try:
+        attempt = ExamAttempt.objects.get(id=attempt_id)
+    except ExamAttempt.DoesNotExist:
+        return Response({'error': 'Exam attempt not found'}, status=status.HTTP_404_NOT_FOUND)
+    
+    # Check permissions: student can see their own, admins can see any
+    user = request.user
+    if user.role == 'student' and attempt.student != user:
+        return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
+    
+    # Check if user has admin access to this exam
+    if user.role != 'student' and attempt.exam.institute != user.institute:
+        return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
+    
+    try:
+        proctoring = ExamProctoring.objects.get(attempt=attempt)
+    except ExamProctoring.DoesNotExist:
+        return Response({
+            'snapshots': [],
+            'total_count': 0,
+            'violation_snapshots': 0,
+            'metadata_only_snapshots': 0
+        }, status=status.HTTP_200_OK)
+    
+    snapshots = proctoring.snapshots or []
+    
+    # Filter to show only violation snapshots (with images) for admins
+    # Students see all their snapshots
+    filter_violations_only = request.query_params.get('violations_only', 'false').lower() == 'true'
+    
+    if filter_violations_only and user.role != 'student':
+        violation_snapshots = [
+            s for s in snapshots 
+            if s.get('stored_reason') == 'violation_detected' and s.get('image_data')
+        ]
+        snapshots = violation_snapshots
+    
+    # Format response with image data
+    formatted_snapshots = []
+    for snapshot in snapshots:
+        formatted = {
+            'timestamp': snapshot.get('timestamp'),
+            'stored_reason': snapshot.get('stored_reason', 'unknown'),
+            'has_image': bool(snapshot.get('image_data')),
+            'image_data': snapshot.get('image_data'),  # Base64 image (only for violations)
+            'metadata': snapshot.get('metadata', {}),
+            'analysis': snapshot.get('analysis', {}),
+            'violations': snapshot.get('analysis', {}).get('violations', []),
+            'faces_detected': snapshot.get('analysis', {}).get('faces_detected', snapshot.get('faces_detected', 0))
+        }
+        formatted_snapshots.append(formatted)
+    
+    # Count statistics
+    violation_count = len([s for s in snapshots if s.get('stored_reason') == 'violation_detected'])
+    metadata_count = len([s for s in snapshots if s.get('stored_reason') == 'metadata_only'])
+    
+    return Response({
+        'snapshots': formatted_snapshots,
+        'total_count': len(snapshots),
+        'violation_snapshots': violation_count,
+        'metadata_only_snapshots': metadata_count,
+        'attempt_id': attempt_id,
+        'student_name': attempt.student.get_full_name() or attempt.student.email,
+        'exam_title': attempt.exam.title
+    }, status=status.HTTP_200_OK)
 
 
 @api_view(['POST'])

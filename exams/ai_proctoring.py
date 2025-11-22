@@ -12,6 +12,10 @@ import logging
 import hashlib
 import re
 
+import base64
+import cv2
+import numpy as np
+
 from .models import (
     Exam, ExamAttempt, ExamProctoring, ExamViolation, 
     QuestionEvaluation
@@ -45,6 +49,88 @@ class AIProctoringSystem:
             'answer_similarity': 'Answer Similarity',
             'mouse_anomaly': 'Mouse Movement Anomaly'
         }
+        
+        # Initialize lightweight face detector (Haar cascade)
+        try:
+            self.face_detector = cv2.CascadeClassifier(
+                cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+            )
+            if self.face_detector.empty():
+                raise ValueError("Failed to load haarcascade_frontalface_default.xml")
+        except Exception as exc:
+            logger.error("Failed to initialize face detector: %s", exc)
+            self.face_detector = None
+
+    def analyze_snapshot(self, image_data: str) -> Dict:
+        """
+        Perform lightweight analysis on a webcam snapshot.
+        Returns success flag, detected faces, and violation list.
+        """
+        try:
+            img_bytes = base64.b64decode(image_data)
+            np_arr = np.frombuffer(img_bytes, np.uint8)
+            frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+
+            if frame is None:
+                raise ValueError("Unable to decode image")
+
+            height, width = frame.shape[:2]
+            grayscale = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+            violations = []
+
+            if not self.face_detector:
+                logger.warning("Face detector unavailable; skipping detection.")
+                return {
+                    'success': True,
+                    'message': 'Face detector unavailable; snapshot stored',
+                    'violations': [],
+                    'faces_detected': 0
+                }
+
+            faces = self.face_detector.detectMultiScale(grayscale, scaleFactor=1.1, minNeighbors=5)
+            face_count = len(faces)
+
+            if face_count == 0:
+                violations.append({
+                    'type': 'no_face',
+                    'severity': 'high',
+                    'message': 'No face detected in snapshot',
+                    'confidence': 0.9
+                })
+            elif face_count > 1:
+                violations.append({
+                    'type': 'multiple_faces',
+                    'severity': 'high',
+                    'message': f'{face_count} faces detected',
+                    'confidence': min(0.5 + 0.1 * face_count, 0.95)
+                })
+            else:
+                # Single face detected – simple heuristic for looking away
+                (x, y, w, h) = faces[0]
+                face_center_x = x + w / 2
+                normalized_x = face_center_x / width
+                if normalized_x < 0.25 or normalized_x > 0.75:
+                    violations.append({
+                        'type': 'looking_away',
+                        'severity': 'medium',
+                        'message': 'Face near screen edge; possible looking away',
+                        'confidence': 0.6
+                    })
+
+            return {
+                'success': True,
+                'faces_detected': face_count,
+                'violations': violations
+            }
+
+        except Exception as exc:
+            logger.error("Snapshot analysis failed: %s", exc)
+            return {
+                'success': False,
+                'error': str(exc),
+                'message': 'Snapshot stored but analysis failed'
+            }
     
     def analyze_exam_session(self, attempt_id: int) -> Dict:
         """Comprehensive analysis of an exam session for cheating detection"""
