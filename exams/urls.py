@@ -25,6 +25,15 @@ urlpatterns = [
     path('exams/<int:exam_id>/analytics-dashboard/', views.exam_analytics_dashboard, name='exam-analytics-dashboard'),
     path('exams/<int:exam_id>/results-dashboard/', views.exam_results_dashboard, name='exam-results-dashboard'),
     
+    # Enhanced Analytics Endpoints
+    path('exams/<int:exam_id>/analytics/statistics/', views.exam_statistics_detailed, name='exam-statistics-detailed'),
+    path('exams/<int:exam_id>/analytics/heatmap/', views.exam_heatmap_data, name='exam-heatmap-data'),
+    path('exams/<int:exam_id>/analytics/histogram/', views.exam_histogram_data, name='exam-histogram-data'),
+    path('exams/<int:exam_id>/analytics/boxplot/', views.exam_boxplot_data, name='exam-boxplot-data'),
+    path('exams/<int:exam_id>/analytics/questions/', views.exam_question_analytics, name='exam-question-analytics'),
+    path('exams/<int:exam_id>/analytics/evaluation/', views.exam_evaluation_analytics, name='exam-evaluation-analytics'),
+    path('exams/<int:exam_id>/analytics/graphs/', views.exam_performance_graphs, name='exam-performance-graphs'),
+    
     # Export and AI Insights
     path('exams/<int:exam_id>/export/', views.exam_export_data, name='exam-export-data'),
     path('exams/<int:exam_id>/export/csv/', views.export_exam_results_csv, name='export-exam-results-csv'),

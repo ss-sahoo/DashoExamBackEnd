@@ -15,7 +15,8 @@ import csv
 import io
 import uuid
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
+import statistics
 from reportlab.lib.pagesizes import letter, A4
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -1322,7 +1323,7 @@ def student_dashboard_data(request):
 @api_view(['GET'])
 @permission_classes([permissions.IsAuthenticated])
 def exam_analytics_dashboard(request, exam_id):
-    """Get comprehensive analytics dashboard for an exam"""
+    """Get comprehensive analytics dashboard for an exam with advanced filtering"""
     try:
         exam = Exam.objects.get(id=exam_id)
     except Exam.DoesNotExist:
@@ -1332,17 +1333,81 @@ def exam_analytics_dashboard(request, exam_id):
     if not user.can_manage_exams() or exam.institute != user.institute:
         return Response({'error': 'Access denied'}, status=status.HTTP_403_FORBIDDEN)
     
+    # Get filter parameters
+    date_from = request.GET.get('date_from')
+    date_to = request.GET.get('date_to')
+    score_min = request.GET.get('score_min')
+    score_max = request.GET.get('score_max')
+    status_filter = request.GET.get('status', 'all')
+    section_id = request.GET.get('section_id')
+    subject = request.GET.get('subject')
+    violations_only = request.GET.get('violations_only', 'false').lower() == 'true'
+    
     # Get or create analytics
     analytics, created = ExamAnalytics.objects.get_or_create(exam=exam)
     
-    # Get all attempts for this exam
-    attempts = ExamAttempt.objects.filter(exam=exam, status__in=['submitted', 'auto_submitted'])
+    # Get all attempts for this exam with filters
+    attempts = ExamAttempt.objects.filter(exam=exam)
+    
+    # Apply status filter
+    if status_filter == 'all':
+        attempts = attempts.filter(status__in=['submitted', 'auto_submitted'])
+    else:
+        attempts = attempts.filter(status=status_filter)
+    
+    # Apply date range filter
+    if date_from:
+        try:
+            from datetime import datetime as dt
+            date_from_obj = dt.fromisoformat(date_from.replace('Z', '+00:00'))
+            if timezone.is_aware(date_from_obj):
+                date_from_obj = timezone.make_naive(date_from_obj, timezone.utc)
+            attempts = attempts.filter(submitted_at__gte=date_from_obj)
+        except (ValueError, AttributeError, TypeError):
+            pass
+    
+    if date_to:
+        try:
+            from datetime import datetime as dt
+            date_to_obj = dt.fromisoformat(date_to.replace('Z', '+00:00'))
+            if timezone.is_aware(date_to_obj):
+                date_to_obj = timezone.make_naive(date_to_obj, timezone.utc)
+            attempts = attempts.filter(submitted_at__lte=date_to_obj)
+        except (ValueError, AttributeError, TypeError):
+            pass
+    
+    # Apply violations filter
+    if violations_only:
+        attempts = attempts.filter(violations_count__gt=0)
     
     # Calculate statistics
     scores = [float(attempt.score) for attempt in attempts if attempt.score is not None]
     times = [attempt.time_spent for attempt in attempts if attempt.time_spent > 0]
     
-    # Basic statistics
+    # Apply score range filter
+    if score_min:
+        try:
+            score_min_float = float(score_min)
+            scores = [s for s in scores if s >= score_min_float]
+        except (ValueError, TypeError):
+            pass
+    
+    if score_max:
+        try:
+            score_max_float = float(score_max)
+            scores = [s for s in scores if s <= score_max_float]
+        except (ValueError, TypeError):
+            pass
+    
+    # Calculate percentiles
+    def calculate_percentile(data, percentile):
+        if not data:
+            return 0
+        sorted_data = sorted(data)
+        index = int(len(sorted_data) * percentile / 100)
+        return sorted_data[min(index, len(sorted_data) - 1)]
+    
+    # Basic statistics with percentiles
     stats = {
         'total_attempts': attempts.count(),
         'total_invited': ExamInvitation.objects.filter(exam=exam).count(),
@@ -1356,6 +1421,13 @@ def exam_analytics_dashboard(request, exam_id):
         'std_deviation': calculate_std_deviation(scores) if scores else 0,
         'variance': calculate_variance(scores) if scores else 0,
         'average_time_spent': sum(times) / len(times) if times else 0,
+        'percentiles': {
+            'p25': calculate_percentile(scores, 25),
+            'p50': calculate_percentile(scores, 50),
+            'p75': calculate_percentile(scores, 75),
+            'p90': calculate_percentile(scores, 90),
+            'p95': calculate_percentile(scores, 95),
+        } if scores else {},
     }
     
     # Score distribution (histogram data)
@@ -1418,10 +1490,23 @@ def exam_analytics_dashboard(request, exam_id):
             'max_marks': qa.max_marks
         })
     
-    # Heat map data (subject-wise performance)
+    # Heat map data (subject-wise performance) with section/subject filtering
     heatmap_data = []
     if hasattr(exam, 'pattern') and exam.pattern:
-        for section in exam.pattern.sections.all():
+        sections = exam.pattern.sections.all()
+        
+        # Apply section filter
+        if section_id:
+            try:
+                sections = sections.filter(id=int(section_id))
+            except (ValueError, TypeError):
+                pass
+        
+        # Apply subject filter
+        if subject:
+            sections = sections.filter(subject__icontains=subject)
+        
+        for section in sections:
             section_scores = []
             for attempt in attempts:
                 if hasattr(attempt, 'result') and attempt.result:
@@ -1431,11 +1516,13 @@ def exam_analytics_dashboard(request, exam_id):
             questions_count = section.end_question - section.start_question + 1
             total_marks = section.marks_per_question * questions_count
             heatmap_data.append({
+                'section_id': section.id,
                 'section_name': section.name,
                 'subject': section.subject,
                 'average_score': sum(section_scores) / len(section_scores) if section_scores else 0,
                 'max_marks': total_marks,
-                'total_questions': questions_count
+                'total_questions': questions_count,
+                'total_attempts': len(section_scores)
             })
     
     return Response({
@@ -1453,6 +1540,650 @@ def exam_analytics_dashboard(request, exam_id):
             'scores': scores,
             'quartiles': calculate_quartiles(scores) if scores else {}
         }
+    })
+
+
+def get_filtered_attempts(exam, request):
+    """Helper function to get filtered attempts based on query parameters"""
+    attempts = ExamAttempt.objects.filter(exam=exam)
+    
+    # Get filter parameters
+    date_from = request.GET.get('date_from')
+    date_to = request.GET.get('date_to')
+    score_min = request.GET.get('score_min')
+    score_max = request.GET.get('score_max')
+    status_filter = request.GET.get('status', 'all')
+    section_id = request.GET.get('section_id')
+    subject = request.GET.get('subject')
+    violations_only = request.GET.get('violations_only', 'false').lower() == 'true'
+    
+    # Apply status filter
+    if status_filter == 'all':
+        attempts = attempts.filter(status__in=['submitted', 'auto_submitted'])
+    else:
+        attempts = attempts.filter(status=status_filter)
+    
+    # Apply date range filter
+    if date_from:
+        try:
+            from datetime import datetime as dt
+            date_from_obj = dt.fromisoformat(date_from.replace('Z', '+00:00'))
+            if timezone.is_aware(date_from_obj):
+                date_from_obj = timezone.make_naive(date_from_obj, timezone.utc)
+            attempts = attempts.filter(submitted_at__gte=date_from_obj)
+        except (ValueError, AttributeError, TypeError):
+            pass
+    
+    if date_to:
+        try:
+            from datetime import datetime as dt
+            date_to_obj = dt.fromisoformat(date_to.replace('Z', '+00:00'))
+            if timezone.is_aware(date_to_obj):
+                date_to_obj = timezone.make_naive(date_to_obj, timezone.utc)
+            attempts = attempts.filter(submitted_at__lte=date_to_obj)
+        except (ValueError, AttributeError, TypeError):
+            pass
+    
+    # Apply violations filter
+    if violations_only:
+        attempts = attempts.filter(violations_count__gt=0)
+    
+    return attempts, {
+        'date_from': date_from,
+        'date_to': date_to,
+        'score_min': score_min,
+        'score_max': score_max,
+        'status': status_filter,
+        'section_id': section_id,
+        'subject': subject,
+        'violations_only': violations_only
+    }
+
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def exam_statistics_detailed(request, exam_id):
+    """Get detailed statistics for an exam with advanced filtering"""
+    try:
+        exam = Exam.objects.get(id=exam_id)
+    except Exam.DoesNotExist:
+        return Response({'error': 'Exam not found'}, status=status.HTTP_404_NOT_FOUND)
+    
+    user = request.user
+    if not user.can_manage_exams() or exam.institute != user.institute:
+        return Response({'error': 'Access denied'}, status=status.HTTP_403_FORBIDDEN)
+    
+    attempts, filters = get_filtered_attempts(exam, request)
+    
+    # Calculate statistics
+    scores = [float(attempt.score) for attempt in attempts if attempt.score is not None]
+    times = [attempt.time_spent for attempt in attempts if attempt.time_spent > 0]
+    percentages = [float(attempt.percentage) for attempt in attempts if attempt.percentage is not None]
+    
+    # Apply score range filter
+    score_min = request.GET.get('score_min')
+    score_max = request.GET.get('score_max')
+    if score_min:
+        try:
+            score_min_float = float(score_min)
+            scores = [s for s in scores if s >= score_min_float]
+            percentages = [p for p in percentages if p >= (score_min_float / exam.total_marks * 100) if exam.total_marks > 0]
+        except (ValueError, TypeError):
+            pass
+    
+    if score_max:
+        try:
+            score_max_float = float(score_max)
+            scores = [s for s in scores if s <= score_max_float]
+            percentages = [p for p in percentages if p <= (score_max_float / exam.total_marks * 100) if exam.total_marks > 0]
+        except (ValueError, TypeError):
+            pass
+    
+    def calculate_percentile(data, percentile):
+        if not data:
+            return 0
+        sorted_data = sorted(data)
+        index = int(len(sorted_data) * percentile / 100)
+        return sorted_data[min(index, len(sorted_data) - 1)]
+    
+    # Detailed statistics
+    stats = {
+        'total_attempts': attempts.count(),
+        'total_invited': ExamInvitation.objects.filter(exam=exam).count(),
+        'completion_rate': (attempts.count() / max(1, ExamInvitation.objects.filter(exam=exam).count())) * 100,
+        'average_score': sum(scores) / len(scores) if scores else 0,
+        'highest_score': max(scores) if scores else 0,
+        'lowest_score': min(scores) if scores else 0,
+        'median_score': calculate_percentile(scores, 50) if scores else 0,
+        'mode_score': max(set(scores), key=scores.count) if scores else 0,
+        'range_score': max(scores) - min(scores) if scores else 0,
+        'std_deviation': calculate_std_deviation(scores) if scores else 0,
+        'variance': calculate_variance(scores) if scores else 0,
+        'average_time_spent': sum(times) / len(times) if times else 0,
+        'min_time_spent': min(times) if times else 0,
+        'max_time_spent': max(times) if times else 0,
+        'average_percentage': sum(percentages) / len(percentages) if percentages else 0,
+        'percentiles': {
+            'p25': calculate_percentile(scores, 25),
+            'p50': calculate_percentile(scores, 50),
+            'p75': calculate_percentile(scores, 75),
+            'p90': calculate_percentile(scores, 90),
+            'p95': calculate_percentile(scores, 95),
+        } if scores else {},
+        'violation_stats': {
+            'total_violations': sum(attempt.violations_count for attempt in attempts),
+            'attempts_with_violations': attempts.filter(violations_count__gt=0).count(),
+            'average_violations': sum(attempt.violations_count for attempt in attempts) / max(1, attempts.count()),
+        },
+        'time_distribution': {
+            'submissions_by_hour': {},
+        }
+    }
+    
+    # Time-based analytics
+    for attempt in attempts:
+        if attempt.submitted_at:
+            hour = attempt.submitted_at.hour
+            stats['time_distribution']['submissions_by_hour'][hour] = stats['time_distribution']['submissions_by_hour'].get(hour, 0) + 1
+    
+    return Response({
+        'exam': {
+            'id': exam.id,
+            'title': exam.title,
+            'total_questions': exam.total_questions,
+            'total_marks': exam.total_marks
+        },
+        'statistics': stats,
+        'filters_applied': filters
+    })
+
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def exam_heatmap_data(request, exam_id):
+    """Get enhanced heatmap data with section/subject breakdown"""
+    try:
+        exam = Exam.objects.get(id=exam_id)
+    except Exam.DoesNotExist:
+        return Response({'error': 'Exam not found'}, status=status.HTTP_404_NOT_FOUND)
+    
+    user = request.user
+    if not user.can_manage_exams() or exam.institute != user.institute:
+        return Response({'error': 'Access denied'}, status=status.HTTP_403_FORBIDDEN)
+    
+    attempts, filters = get_filtered_attempts(exam, request)
+    
+    # Heat map data (subject-wise performance)
+    heatmap_data = []
+    if hasattr(exam, 'pattern') and exam.pattern:
+        sections = exam.pattern.sections.all()
+        
+        # Apply section filter
+        if filters['section_id']:
+            try:
+                sections = sections.filter(id=int(filters['section_id']))
+            except (ValueError, TypeError):
+                pass
+        
+        # Apply subject filter
+        if filters['subject']:
+            sections = sections.filter(subject__icontains=filters['subject'])
+        
+        for section in sections:
+            section_scores = []
+            section_percentages = []
+            
+            for attempt in attempts:
+                if hasattr(attempt, 'result') and attempt.result:
+                    section_score = attempt.result.section_scores.get(str(section.id), 0)
+                    if section_score > 0:
+                        section_scores.append(float(section_score))
+                        questions_count = section.end_question - section.start_question + 1
+                        total_marks = section.marks_per_question * questions_count
+                        if total_marks > 0:
+                            section_percentages.append((section_score / total_marks) * 100)
+            
+            questions_count = section.end_question - section.start_question + 1
+            total_marks = section.marks_per_question * questions_count
+            
+            avg_score = sum(section_scores) / len(section_scores) if section_scores else 0
+            avg_percentage = sum(section_percentages) / len(section_percentages) if section_percentages else 0
+            
+            heatmap_data.append({
+                'section_id': section.id,
+                'section_name': section.name,
+                'subject': section.subject,
+                'average_score': round(avg_score, 2),
+                'average_percentage': round(avg_percentage, 2),
+                'max_marks': total_marks,
+                'total_questions': questions_count,
+                'total_attempts': len(section_scores),
+                'performance_level': 'excellent' if avg_percentage >= 80 else 'good' if avg_percentage >= 60 else 'average' if avg_percentage >= 40 else 'poor'
+            })
+    
+    return Response({
+        'exam': {
+            'id': exam.id,
+            'title': exam.title,
+        },
+        'heatmap_data': heatmap_data,
+        'filters_applied': filters
+    })
+
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def exam_histogram_data(request, exam_id):
+    """Get histogram data with customizable bins and filters"""
+    try:
+        exam = Exam.objects.get(id=exam_id)
+    except Exam.DoesNotExist:
+        return Response({'error': 'Exam not found'}, status=status.HTTP_404_NOT_FOUND)
+    
+    user = request.user
+    if not user.can_manage_exams() or exam.institute != user.institute:
+        return Response({'error': 'Access denied'}, status=status.HTTP_403_FORBIDDEN)
+    
+    attempts, filters = get_filtered_attempts(exam, request)
+    
+    # Get bin size from query params (default: 10)
+    bin_size = int(request.GET.get('bin_size', 10))
+    use_percentage = request.GET.get('use_percentage', 'false').lower() == 'true'
+    
+    # Calculate scores
+    if use_percentage:
+        scores = [float(attempt.percentage) for attempt in attempts if attempt.percentage is not None]
+        max_value = 100
+    else:
+        scores = [float(attempt.score) for attempt in attempts if attempt.score is not None]
+        max_value = float(exam.total_marks) if exam.total_marks else 100
+    
+    # Apply score range filter
+    score_min = request.GET.get('score_min')
+    score_max = request.GET.get('score_max')
+    if score_min:
+        try:
+            score_min_float = float(score_min)
+            scores = [s for s in scores if s >= score_min_float]
+        except (ValueError, TypeError):
+            pass
+    
+    if score_max:
+        try:
+            score_max_float = float(score_max)
+            scores = [s for s in scores if s <= score_max_float]
+        except (ValueError, TypeError):
+            pass
+    
+    # Create bins
+    histogram_data = []
+    num_bins = int(max_value / bin_size) + (1 if max_value % bin_size > 0 else 0)
+    
+    for i in range(num_bins):
+        min_score = i * bin_size
+        max_score = min((i + 1) * bin_size - 1, max_value)
+        count = len([s for s in scores if min_score <= s <= max_score])
+        percentage = (count / len(scores) * 100) if scores else 0
+        
+        histogram_data.append({
+            'range': f"{min_score}-{max_score}",
+            'min': min_score,
+            'max': max_score,
+            'count': count,
+            'percentage': round(percentage, 2)
+        })
+    
+    # Calculate statistics for overlay
+    mean_score = sum(scores) / len(scores) if scores else 0
+    median_score = sorted(scores)[len(scores)//2] if scores else 0
+    
+    return Response({
+        'exam': {
+            'id': exam.id,
+            'title': exam.title,
+        },
+        'histogram_data': histogram_data,
+        'statistics': {
+            'mean': round(mean_score, 2),
+            'median': round(median_score, 2),
+            'total_data_points': len(scores),
+        },
+        'filters_applied': filters,
+        'bin_size': bin_size,
+        'use_percentage': use_percentage
+    })
+
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def exam_boxplot_data(request, exam_id):
+    """Get enhanced box plot data with outliers"""
+    try:
+        exam = Exam.objects.get(id=exam_id)
+    except Exam.DoesNotExist:
+        return Response({'error': 'Exam not found'}, status=status.HTTP_404_NOT_FOUND)
+    
+    user = request.user
+    if not user.can_manage_exams() or exam.institute != user.institute:
+        return Response({'error': 'Access denied'}, status=status.HTTP_403_FORBIDDEN)
+    
+    attempts, filters = get_filtered_attempts(exam, request)
+    
+    # Get section filter for comparison
+    section_id = request.GET.get('section_id')
+    compare_by_section = section_id is None and hasattr(exam, 'pattern') and exam.pattern
+    
+    scores = [float(attempt.score) for attempt in attempts if attempt.score is not None]
+    
+    # Apply score range filter
+    score_min = request.GET.get('score_min')
+    score_max = request.GET.get('score_max')
+    if score_min:
+        try:
+            score_min_float = float(score_min)
+            scores = [s for s in scores if s >= score_min_float]
+        except (ValueError, TypeError):
+            pass
+    
+    if score_max:
+        try:
+            score_max_float = float(score_max)
+            scores = [s for s in scores if s <= score_max_float]
+        except (ValueError, TypeError):
+            pass
+    
+    if compare_by_section:
+        # Return box plot data for each section
+        boxplot_data = []
+        for section in exam.pattern.sections.all():
+            section_scores = []
+            for attempt in attempts:
+                if hasattr(attempt, 'result') and attempt.result:
+                    section_score = attempt.result.section_scores.get(str(section.id), 0)
+                    if section_score > 0:
+                        section_scores.append(float(section_score))
+            
+            if section_scores:
+                quartiles = calculate_quartiles(section_scores)
+                iqr = quartiles['q3'] - quartiles['q1']
+                lower_bound = quartiles['q1'] - 1.5 * iqr
+                upper_bound = quartiles['q3'] + 1.5 * iqr
+                outliers = [s for s in section_scores if s < lower_bound or s > upper_bound]
+                
+                boxplot_data.append({
+                    'section_id': section.id,
+                    'section_name': section.name,
+                    'subject': section.subject,
+                    'scores': section_scores,
+                    'quartiles': quartiles,
+                    'outliers': outliers,
+                    'iqr': iqr,
+                    'lower_bound': lower_bound,
+                    'upper_bound': upper_bound
+                })
+        
+        return Response({
+            'exam': {
+                'id': exam.id,
+                'title': exam.title,
+            },
+            'boxplot_data': boxplot_data,
+            'filters_applied': filters
+        })
+    else:
+        # Single box plot for all scores
+        quartiles = calculate_quartiles(scores) if scores else {}
+        iqr = quartiles.get('q3', 0) - quartiles.get('q1', 0) if quartiles else 0
+        lower_bound = quartiles.get('q1', 0) - 1.5 * iqr if quartiles else 0
+        upper_bound = quartiles.get('q3', 0) + 1.5 * iqr if quartiles else 0
+        outliers = [s for s in scores if s < lower_bound or s > upper_bound] if scores else []
+        
+        return Response({
+            'exam': {
+                'id': exam.id,
+                'title': exam.title,
+            },
+            'boxplot_data': {
+                'scores': scores,
+                'quartiles': quartiles,
+                'outliers': outliers,
+                'iqr': iqr,
+                'lower_bound': lower_bound,
+                'upper_bound': upper_bound
+            },
+            'filters_applied': filters
+        })
+
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def exam_question_analytics(request, exam_id):
+    """Get detailed question-wise analysis with filters"""
+    try:
+        exam = Exam.objects.get(id=exam_id)
+    except Exam.DoesNotExist:
+        return Response({'error': 'Exam not found'}, status=status.HTTP_404_NOT_FOUND)
+    
+    user = request.user
+    if not user.can_manage_exams() or exam.institute != user.institute:
+        return Response({'error': 'Access denied'}, status=status.HTTP_403_FORBIDDEN)
+    
+    attempts, filters = get_filtered_attempts(exam, request)
+    
+    # Question-wise analysis
+    question_analytics = []
+    from .models import QuestionEvaluation
+    
+    for i in range(1, exam.total_questions + 1):
+        qa, created = QuestionAnalytics.objects.get_or_create(
+            exam=exam, 
+            question_number=i,
+            defaults={'question_text': f'Question {i}'}
+        )
+        
+        # Get question evaluations for filtered attempts
+        evaluations = QuestionEvaluation.objects.filter(
+            attempt__in=attempts,
+            question_number=i
+        )
+        
+        correct_count = evaluations.filter(is_correct=True).count()
+        wrong_count = evaluations.filter(is_correct=False, is_answered=True).count()
+        unattempted_count = len(attempts) - evaluations.filter(is_answered=True).count()
+        total_attempts = evaluations.count()
+        
+        # Calculate average time spent
+        avg_time = evaluations.aggregate(avg_time=Avg('time_spent'))['avg_time'] or 0
+        
+        # Calculate average score
+        avg_score = evaluations.aggregate(avg_score=Avg('marks_obtained'))['avg_score'] or 0
+        
+        question_analytics.append({
+            'question_number': i,
+            'question_text': qa.question_text,
+            'total_attempts': total_attempts,
+            'correct_attempts': correct_count,
+            'wrong_attempts': wrong_count,
+            'unattempted': unattempted_count,
+            'success_rate': (correct_count / max(1, total_attempts)) * 100,
+            'average_score': float(avg_score),
+            'max_marks': float(qa.max_marks),
+            'average_time_spent': float(avg_time),
+            'difficulty_level': 'easy' if (correct_count / max(1, total_attempts)) >= 0.7 else 'medium' if (correct_count / max(1, total_attempts)) >= 0.4 else 'hard'
+        })
+    
+    return Response({
+        'exam': {
+            'id': exam.id,
+            'title': exam.title,
+            'total_questions': exam.total_questions,
+        },
+        'question_analytics': question_analytics,
+        'filters_applied': filters
+    })
+
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def exam_evaluation_analytics(request, exam_id):
+    """Get evaluation progress and grading analytics"""
+    try:
+        exam = Exam.objects.get(id=exam_id)
+    except Exam.DoesNotExist:
+        return Response({'error': 'Exam not found'}, status=status.HTTP_404_NOT_FOUND)
+    
+    user = request.user
+    if not user.can_manage_exams() or exam.institute != user.institute:
+        return Response({'error': 'Access denied'}, status=status.HTTP_403_FORBIDDEN)
+    
+    attempts, filters = get_filtered_attempts(exam, request)
+    
+    from .models import QuestionEvaluation, EvaluationProgress, EvaluationBatch
+    
+    # Get evaluation progress
+    progress, created = EvaluationProgress.objects.get_or_create(exam=exam)
+    
+    # Get all evaluations for filtered attempts
+    evaluations = QuestionEvaluation.objects.filter(attempt__in=attempts)
+    
+    # Calculate evaluation statistics
+    total_questions = exam.total_questions * attempts.count()
+    evaluated_questions = evaluations.count()
+    pending_questions = total_questions - evaluated_questions
+    
+    # Evaluation status breakdown
+    auto_evaluated = evaluations.filter(evaluation_status='auto_evaluated').count()
+    manually_evaluated = evaluations.filter(evaluation_status='manually_evaluated').count()
+    pending_evaluation = evaluations.filter(evaluation_status='pending').count()
+    
+    # Question-wise evaluation status
+    question_eval_status = []
+    for i in range(1, exam.total_questions + 1):
+        q_evaluations = evaluations.filter(question_number=i)
+        q_total = attempts.count()
+        q_evaluated = q_evaluations.count()
+        q_pending = q_total - q_evaluated
+        
+        question_eval_status.append({
+            'question_number': i,
+            'total_attempts': q_total,
+            'evaluated': q_evaluated,
+            'pending': q_pending,
+            'completion_rate': (q_evaluated / q_total * 100) if q_total > 0 else 0
+        })
+    
+    # Batch evaluation progress
+    batches = EvaluationBatch.objects.filter(exam=exam).order_by('-created_at')
+    batch_progress = []
+    for batch in batches[:10]:  # Last 10 batches
+        batch_progress.append({
+            'id': batch.id,
+            'created_at': batch.created_at.isoformat(),
+            'total_questions': batch.total_questions,
+            'evaluated_questions': batch.evaluated_questions,
+            'status': batch.status,
+            'progress_percentage': (batch.evaluated_questions / batch.total_questions * 100) if batch.total_questions > 0 else 0
+        })
+    
+    return Response({
+        'exam': {
+            'id': exam.id,
+            'title': exam.title,
+            'total_questions': exam.total_questions,
+        },
+        'evaluation_statistics': {
+            'total_questions': total_questions,
+            'evaluated_questions': evaluated_questions,
+            'pending_questions': pending_questions,
+            'completion_rate': (evaluated_questions / total_questions * 100) if total_questions > 0 else 0,
+            'auto_evaluated': auto_evaluated,
+            'manually_evaluated': manually_evaluated,
+            'pending_evaluation': pending_evaluation,
+        },
+        'question_evaluation_status': question_eval_status,
+        'batch_progress': batch_progress,
+        'filters_applied': filters
+    })
+
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def exam_performance_graphs(request, exam_id):
+    """Get time-series and trend graphs data"""
+    try:
+        exam = Exam.objects.get(id=exam_id)
+    except Exam.DoesNotExist:
+        return Response({'error': 'Exam not found'}, status=status.HTTP_404_NOT_FOUND)
+    
+    user = request.user
+    if not user.can_manage_exams() or exam.institute != user.institute:
+        return Response({'error': 'Access denied'}, status=status.HTTP_403_FORBIDDEN)
+    
+    attempts, filters = get_filtered_attempts(exam, request)
+    
+    # Score trend over time
+    score_trend = []
+    for attempt in attempts.order_by('submitted_at'):
+        if attempt.submitted_at and attempt.score is not None:
+            score_trend.append({
+                'date': attempt.submitted_at.isoformat(),
+                'score': float(attempt.score),
+                'percentage': float(attempt.percentage) if attempt.percentage else 0,
+                'time_spent': attempt.time_spent
+            })
+    
+    # Submission time distribution (by hour)
+    submission_distribution = {}
+    for attempt in attempts:
+        if attempt.submitted_at:
+            hour = attempt.submitted_at.hour
+            submission_distribution[hour] = submission_distribution.get(hour, 0) + 1
+    
+    # Performance by section
+    section_performance = []
+    if hasattr(exam, 'pattern') and exam.pattern:
+        for section in exam.pattern.sections.all():
+            section_scores = []
+            for attempt in attempts:
+                if hasattr(attempt, 'result') and attempt.result:
+                    section_score = attempt.result.section_scores.get(str(section.id), 0)
+                    if section_score > 0:
+                        section_scores.append(float(section_score))
+            
+            if section_scores:
+                questions_count = section.end_question - section.start_question + 1
+                total_marks = section.marks_per_question * questions_count
+                avg_score = sum(section_scores) / len(section_scores)
+                avg_percentage = (avg_score / total_marks * 100) if total_marks > 0 else 0
+                
+                section_performance.append({
+                    'section_name': section.name,
+                    'subject': section.subject,
+                    'average_score': round(avg_score, 2),
+                    'average_percentage': round(avg_percentage, 2),
+                    'total_attempts': len(section_scores)
+                })
+    
+    # Time vs Score scatter plot data
+    time_score_data = []
+    for attempt in attempts:
+        if attempt.time_spent > 0 and attempt.score is not None:
+            time_score_data.append({
+                'time_spent': attempt.time_spent,
+                'score': float(attempt.score),
+                'percentage': float(attempt.percentage) if attempt.percentage else 0
+            })
+    
+    return Response({
+        'exam': {
+            'id': exam.id,
+            'title': exam.title,
+        },
+        'score_trend': score_trend,
+        'submission_distribution': submission_distribution,
+        'section_performance': section_performance,
+        'time_score_data': time_score_data,
+        'filters_applied': filters
     })
 
 
