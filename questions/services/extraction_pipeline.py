@@ -4,7 +4,7 @@ Extraction Pipeline - Orchestrates the complete extraction process
 import logging
 import time
 from uuid import UUID
-from typing import Optional
+from typing import Optional, Tuple, List, Dict
 from django.utils import timezone
 
 from questions.models import ExtractionJob, ExtractedQuestion
@@ -101,7 +101,7 @@ class ExtractionPipeline:
             
             raise
     
-    def _parse_file(self, job: ExtractionJob) -> tuple[str, bool]:
+    def _parse_file(self, job: ExtractionJob) -> Tuple[str, bool]:
         """
         Parse file to extract text content
         
@@ -302,7 +302,7 @@ class ExtractionPipeline:
         logger.info(f"Saved {saved_count}/{len(questions)} extracted questions")
         return saved_count
     
-    def _suggest_mapping(self, question_data: dict, context: dict) -> tuple:
+    def _suggest_mapping(self, question_data: dict, context: dict) -> Tuple:
         """
         Suggest subject and section for a question
         
