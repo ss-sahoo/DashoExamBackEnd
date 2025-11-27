@@ -1,7 +1,14 @@
-from django.urls import path
+from django.urls import path, include
+from rest_framework.routers import DefaultRouter
 from . import views
+from . import extraction_views
 # Temporarily disabled AI/RAG features for deployment
 # from . import rag_views
+
+# Router for extraction viewsets
+extraction_router = DefaultRouter()
+extraction_router.register(r'extraction-jobs', extraction_views.ExtractionJobViewSet, basename='extraction-job')
+extraction_router.register(r'extracted-questions', extraction_views.ExtractedQuestionViewSet, basename='extracted-question')
 
 urlpatterns = [
     # Questions
@@ -34,6 +41,20 @@ urlpatterns = [
     
     # Statistics
     path('statistics/', views.question_statistics, name='question-statistics'),
+    
+    # AI Question Extraction Endpoints
+    path('bulk-extract/', extraction_views.ExtractionJobViewSet.as_view({'post': 'upload_file'}), name='bulk-extract'),
+    path('extraction-status/<uuid:pk>/', extraction_views.ExtractionJobViewSet.as_view({'get': 'get_status'}), name='extraction-status'),
+    path('extracted/<uuid:pk>/', extraction_views.ExtractionJobViewSet.as_view({'get': 'get_extracted_questions'}), name='extracted-questions'),
+    path('bulk-import-extracted/', extraction_views.bulk_import_questions, name='bulk-import-extracted'),
+    path('extraction-history/', extraction_views.extraction_history, name='extraction-history'),
+    
+    # Enhanced Extraction Endpoints
+    path('pattern-structure/<int:pattern_id>/', extraction_views.get_pattern_structure, name='pattern-structure'),
+    path('analyze-mismatches/', extraction_views.analyze_extraction_mismatches, name='analyze-mismatches'),
+    
+    # Include extraction router URLs
+    path('', include(extraction_router.urls)),
     
     # AI & RAG Endpoints - Temporarily disabled for deployment
     # Uncomment these when you have more server resources and install AI packages

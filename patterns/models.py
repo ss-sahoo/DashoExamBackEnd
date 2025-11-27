@@ -127,6 +127,11 @@ class PatternSection(models.Model):
     @property
     def total_questions_in_section(self):
         return self.end_question - self.start_question + 1
+    
+    @property
+    def total_questions(self):
+        """Alias for total_questions_in_section for compatibility"""
+        return self.total_questions_in_section
 
     @property
     def total_marks_in_section(self):

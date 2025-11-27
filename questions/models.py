@@ -277,3 +277,322 @@ class ChatHistory(models.Model):
     
     def __str__(self):
         return f"{self.role}: {self.content[:50]}..."
+
+
+
+# ===========================
+# AI Question Extraction Models
+# ===========================
+
+import uuid
+from django.utils import timezone
+
+
+class ExtractionJob(models.Model):
+    """Track question extraction jobs from uploaded files"""
+    
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('processing', 'Processing'),
+        ('completed', 'Completed'),
+        ('failed', 'Failed'),
+        ('partial', 'Partially Completed'),
+    ]
+    
+    # Primary key
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    
+    # Relationships
+    exam = models.ForeignKey(
+        Exam, 
+        on_delete=models.CASCADE, 
+        related_name='extraction_jobs',
+        help_text='Exam to import questions into'
+    )
+    pattern = models.ForeignKey(
+        'patterns.ExamPattern', 
+        on_delete=models.CASCADE, 
+        related_name='extraction_jobs',
+        help_text='Pattern structure for organizing questions'
+    )
+    created_by = models.ForeignKey(
+        User, 
+        on_delete=models.CASCADE, 
+        related_name='extraction_jobs',
+        help_text='User who uploaded the file'
+    )
+    
+    # File information
+    file_name = models.CharField(max_length=255, help_text='Original filename')
+    file_type = models.CharField(max_length=50, help_text='MIME type of uploaded file')
+    file_size = models.IntegerField(help_text='File size in bytes')
+    file_path = models.CharField(max_length=500, help_text='Path to uploaded file')
+    
+    # Status tracking
+    status = models.CharField(
+        max_length=20, 
+        choices=STATUS_CHOICES, 
+        default='pending',
+        db_index=True
+    )
+    progress_percent = models.IntegerField(
+        default=0,
+        validators=[MinValueValidator(0), MaxValueValidator(100)],
+        help_text='Extraction progress percentage'
+    )
+    
+    # Results metrics
+    total_questions_found = models.IntegerField(
+        default=0,
+        help_text='Total questions detected in file'
+    )
+    questions_extracted = models.IntegerField(
+        default=0,
+        help_text='Questions successfully extracted'
+    )
+    questions_imported = models.IntegerField(
+        default=0,
+        help_text='Questions successfully imported to exam'
+    )
+    questions_failed = models.IntegerField(
+        default=0,
+        help_text='Questions that failed extraction or import'
+    )
+    
+    # AI metadata
+    ai_model_used = models.CharField(
+        max_length=100,
+        default='gemini-1.5-flash',
+        help_text='AI model used for extraction'
+    )
+    tokens_used = models.IntegerField(
+        default=0,
+        help_text='Total tokens consumed by AI API'
+    )
+    processing_time_seconds = models.FloatField(
+        null=True,
+        blank=True,
+        help_text='Total processing time in seconds'
+    )
+    
+    # Error handling
+    error_message = models.TextField(
+        blank=True,
+        help_text='Error message if extraction failed'
+    )
+    retry_count = models.IntegerField(
+        default=0,
+        help_text='Number of retry attempts'
+    )
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['exam', 'status']),
+            models.Index(fields=['created_by', 'created_at']),
+        ]
+    
+    def __str__(self):
+        return f"Extraction Job {self.id} - {self.file_name} ({self.status})"
+    
+    def update_progress(self, percent, save=True):
+        """Update progress percentage"""
+        self.progress_percent = min(100, max(0, percent))
+        if save:
+            self.save(update_fields=['progress_percent'])
+    
+    def mark_completed(self):
+        """Mark job as completed"""
+        self.status = 'completed'
+        self.progress_percent = 100
+        self.completed_at = timezone.now()
+        self.save(update_fields=['status', 'progress_percent', 'completed_at'])
+    
+    def mark_failed(self, error_message):
+        """Mark job as failed with error message"""
+        self.status = 'failed'
+        self.error_message = error_message
+        self.completed_at = timezone.now()
+        self.save(update_fields=['status', 'error_message', 'completed_at'])
+    
+    def mark_partial(self):
+        """Mark job as partially completed"""
+        self.status = 'partial'
+        self.completed_at = timezone.now()
+        self.save(update_fields=['status', 'completed_at'])
+    
+    @property
+    def success_rate(self):
+        """Calculate success rate of extraction"""
+        if self.questions_extracted == 0:
+            return 0
+        return (self.questions_imported / self.questions_extracted) * 100
+
+
+class ExtractedQuestion(models.Model):
+    """Temporary storage for extracted questions before import"""
+    
+    # Relationship to extraction job
+    job = models.ForeignKey(
+        ExtractionJob,
+        on_delete=models.CASCADE,
+        related_name='extracted_questions',
+        help_text='Extraction job this question belongs to'
+    )
+    
+    # Extracted question data
+    question_text = models.TextField(help_text='Question text extracted from file')
+    question_type = models.CharField(
+        max_length=20,
+        choices=Question.QUESTION_TYPE_CHOICES,
+        help_text='Type of question'
+    )
+    options = models.JSONField(
+        default=list,
+        blank=True,
+        help_text='Answer options for MCQ questions'
+    )
+    correct_answer = models.TextField(help_text='Correct answer or solution')
+    solution = models.TextField(
+        blank=True,
+        help_text='Detailed solution explanation'
+    )
+    explanation = models.TextField(
+        blank=True,
+        help_text='Additional explanation or hints'
+    )
+    difficulty = models.CharField(
+        max_length=10,
+        choices=Question.DIFFICULTY_CHOICES,
+        default='medium',
+        help_text='Question difficulty level'
+    )
+    
+    # AI metadata
+    confidence_score = models.FloatField(
+        validators=[MinValueValidator(0.0), MaxValueValidator(1.0)],
+        help_text='AI confidence score (0.0 to 1.0)'
+    )
+    requires_review = models.BooleanField(
+        default=False,
+        help_text='Whether question needs manual review'
+    )
+    
+    # Subject and section mapping
+    suggested_subject = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text='AI-suggested subject for this question'
+    )
+    suggested_section_id = models.IntegerField(
+        null=True,
+        blank=True,
+        help_text='AI-suggested pattern section ID'
+    )
+    detection_reasoning = models.TextField(
+        blank=True,
+        null=True,
+        default='',
+        help_text='AI reasoning for subject detection'
+    )
+    assigned_subject = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text='User-assigned subject'
+    )
+    assigned_section_id = models.IntegerField(
+        null=True,
+        blank=True,
+        help_text='User-assigned pattern section ID'
+    )
+    
+    # Import status
+    is_validated = models.BooleanField(
+        default=False,
+        help_text='Whether question passed validation'
+    )
+    is_imported = models.BooleanField(
+        default=False,
+        db_index=True,
+        help_text='Whether question was imported to exam'
+    )
+    import_error = models.TextField(
+        blank=True,
+        help_text='Error message if import failed'
+    )
+    
+    # Reference to imported question
+    imported_question = models.ForeignKey(
+        Question,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='extraction_source',
+        help_text='Reference to the imported Question record'
+    )
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        ordering = ['job', 'id']
+        indexes = [
+            models.Index(fields=['job', 'is_imported']),
+            models.Index(fields=['job', 'requires_review']),
+        ]
+    
+    def __str__(self):
+        return f"Extracted Q{self.id} - {self.question_text[:50]}... ({self.confidence_score:.2f})"
+    
+    def validate(self):
+        """Validate extracted question data"""
+        errors = []
+        
+        # Check required fields
+        if not self.question_text or not self.question_text.strip():
+            errors.append("Question text is required")
+        
+        if not self.correct_answer or not self.correct_answer.strip():
+            errors.append("Correct answer is required")
+        
+        # Validate MCQ questions
+        if self.question_type in ['single_mcq', 'multiple_mcq']:
+            if not self.options or len(self.options) < 2:
+                errors.append("MCQ questions must have at least 2 options")
+            
+            if self.question_type == 'single_mcq':
+                if self.correct_answer not in self.options:
+                    errors.append("Correct answer must be one of the options")
+        
+        # Validate numerical questions
+        if self.question_type == 'numerical':
+            try:
+                float(self.correct_answer)
+            except (ValueError, TypeError):
+                errors.append("Numerical questions must have a numeric answer")
+        
+        self.is_validated = len(errors) == 0
+        
+        if errors:
+            self.import_error = "; ".join(errors)
+            self.requires_review = True
+        
+        return self.is_validated, errors
+    
+    def mark_imported(self, question):
+        """Mark as successfully imported"""
+        self.is_imported = True
+        self.imported_question = question
+        self.import_error = ''
+        self.save(update_fields=['is_imported', 'imported_question', 'import_error'])
+    
+    def mark_failed(self, error_message):
+        """Mark import as failed"""
+        self.is_imported = False
+        self.import_error = error_message
+        self.requires_review = True
+        self.save(update_fields=['is_imported', 'import_error', 'requires_review'])

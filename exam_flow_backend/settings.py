@@ -4,7 +4,7 @@ Django settings for exam_flow_backend project.
 
 import os
 from pathlib import Path
-from config import SECRET_KEY, DEBUG, DATABASE_URL, ALLOWED_HOSTS, CORS_ALLOWED_ORIGINS
+from config import SECRET_KEY, DEBUG, DATABASE_URL, ALLOWED_HOSTS, CORS_ALLOWED_ORIGINS, GEMINI_API_KEY as CONFIG_GEMINI_API_KEY
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -273,3 +273,34 @@ TIMEZONE_CHOICES = [
     'America/Mexico_City',
     'America/Sao_Paulo',
 ]
+
+
+# ===========================
+# Celery Configuration
+# ===========================
+CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', 'redis://localhost:6379/0')
+CELERY_RESULT_BACKEND = os.getenv('CELERY_RESULT_BACKEND', 'redis://localhost:6379/0')
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_RESULT_SERIALIZER = 'json'
+CELERY_TIMEZONE = 'UTC'
+CELERY_TASK_TRACK_STARTED = True
+CELERY_TASK_TIME_LIMIT = 30 * 60  # 30 minutes max per task
+
+# ===========================
+# AI Configuration (Gemini)
+# ===========================
+GEMINI_API_KEY = CONFIG_GEMINI_API_KEY or os.getenv('GEMINI_API_KEY', '')
+GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-2.0-flash')
+GEMINI_TEMPERATURE = float(os.getenv('GEMINI_TEMPERATURE', '0.7'))
+GEMINI_TOP_P = float(os.getenv('GEMINI_TOP_P', '0.95'))
+GEMINI_MAX_TOKENS = int(os.getenv('GEMINI_MAX_TOKENS', '8192'))
+
+# File Upload Settings for Question Extraction
+MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10MB
+ALLOWED_EXTRACTION_FILE_TYPES = [
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',  # .docx
+    'application/msword',  # .doc
+    'text/plain',  # .txt
+]
+EXTRACTION_FILE_EXTENSIONS = ['.txt', '.docx', '.doc']

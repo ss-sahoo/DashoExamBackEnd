@@ -71,7 +71,7 @@ class ExamPatternListView(generics.ListCreateAPIView):
             return Response(
                 {
                     'error': 'Pattern name already exists',
-                    'detail': f'A pattern named "{pattern_name}" already exists in your institute. Please use a different name.',
+                    'detail': f'A pattern named "{pattern_name}" is already exists in the exam . please check the exam patterns.',
                     'field': 'name'
                 },
                 status=status.HTTP_400_BAD_REQUEST
