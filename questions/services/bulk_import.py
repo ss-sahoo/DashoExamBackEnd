@@ -66,18 +66,18 @@ class BulkImportService:
             # Create mapping dictionary for quick lookup
             mapping_dict = {m['extracted_question_id']: m for m in question_mappings}
             
-            # Import questions in transaction
-            with transaction.atomic():
-                imported_count = 0
-                failed_count = 0
-                failed_questions = []
+            # Import questions - each in its own transaction
+            imported_count = 0
+            failed_count = 0
+            failed_questions = []
+            
+            for extracted_q in extracted_questions:
+                mapping = mapping_dict.get(extracted_q.id)
+                if not mapping:
+                    continue
                 
-                for extracted_q in extracted_questions:
-                    mapping = mapping_dict.get(extracted_q.id)
-                    if not mapping:
-                        continue
-                    
-                    try:
+                try:
+                    with transaction.atomic():
                         # Create Question record
                         question = self._create_question(
                             extracted_q,
@@ -88,18 +88,24 @@ class BulkImportService:
                         # Mark as imported
                         extracted_q.mark_imported(question)
                         imported_count += 1
-                        
-                    except Exception as e:
-                        logger.error(f"Failed to import question {extracted_q.id}: {e}")
+                    
+                except Exception as e:
+                    logger.error(f"Failed to import question {extracted_q.id}: {e}")
+                    # Mark failed outside transaction
+                    try:
                         extracted_q.mark_failed(str(e))
-                        failed_count += 1
-                        failed_questions.append({
-                            'id': extracted_q.id,
-                            'question_text': extracted_q.question_text[:100],
-                            'error': str(e)
-                        })
-                
-                # Update job metrics
+                    except Exception as mark_error:
+                        logger.error(f"Failed to mark question as failed: {mark_error}")
+                    
+                    failed_count += 1
+                    failed_questions.append({
+                        'id': extracted_q.id,
+                        'question_text': extracted_q.question_text[:100],
+                        'error': str(e)
+                    })
+            
+            # Update job metrics in separate transaction
+            with transaction.atomic():
                 job.questions_imported = imported_count
                 job.questions_failed = failed_count
                 
@@ -311,9 +317,9 @@ class BulkImportService:
             failed_count = 0
             failed_questions = []
             
-            with transaction.atomic():
-                for extracted_q in extracted_questions:
-                    try:
+            for extracted_q in extracted_questions:
+                try:
+                    with transaction.atomic():
                         # Determine subject
                         subject = (
                             extracted_q.assigned_subject or 
@@ -342,18 +348,24 @@ class BulkImportService:
                         question = self._create_question(extracted_q, exam, mapping)
                         extracted_q.mark_imported(question)
                         imported_count += 1
-                        
-                    except Exception as e:
-                        logger.error(f"Failed to import question {extracted_q.id}: {e}")
+                    
+                except Exception as e:
+                    logger.error(f"Failed to import question {extracted_q.id}: {e}")
+                    # Mark failed outside transaction
+                    try:
                         extracted_q.mark_failed(str(e))
-                        failed_count += 1
-                        failed_questions.append({
-                            'id': extracted_q.id,
-                            'question_text': extracted_q.question_text[:100],
-                            'error': str(e)
-                        })
-                
-                # Update exam metrics
+                    except Exception as mark_error:
+                        logger.error(f"Failed to mark question as failed: {mark_error}")
+                    
+                    failed_count += 1
+                    failed_questions.append({
+                        'id': extracted_q.id,
+                        'question_text': extracted_q.question_text[:100],
+                        'error': str(e)
+                    })
+            
+            # Update exam metrics in separate transaction
+            with transaction.atomic():
                 self.update_exam_metrics(exam)
             
             return {
