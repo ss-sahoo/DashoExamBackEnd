@@ -66,6 +66,14 @@ class BulkImportService:
             # Create mapping dictionary for quick lookup
             mapping_dict = {m['extracted_question_id']: m for m in question_mappings}
             
+            # Get starting question number for this exam
+            last_question = Question.objects.filter(
+                exam=job.exam,
+                is_active=True
+            ).order_by('-question_number').first()
+            
+            next_question_number = (last_question.question_number + 1) if last_question else 1
+            
             # Import questions - each in its own transaction
             imported_count = 0
             failed_count = 0
@@ -78,6 +86,9 @@ class BulkImportService:
                 
                 try:
                     with transaction.atomic():
+                        # Update mapping with actual question number
+                        mapping['question_number'] = next_question_number
+                        
                         # Create Question record
                         question = self._create_question(
                             extracted_q,
@@ -88,6 +99,9 @@ class BulkImportService:
                         # Mark as imported
                         extracted_q.mark_imported(question)
                         imported_count += 1
+                        
+                        # Increment for next question
+                        next_question_number += 1
                     
                 except Exception as e:
                     logger.error(f"Failed to import question {extracted_q.id}: {e}")
