@@ -218,22 +218,47 @@ class ExtractionPipeline:
                 if match:
                     image_path = match.group(1)
             
-            # Extract questions
-            questions = self.ai_extractor.extract_questions(
-                text_content,
-                context,
-                is_image=is_image,
-                image_path=image_path
-            )
+            # For large documents, chunk the content to avoid truncated responses
+            # Threshold: ~15000 chars (roughly 20-30 questions worth)
+            CHUNK_THRESHOLD = 15000
+            
+            all_questions = []
+            
+            if not is_image and len(text_content) > CHUNK_THRESHOLD:
+                # Split into chunks and process each
+                chunks = self._split_into_chunks(text_content, CHUNK_THRESHOLD)
+                logger.info(f"Large document detected. Splitting into {len(chunks)} chunks")
+                
+                for i, chunk in enumerate(chunks):
+                    logger.info(f"Processing chunk {i+1}/{len(chunks)} ({len(chunk)} chars)")
+                    try:
+                        chunk_questions = self.ai_extractor.extract_questions(
+                            chunk,
+                            context,
+                            is_image=False,
+                            image_path=None
+                        )
+                        all_questions.extend(chunk_questions)
+                        logger.info(f"Chunk {i+1}: extracted {len(chunk_questions)} questions")
+                    except GeminiExtractionError as e:
+                        logger.warning(f"Chunk {i+1} extraction failed: {e}, continuing with other chunks")
+                        continue
+            else:
+                # Process as single request
+                all_questions = self.ai_extractor.extract_questions(
+                    text_content,
+                    context,
+                    is_image=is_image,
+                    image_path=image_path
+                )
             
             # Update job with AI metadata
             job.ai_model_used = self.ai_extractor.model
-            # Note: tokens_used would need to be extracted from API response
-            # For now, we'll estimate based on content length
             job.tokens_used = len(text_content) // 4  # Rough estimate
             job.save(update_fields=['ai_model_used', 'tokens_used'])
             
-            return questions
+            logger.info(f"Total questions extracted: {len(all_questions)}")
+            return all_questions
             
         except GeminiExtractionError as e:
             logger.error(f"Gemini extraction failed: {e}")
@@ -241,6 +266,75 @@ class ExtractionPipeline:
         except Exception as e:
             logger.error(f"Unexpected error during extraction: {e}")
             raise GeminiExtractionError(f"Failed to extract questions: {str(e)}")
+    
+    def _split_into_chunks(self, text_content: str, chunk_size: int) -> list:
+        """
+        Split text content into chunks, trying to break at question boundaries
+        
+        Args:
+            text_content: Full text content
+            chunk_size: Target size for each chunk
+            
+        Returns:
+            List of text chunks
+        """
+        import re
+        
+        # Try to find question markers (Q1, Q.1, 1., 1), Question 1, etc.)
+        question_pattern = r'(?:^|\n)\s*(?:Q\.?\s*\d+|Question\s+\d+|\d+[\.\)]\s)'
+        
+        # Find all question start positions
+        matches = list(re.finditer(question_pattern, text_content, re.IGNORECASE | re.MULTILINE))
+        
+        if len(matches) < 2:
+            # No clear question markers, split by size with paragraph breaks
+            return self._split_by_paragraphs(text_content, chunk_size)
+        
+        chunks = []
+        current_chunk_start = 0
+        current_chunk_questions = 0
+        questions_per_chunk = 25  # Target ~25 questions per chunk
+        
+        for i, match in enumerate(matches):
+            current_chunk_questions += 1
+            
+            # Check if we should start a new chunk
+            if current_chunk_questions >= questions_per_chunk:
+                chunk_end = match.start()
+                chunk = text_content[current_chunk_start:chunk_end].strip()
+                if chunk:
+                    chunks.append(chunk)
+                current_chunk_start = chunk_end
+                current_chunk_questions = 0
+        
+        # Add remaining content
+        remaining = text_content[current_chunk_start:].strip()
+        if remaining:
+            chunks.append(remaining)
+        
+        return chunks if chunks else [text_content]
+    
+    def _split_by_paragraphs(self, text_content: str, chunk_size: int) -> list:
+        """Split by paragraph breaks when no question markers found"""
+        paragraphs = text_content.split('\n\n')
+        chunks = []
+        current_chunk = []
+        current_size = 0
+        
+        for para in paragraphs:
+            para_size = len(para)
+            if current_size + para_size > chunk_size and current_chunk:
+                chunks.append('\n\n'.join(current_chunk))
+                current_chunk = [para]
+                current_size = para_size
+            else:
+                current_chunk.append(para)
+                current_size += para_size
+        
+        if current_chunk:
+            chunks.append('\n\n'.join(current_chunk))
+        
+        return chunks if chunks else [text_content]
     
     def _save_extracted_questions(
         self,

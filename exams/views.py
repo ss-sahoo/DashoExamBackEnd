@@ -1867,92 +1867,98 @@ def exam_boxplot_data(request, exam_id):
     if not user.can_manage_exams() or exam.institute != user.institute:
         return Response({'error': 'Access denied'}, status=status.HTTP_403_FORBIDDEN)
     
-    attempts, filters = get_filtered_attempts(exam, request)
-    
-    # Get section filter for comparison
-    section_id = request.GET.get('section_id')
-    compare_by_section = section_id is None and hasattr(exam, 'pattern') and exam.pattern
-    
-    scores = [float(attempt.score) for attempt in attempts if attempt.score is not None]
-    
-    # Apply score range filter
-    score_min = request.GET.get('score_min')
-    score_max = request.GET.get('score_max')
-    if score_min:
-        try:
-            score_min_float = float(score_min)
-            scores = [s for s in scores if s >= score_min_float]
-        except (ValueError, TypeError):
-            pass
-    
-    if score_max:
-        try:
-            score_max_float = float(score_max)
-            scores = [s for s in scores if s <= score_max_float]
-        except (ValueError, TypeError):
-            pass
-    
-    if compare_by_section:
-        # Return box plot data for each section
-        boxplot_data = []
-        for section in exam.pattern.sections.all():
-            section_scores = []
-            for attempt in attempts:
-                if hasattr(attempt, 'result') and attempt.result:
-                    section_score = attempt.result.section_scores.get(str(section.id), 0)
-                    if section_score > 0:
-                        section_scores.append(float(section_score))
-            
-            if section_scores:
-                quartiles = calculate_quartiles(section_scores)
-                iqr = quartiles['q3'] - quartiles['q1']
-                lower_bound = quartiles['q1'] - 1.5 * iqr
-                upper_bound = quartiles['q3'] + 1.5 * iqr
-                outliers = [s for s in section_scores if s < lower_bound or s > upper_bound]
+    try:
+        attempts, filters = get_filtered_attempts(exam, request)
+        
+        # Get section filter for comparison
+        section_id = request.GET.get('section_id')
+        compare_by_section = section_id is None and hasattr(exam, 'pattern') and exam.pattern
+        
+        scores = [float(attempt.score) for attempt in attempts if attempt.score is not None]
+        
+        # Apply score range filter
+        score_min = request.GET.get('score_min')
+        score_max = request.GET.get('score_max')
+        if score_min:
+            try:
+                score_min_float = float(score_min)
+                scores = [s for s in scores if s >= score_min_float]
+            except (ValueError, TypeError):
+                pass
+        
+        if score_max:
+            try:
+                score_max_float = float(score_max)
+                scores = [s for s in scores if s <= score_max_float]
+            except (ValueError, TypeError):
+                pass
+        
+        if compare_by_section:
+            # Return box plot data for each section
+            boxplot_data = []
+            for section in exam.pattern.sections.all():
+                section_scores = []
+                for attempt in attempts:
+                    if hasattr(attempt, 'result') and attempt.result:
+                        section_scores_data = attempt.result.section_scores or {}
+                        section_score = section_scores_data.get(str(section.id), 0)
+                        if section_score > 0:
+                            section_scores.append(float(section_score))
                 
-                boxplot_data.append({
-                    'section_id': section.id,
-                    'section_name': section.name,
-                    'subject': section.subject,
-                    'scores': section_scores,
+                if section_scores:
+                    quartiles = calculate_quartiles(section_scores)
+                    iqr = quartiles.get('q3', 0) - quartiles.get('q1', 0)
+                    lower_bound = quartiles.get('q1', 0) - 1.5 * iqr
+                    upper_bound = quartiles.get('q3', 0) + 1.5 * iqr
+                    outliers = [s for s in section_scores if s < lower_bound or s > upper_bound]
+                    
+                    boxplot_data.append({
+                        'section_id': section.id,
+                        'section_name': section.name,
+                        'subject': section.subject,
+                        'scores': section_scores,
+                        'quartiles': quartiles,
+                        'outliers': outliers,
+                        'iqr': iqr,
+                        'lower_bound': lower_bound,
+                        'upper_bound': upper_bound
+                    })
+            
+            return Response({
+                'exam': {
+                    'id': exam.id,
+                    'title': exam.title,
+                },
+                'boxplot_data': boxplot_data,
+                'filters_applied': filters
+            })
+        else:
+            # Single box plot for all scores
+            quartiles = calculate_quartiles(scores) if scores else {'min': 0, 'q1': 0, 'median': 0, 'q3': 0, 'max': 0}
+            iqr = quartiles.get('q3', 0) - quartiles.get('q1', 0)
+            lower_bound = quartiles.get('q1', 0) - 1.5 * iqr
+            upper_bound = quartiles.get('q3', 0) + 1.5 * iqr
+            outliers = [s for s in scores if s < lower_bound or s > upper_bound] if scores else []
+            
+            return Response({
+                'exam': {
+                    'id': exam.id,
+                    'title': exam.title,
+                },
+                'boxplot_data': {
+                    'scores': scores,
                     'quartiles': quartiles,
                     'outliers': outliers,
                     'iqr': iqr,
                     'lower_bound': lower_bound,
                     'upper_bound': upper_bound
-                })
-        
-        return Response({
-            'exam': {
-                'id': exam.id,
-                'title': exam.title,
-            },
-            'boxplot_data': boxplot_data,
-            'filters_applied': filters
-        })
-    else:
-        # Single box plot for all scores
-        quartiles = calculate_quartiles(scores) if scores else {}
-        iqr = quartiles.get('q3', 0) - quartiles.get('q1', 0) if quartiles else 0
-        lower_bound = quartiles.get('q1', 0) - 1.5 * iqr if quartiles else 0
-        upper_bound = quartiles.get('q3', 0) + 1.5 * iqr if quartiles else 0
-        outliers = [s for s in scores if s < lower_bound or s > upper_bound] if scores else []
-        
-        return Response({
-            'exam': {
-                'id': exam.id,
-                'title': exam.title,
-            },
-            'boxplot_data': {
-                'scores': scores,
-                'quartiles': quartiles,
-                'outliers': outliers,
-                'iqr': iqr,
-                'lower_bound': lower_bound,
-                'upper_bound': upper_bound
-            },
-            'filters_applied': filters
-        })
+                },
+                'filters_applied': filters
+            })
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return Response({'error': f'Failed to load boxplot data: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 @api_view(['GET'])
@@ -1968,59 +1974,68 @@ def exam_question_analytics(request, exam_id):
     if not user.can_manage_exams() or exam.institute != user.institute:
         return Response({'error': 'Access denied'}, status=status.HTTP_403_FORBIDDEN)
     
-    attempts, filters = get_filtered_attempts(exam, request)
-    
-    # Question-wise analysis
-    question_analytics = []
-    from .models import QuestionEvaluation
-    
-    for i in range(1, exam.total_questions + 1):
-        qa, created = QuestionAnalytics.objects.get_or_create(
-            exam=exam, 
-            question_number=i,
-            defaults={'question_text': f'Question {i}'}
-        )
+    try:
+        attempts, filters = get_filtered_attempts(exam, request)
+        attempts_count = attempts.count()
         
-        # Get question evaluations for filtered attempts
-        evaluations = QuestionEvaluation.objects.filter(
-            attempt__in=attempts,
-            question_number=i
-        )
+        # Question-wise analysis
+        question_analytics = []
+        from .models import QuestionEvaluation
         
-        correct_count = evaluations.filter(is_correct=True).count()
-        wrong_count = evaluations.filter(is_correct=False, is_answered=True).count()
-        unattempted_count = len(attempts) - evaluations.filter(is_answered=True).count()
-        total_attempts = evaluations.count()
+        # Handle case where exam has no questions
+        total_questions = exam.total_questions or 0
         
-        # Calculate average time spent
-        avg_time = evaluations.aggregate(avg_time=Avg('time_spent'))['avg_time'] or 0
+        for i in range(1, total_questions + 1):
+            qa, created = QuestionAnalytics.objects.get_or_create(
+                exam=exam, 
+                question_number=i,
+                defaults={'question_text': f'Question {i}'}
+            )
+            
+            # Get question evaluations for filtered attempts
+            evaluations = QuestionEvaluation.objects.filter(
+                attempt__in=attempts,
+                question_number=i
+            )
+            
+            correct_count = evaluations.filter(is_correct=True).count()
+            wrong_count = evaluations.filter(is_correct=False, is_answered=True).count()
+            answered_count = evaluations.filter(is_answered=True).count()
+            unattempted_count = max(0, attempts_count - answered_count)
+            total_attempts = evaluations.count()
+            
+            # Calculate average score
+            avg_score = evaluations.aggregate(avg_score=Avg('marks_obtained'))['avg_score'] or 0
+            
+            success_rate = (correct_count / max(1, total_attempts)) * 100
+            
+            question_analytics.append({
+                'question_number': i,
+                'question_text': qa.question_text,
+                'total_attempts': total_attempts,
+                'correct_attempts': correct_count,
+                'wrong_attempts': wrong_count,
+                'unattempted': unattempted_count,
+                'success_rate': success_rate,
+                'average_score': float(avg_score) if avg_score else 0.0,
+                'max_marks': float(qa.max_marks),
+                'average_time_spent': 0.0,  # QuestionEvaluation doesn't track time per question
+                'difficulty_level': 'easy' if success_rate >= 70 else 'medium' if success_rate >= 40 else 'hard'
+            })
         
-        # Calculate average score
-        avg_score = evaluations.aggregate(avg_score=Avg('marks_obtained'))['avg_score'] or 0
-        
-        question_analytics.append({
-            'question_number': i,
-            'question_text': qa.question_text,
-            'total_attempts': total_attempts,
-            'correct_attempts': correct_count,
-            'wrong_attempts': wrong_count,
-            'unattempted': unattempted_count,
-            'success_rate': (correct_count / max(1, total_attempts)) * 100,
-            'average_score': float(avg_score),
-            'max_marks': float(qa.max_marks),
-            'average_time_spent': float(avg_time),
-            'difficulty_level': 'easy' if (correct_count / max(1, total_attempts)) >= 0.7 else 'medium' if (correct_count / max(1, total_attempts)) >= 0.4 else 'hard'
+        return Response({
+            'exam': {
+                'id': exam.id,
+                'title': exam.title,
+                'total_questions': total_questions,
+            },
+            'question_analytics': question_analytics,
+            'filters_applied': filters
         })
-    
-    return Response({
-        'exam': {
-            'id': exam.id,
-            'title': exam.title,
-            'total_questions': exam.total_questions,
-        },
-        'question_analytics': question_analytics,
-        'filters_applied': filters
-    })
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return Response({'error': f'Failed to load question analytics: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 @api_view(['GET'])
@@ -2280,6 +2295,123 @@ def exam_results_dashboard(request, exam_id):
             'status': status_filter
         }
     })
+
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def exam_student_result_detail(request, exam_id, student_id):
+    """Get detailed result for a specific student in an exam"""
+    try:
+        exam = Exam.objects.get(id=exam_id)
+    except Exam.DoesNotExist:
+        return Response({'error': 'Exam not found'}, status=status.HTTP_404_NOT_FOUND)
+    
+    user = request.user
+    if not user.can_manage_exams() or exam.institute != user.institute:
+        return Response({'error': 'Access denied'}, status=status.HTTP_403_FORBIDDEN)
+    
+    try:
+        # Get the student
+        student = User.objects.get(id=student_id)
+        
+        # Get the attempt for this student and exam
+        attempt = ExamAttempt.objects.filter(exam=exam, student=student).order_by('-created_at').first()
+        
+        if not attempt:
+            return Response({'error': 'No attempt found for this student'}, status=status.HTTP_404_NOT_FOUND)
+        
+        # Get question evaluations
+        from .models import QuestionEvaluation, ExamViolation
+        from questions.models import Question
+        evaluations = QuestionEvaluation.objects.filter(attempt=attempt).select_related('question').order_by('question_number')
+        
+        question_responses = []
+        for eval in evaluations:
+            # Get question details from the related Question model
+            question = eval.question
+            question_text = question.question_text if question else f'Question {eval.question_number}'
+            question_type = question.question_type if question else 'single_mcq'
+            correct_answer = question.correct_answer if question else ''
+            
+            question_responses.append({
+                'question_number': eval.question_number,
+                'question_text': question_text[:200] + '...' if len(question_text) > 200 else question_text,
+                'question_type': question_type,
+                'student_answer': eval.student_answer or '',
+                'correct_answer': correct_answer,
+                'is_correct': eval.is_correct,
+                'is_answered': eval.is_answered,
+                'marks_obtained': float(eval.marks_obtained) if eval.marks_obtained else 0,
+                'max_marks': float(eval.max_marks) if eval.max_marks else 1,
+                'time_spent': 0,  # Not tracked per question
+            })
+        
+        # Get violations
+        violations = ExamViolation.objects.filter(attempt=attempt).order_by('timestamp')
+        violations_list = []
+        for v in violations:
+            violations_list.append({
+                'type': v.get_violation_type_display(),
+                'timestamp': v.timestamp.isoformat() if v.timestamp else '',
+                'description': v.metadata.get('details', '') if v.metadata else '',
+            })
+        
+        # Calculate section scores if pattern exists
+        section_scores = {}
+        if hasattr(exam, 'pattern') and exam.pattern:
+            for section in exam.pattern.sections.all():
+                section_evals = evaluations.filter(
+                    question_number__gte=section.start_question,
+                    question_number__lte=section.end_question
+                )
+                correct = section_evals.filter(is_correct=True).count()
+                wrong = section_evals.filter(is_correct=False, is_answered=True).count()
+                unattempted = section_evals.filter(is_answered=False).count()
+                score = sum(float(e.marks_obtained or 0) for e in section_evals)
+                max_marks = (section.end_question - section.start_question + 1) * section.marks_per_question
+                
+                section_scores[str(section.id)] = {
+                    'section_name': section.name,
+                    'subject': section.subject,
+                    'score': score,
+                    'max_marks': max_marks,
+                    'correct': correct,
+                    'wrong': wrong,
+                    'unattempted': unattempted,
+                }
+        
+        return Response({
+            'attempt_id': attempt.id,
+            'student': {
+                'id': student.id,
+                'name': student.get_full_name() or student.email,
+                'email': student.email,
+                'phone': student.phone or '',
+            },
+            'exam': {
+                'id': exam.id,
+                'title': exam.title,
+                'total_questions': exam.total_questions,
+                'total_marks': exam.total_marks,
+            },
+            'score': float(attempt.score) if attempt.score else 0,
+            'percentage': float(attempt.percentage) if attempt.percentage else 0,
+            'time_spent': attempt.time_spent or 0,
+            'started_at': attempt.started_at.isoformat() if attempt.started_at else None,
+            'submitted_at': attempt.submitted_at.isoformat() if attempt.submitted_at else None,
+            'status': attempt.status,
+            'violations_count': attempt.violations_count or 0,
+            'violations': violations_list,
+            'question_responses': question_responses,
+            'section_scores': section_scores,
+        })
+        
+    except User.DoesNotExist:
+        return Response({'error': 'Student not found'}, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return Response({'error': f'Failed to load student result: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 def calculate_std_deviation(scores):

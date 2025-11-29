@@ -24,6 +24,7 @@ urlpatterns = [
     path('exams/<int:pk>/analytics/', views.ExamAnalyticsView.as_view(), name='exam-analytics'),
     path('exams/<int:exam_id>/analytics-dashboard/', views.exam_analytics_dashboard, name='exam-analytics-dashboard'),
     path('exams/<int:exam_id>/results-dashboard/', views.exam_results_dashboard, name='exam-results-dashboard'),
+    path('exams/<int:exam_id>/student-result/<int:student_id>/', views.exam_student_result_detail, name='exam-student-result-detail'),
     
     # Enhanced Analytics Endpoints
     path('exams/<int:exam_id>/analytics/statistics/', views.exam_statistics_detailed, name='exam-statistics-detailed'),

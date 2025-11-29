@@ -284,8 +284,13 @@ Example format:
                 else:
                     json_str = response
             
-            # Parse JSON
-            questions = json.loads(json_str)
+            # Try to parse JSON
+            try:
+                questions = json.loads(json_str)
+            except json.JSONDecodeError as e:
+                # Try to repair truncated JSON
+                logger.warning(f"JSON parse failed, attempting repair: {e}")
+                questions = self._repair_truncated_json(json_str)
             
             if not isinstance(questions, list):
                 raise GeminiExtractionError("Response is not a JSON array")
@@ -297,6 +302,10 @@ Example format:
                 if normalized:
                     normalized_questions.append(normalized)
             
+            if not normalized_questions:
+                raise GeminiExtractionError("No valid questions could be extracted")
+            
+            logger.info(f"Successfully parsed {len(normalized_questions)} questions from AI response")
             return normalized_questions
             
         except json.JSONDecodeError as e:
@@ -306,6 +315,77 @@ Example format:
         except Exception as e:
             logger.error(f"Error parsing AI response: {e}")
             raise GeminiExtractionError(f"Failed to parse AI response: {str(e)}")
+    
+    def _repair_truncated_json(self, json_str: str) -> List[Dict]:
+        """
+        Attempt to repair truncated JSON response from AI
+        
+        Args:
+            json_str: Potentially truncated JSON string
+            
+        Returns:
+            List of parsed questions (may be partial)
+        """
+        # Find all complete question objects using regex
+        # Match complete JSON objects within the array
+        question_pattern = r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}'
+        matches = re.findall(question_pattern, json_str)
+        
+        questions = []
+        for match in matches:
+            try:
+                q = json.loads(match)
+                if isinstance(q, dict) and q.get('question_text'):
+                    questions.append(q)
+            except json.JSONDecodeError:
+                # Try to fix common issues
+                fixed = self._fix_json_object(match)
+                if fixed:
+                    questions.append(fixed)
+        
+        if questions:
+            logger.info(f"Repaired JSON: recovered {len(questions)} questions from truncated response")
+            return questions
+        
+        # Last resort: try to close the array and parse
+        json_str = json_str.strip()
+        if json_str.startswith('['):
+            # Find the last complete object
+            last_complete = json_str.rfind('},')
+            if last_complete > 0:
+                json_str = json_str[:last_complete + 1] + ']'
+                try:
+                    return json.loads(json_str)
+                except json.JSONDecodeError:
+                    pass
+            
+            # Try closing with just }]
+            last_brace = json_str.rfind('}')
+            if last_brace > 0:
+                json_str = json_str[:last_brace + 1] + ']'
+                try:
+                    return json.loads(json_str)
+                except json.JSONDecodeError:
+                    pass
+        
+        raise json.JSONDecodeError("Could not repair truncated JSON", json_str, 0)
+    
+    def _fix_json_object(self, obj_str: str) -> Optional[Dict]:
+        """Try to fix a single JSON object"""
+        try:
+            # Remove trailing comma if present
+            obj_str = obj_str.rstrip(',')
+            
+            # Try parsing as-is
+            return json.loads(obj_str)
+        except json.JSONDecodeError:
+            try:
+                # Try adding missing closing brace
+                if obj_str.count('{') > obj_str.count('}'):
+                    obj_str += '}'
+                return json.loads(obj_str)
+            except json.JSONDecodeError:
+                return None
     
     def _normalize_question(self, q: dict) -> Optional[Dict]:
         """Normalize and validate a single question"""

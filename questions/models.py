@@ -324,7 +324,7 @@ class ExtractionJob(models.Model):
     
     # File information
     file_name = models.CharField(max_length=255, help_text='Original filename')
-    file_type = models.CharField(max_length=50, help_text='MIME type of uploaded file')
+    file_type = models.CharField(max_length=100, help_text='MIME type of uploaded file')
     file_size = models.IntegerField(help_text='File size in bytes')
     file_path = models.CharField(max_length=500, help_text='Path to uploaded file')
     
