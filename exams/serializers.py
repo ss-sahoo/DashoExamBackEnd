@@ -10,7 +10,7 @@ from accounts.serializers import UserSerializer
 
 
 class ExamSerializer(serializers.ModelSerializer):
-    pattern = ExamPatternSerializer(read_only=True)
+    pattern = serializers.SerializerMethodField()
     pattern_id = serializers.IntegerField(write_only=True)
     created_by_name = serializers.CharField(source='created_by.get_full_name', read_only=True)
     institute_name = serializers.CharField(source='institute.name', read_only=True)
@@ -24,6 +24,14 @@ class ExamSerializer(serializers.ModelSerializer):
     question_completion_percent = serializers.ReadOnlyField()
     is_question_complete = serializers.ReadOnlyField()
     share_url = serializers.SerializerMethodField()
+
+    def get_pattern(self, obj):
+        """Serialize pattern with exam_id context for section question counts"""
+        if obj.pattern:
+            context = self.context.copy()
+            context['exam_id'] = obj.id
+            return ExamPatternSerializer(obj.pattern, context=context).data
+        return None
 
     class Meta:
         model = Exam

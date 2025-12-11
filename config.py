@@ -43,3 +43,7 @@ OPENAI_API_KEY = get_config('OPENAI_API_KEY', default='')
 GEMINI_API_KEY = get_config('GEMINI_API_KEY', default='')
 USE_OLLAMA = get_config('USE_OLLAMA', default='false')
 OLLAMA_BASE_URL = get_config('OLLAMA_BASE_URL', default='http://localhost:11434')
+
+# Mathpix OCR Configuration (for PDF extraction)
+MATHPIX_APP_ID = get_config('MATHPIX_APP_ID', default='')
+MATHPIX_APP_KEY = get_config('MATHPIX_APP_KEY', default='')

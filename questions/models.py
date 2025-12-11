@@ -288,6 +288,141 @@ import uuid
 from django.utils import timezone
 
 
+class OCRResult(models.Model):
+    """
+    Store OCR extraction results for reuse.
+    Caches Mathpix API results to avoid redundant API calls.
+    """
+    
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('processing', 'Processing'),
+        ('completed', 'Completed'),
+        ('failed', 'Failed'),
+    ]
+    
+    # Primary key
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    
+    # Source file identification
+    file_path = models.CharField(
+        max_length=500,
+        help_text='Path to the source file'
+    )
+    file_hash = models.CharField(
+        max_length=64,
+        db_index=True,
+        help_text='SHA256 hash for file deduplication'
+    )
+    file_size = models.IntegerField(
+        help_text='File size in bytes'
+    )
+    file_name = models.CharField(
+        max_length=255,
+        blank=True,
+        help_text='Original filename'
+    )
+    
+    # OCR Provider info (Mathpix specific)
+    ocr_provider = models.CharField(
+        max_length=50,
+        default='mathpix',
+        help_text='OCR service used (mathpix, tesseract, etc.)'
+    )
+    mathpix_pdf_id = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text='Mathpix PDF processing ID'
+    )
+    
+    # Extracted content
+    extracted_text = models.TextField(
+        blank=True,
+        help_text='Full extracted text content'
+    )
+    page_count = models.IntegerField(
+        default=0,
+        help_text='Number of pages processed'
+    )
+    
+    # Processing metadata
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default='pending',
+        db_index=True
+    )
+    error_message = models.TextField(
+        blank=True,
+        help_text='Error message if extraction failed'
+    )
+    processing_time_seconds = models.FloatField(
+        null=True,
+        blank=True,
+        help_text='Time taken to process the file'
+    )
+    
+    # Usage tracking
+    usage_count = models.IntegerField(
+        default=0,
+        help_text='Number of times this result was reused'
+    )
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    last_accessed_at = models.DateTimeField(null=True, blank=True)
+    
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = 'OCR Result'
+        verbose_name_plural = 'OCR Results'
+        indexes = [
+            models.Index(fields=['file_hash', 'status']),
+            models.Index(fields=['ocr_provider', 'status']),
+        ]
+    
+    def __str__(self):
+        return f"OCR {self.id} - {self.file_name or 'Unknown'} ({self.status})"
+    
+    def mark_processing(self, mathpix_pdf_id=None):
+        """Mark as processing with optional Mathpix PDF ID"""
+        self.status = 'processing'
+        if mathpix_pdf_id:
+            self.mathpix_pdf_id = mathpix_pdf_id
+        self.save(update_fields=['status', 'mathpix_pdf_id'])
+    
+    def mark_completed(self, extracted_text, page_count=0, processing_time=None):
+        """Mark as completed with extracted content"""
+        self.status = 'completed'
+        self.extracted_text = extracted_text
+        self.page_count = page_count
+        self.processing_time_seconds = processing_time
+        self.completed_at = timezone.now()
+        self.save()
+    
+    def mark_failed(self, error_message):
+        """Mark as failed with error message"""
+        self.status = 'failed'
+        self.error_message = error_message
+        self.completed_at = timezone.now()
+        self.save(update_fields=['status', 'error_message', 'completed_at'])
+    
+    def record_access(self):
+        """Record that this cached result was accessed"""
+        self.usage_count += 1
+        self.last_accessed_at = timezone.now()
+        self.save(update_fields=['usage_count', 'last_accessed_at'])
+    
+    @classmethod
+    def get_cached_result(cls, file_hash):
+        """Get cached OCR result by file hash if available"""
+        return cls.objects.filter(
+            file_hash=file_hash,
+            status='completed'
+        ).first()
+
+
 class ExtractionJob(models.Model):
     """Track question extraction jobs from uploaded files"""
     
@@ -320,6 +455,26 @@ class ExtractionJob(models.Model):
         on_delete=models.CASCADE, 
         related_name='extraction_jobs',
         help_text='User who uploaded the file'
+    )
+    
+    # Link to pre-analysis job (for subject-separated content)
+    pre_analysis_job = models.ForeignKey(
+        'PreAnalysisJob',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='extraction_jobs_from_pre',
+        help_text='Pre-analysis job that triggered this extraction (contains subject-separated content)'
+    )
+    
+    # Link to cached OCR result
+    ocr_result = models.ForeignKey(
+        OCRResult,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='extraction_jobs',
+        help_text='Cached OCR extraction result'
     )
     
     # File information
@@ -410,20 +565,29 @@ class ExtractionJob(models.Model):
         self.status = 'completed'
         self.progress_percent = 100
         self.completed_at = timezone.now()
-        self.save(update_fields=['status', 'progress_percent', 'completed_at'])
+        self.save(update_fields=[
+            'status', 'progress_percent', 'completed_at',
+            'questions_extracted', 'processing_time_seconds'
+        ])
     
     def mark_failed(self, error_message):
         """Mark job as failed with error message"""
         self.status = 'failed'
         self.error_message = error_message
         self.completed_at = timezone.now()
-        self.save(update_fields=['status', 'error_message', 'completed_at'])
+        self.save(update_fields=[
+            'status', 'error_message', 'completed_at',
+            'questions_extracted', 'processing_time_seconds'
+        ])
     
     def mark_partial(self):
         """Mark job as partially completed"""
         self.status = 'partial'
         self.completed_at = timezone.now()
-        self.save(update_fields=['status', 'completed_at'])
+        self.save(update_fields=[
+            'status', 'completed_at',
+            'questions_extracted', 'processing_time_seconds'
+        ])
     
     @property
     def success_rate(self):
@@ -596,3 +760,187 @@ class ExtractedQuestion(models.Model):
         self.import_error = error_message
         self.requires_review = True
         self.save(update_fields=['is_imported', 'import_error', 'requires_review'])
+
+
+class PreAnalysisJob(models.Model):
+    """Track document pre-analysis jobs before extraction"""
+    
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('processing', 'Processing'),
+        ('completed', 'Completed'),
+        ('failed', 'Failed'),
+    ]
+    
+    DOCUMENT_TYPE_CHOICES = [
+        ('questions_with_answers', 'Questions with Answers'),
+        ('questions_only', 'Questions Only'),
+        ('other', 'Other'),
+    ]
+    
+    # Primary key
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    
+    # Relationships
+    pattern = models.ForeignKey(
+        'patterns.ExamPattern',
+        on_delete=models.CASCADE,
+        related_name='pre_analysis_jobs',
+        help_text='Pattern to match subjects against'
+    )
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='pre_analysis_jobs',
+        help_text='User who uploaded the file'
+    )
+    
+    # File information
+    file_name = models.CharField(max_length=255, help_text='Original filename')
+    file_type = models.CharField(max_length=100, help_text='MIME type of uploaded file')
+    file_size = models.IntegerField(help_text='File size in bytes')
+    file_path = models.CharField(max_length=500, help_text='Path to uploaded file')
+    
+    # Status tracking
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default='pending',
+        db_index=True
+    )
+    
+    # Document type detection result
+    document_type = models.CharField(
+        max_length=30,
+        choices=DOCUMENT_TYPE_CHOICES,
+        blank=True,
+        help_text='Detected document type'
+    )
+    document_type_confidence = models.FloatField(
+        default=0.0,
+        validators=[MinValueValidator(0.0), MaxValueValidator(1.0)],
+        help_text='Confidence score for document type detection'
+    )
+    is_valid_document = models.BooleanField(
+        default=False,
+        help_text='Whether document is valid for question extraction'
+    )
+    
+    # Subject detection results
+    detected_subjects = models.JSONField(
+        default=list,
+        blank=True,
+        help_text='List of subjects detected in document'
+    )
+    matched_subjects = models.JSONField(
+        default=list,
+        blank=True,
+        help_text='Subjects matched against pattern'
+    )
+    unmatched_subjects = models.JSONField(
+        default=list,
+        blank=True,
+        help_text='Detected subjects not in pattern'
+    )
+    subject_question_counts = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text='Estimated question count per subject'
+    )
+    
+    # Subject-separated content
+    subject_separated_content = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text='Document content separated by subject'
+    )
+    
+    # Document structure (sections, types, format)
+    document_structure = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text='Detected document structure with sections and question types'
+    )
+    
+    # Total estimates
+    total_estimated_questions = models.IntegerField(
+        default=0,
+        help_text='Total estimated questions in document'
+    )
+    
+    # Error handling
+    error_message = models.TextField(
+        blank=True,
+        help_text='Error message if analysis failed'
+    )
+    analysis_reason = models.TextField(
+        blank=True,
+        help_text='Reason for document type classification'
+    )
+    
+    # Reference to extraction job (created after confirmation)
+    extraction_job = models.ForeignKey(
+        ExtractionJob,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='pre_analysis',
+        help_text='Extraction job created from this pre-analysis'
+    )
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = 'Pre-Analysis Job'
+        verbose_name_plural = 'Pre-Analysis Jobs'
+        indexes = [
+            models.Index(fields=['pattern', 'status']),
+            models.Index(fields=['created_by', 'created_at']),
+        ]
+    
+    def __str__(self):
+        return f"Pre-Analysis {self.id} - {self.file_name} ({self.status})"
+    
+    def mark_completed(self, result):
+        """Mark job as completed with analysis result"""
+        self.status = 'completed'
+        self.document_type = result.document_type
+        self.document_type_confidence = result.confidence
+        self.is_valid_document = result.is_valid
+        self.detected_subjects = result.detected_subjects
+        self.matched_subjects = result.matched_subjects
+        self.unmatched_subjects = result.unmatched_subjects
+        self.subject_question_counts = result.subject_question_counts
+        self.subject_separated_content = result.subject_separated_content
+        self.document_structure = result.document_structure or {}
+        self.total_estimated_questions = result.total_estimated_questions
+        self.error_message = result.error_message or ''
+        self.analysis_reason = result.reason or ''
+        self.completed_at = timezone.now()
+        self.save()
+    
+    def mark_failed(self, error_message):
+        """Mark job as failed with error message"""
+        self.status = 'failed'
+        self.error_message = error_message
+        self.completed_at = timezone.now()
+        self.save(update_fields=['status', 'error_message', 'completed_at'])
+    
+    def get_subject_content(self, subject):
+        """Get separated content for a specific subject"""
+        return self.subject_separated_content.get(subject, '')
+    
+    def get_all_subjects_preview(self, max_chars=500):
+        """Get preview of content for all subjects"""
+        previews = {}
+        for subject, content in self.subject_separated_content.items():
+            previews[subject] = {
+                'subject': subject,
+                'question_count': self.subject_question_counts.get(subject, 0),
+                'content_preview': content[:max_chars] + '...' if len(content) > max_chars else content,
+                'full_content_length': len(content)
+            }
+        return previews

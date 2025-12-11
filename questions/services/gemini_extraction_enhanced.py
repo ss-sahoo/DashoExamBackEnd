@@ -17,10 +17,12 @@ class GeminiExtractionError(Exception):
 
 class EnhancedGeminiExtractionService:
     """
-    Enhanced AI-powered question extraction with multi-subject detection
+    Enhanced AI-powered question extraction with multi-subject detection.
+    SUPPORTS ANY SUBJECT - not limited to predefined list.
     """
     
     # Subject keyword mappings for intelligent detection
+    # This is a reference database - system dynamically handles ANY subject
     SUBJECT_KEYWORDS = {
         'physics': ['force', 'velocity', 'acceleration', 'energy', 'momentum', 'mass', 
                    'newton', 'gravity', 'motion', 'wave', 'light', 'electricity', 
@@ -39,7 +41,28 @@ class EnhancedGeminiExtractionService:
         'history': ['war', 'empire', 'civilization', 'revolution', 'dynasty', 'treaty', 
                    'independence', 'colonial', 'ancient', 'medieval', 'modern', 'century'],
         'geography': ['continent', 'ocean', 'climate', 'latitude', 'longitude', 'map', 
-                     'terrain', 'population', 'resources', 'region', 'country', 'river']
+                     'terrain', 'population', 'resources', 'region', 'country', 'river'],
+        # Additional common subjects for global support
+        'computer science': ['algorithm', 'programming', 'database', 'binary', 'compiler',
+                            'recursion', 'stack', 'queue', 'array', 'function', 'loop'],
+        'economics': ['demand', 'supply', 'market', 'price', 'gdp', 'inflation', 
+                     'fiscal', 'monetary', 'trade', 'tax', 'budget', 'investment'],
+        'political science': ['government', 'democracy', 'constitution', 'legislature',
+                             'executive', 'judiciary', 'election', 'rights', 'policy'],
+        'psychology': ['behavior', 'cognition', 'memory', 'learning', 'emotion',
+                      'motivation', 'personality', 'perception', 'consciousness'],
+        'sociology': ['society', 'culture', 'social', 'community', 'institution',
+                     'stratification', 'norms', 'values', 'group', 'class'],
+        'accountancy': ['debit', 'credit', 'ledger', 'journal', 'balance sheet',
+                       'asset', 'liability', 'revenue', 'expense', 'depreciation'],
+        'business studies': ['management', 'marketing', 'finance', 'organization',
+                            'entrepreneur', 'strategy', 'planning', 'leadership'],
+        'statistics': ['mean', 'median', 'mode', 'variance', 'deviation', 'probability',
+                      'distribution', 'hypothesis', 'correlation', 'regression'],
+        'zoology': ['animal', 'vertebrate', 'invertebrate', 'mammal', 'reptile',
+                   'amphibian', 'bird', 'fish', 'insect', 'species'],
+        'botany': ['plant', 'leaf', 'root', 'stem', 'flower', 'seed', 'photosynthesis',
+                  'chlorophyll', 'xylem', 'phloem', 'transpiration'],
     }
     
     def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None):
@@ -122,15 +145,21 @@ class EnhancedGeminiExtractionService:
         subjects = context.get('subjects', [])
         subjects_str = ', '.join(subjects) if subjects else 'General'
         
-        # Build keyword hints
+        # Build keyword hints - works with ANY subject
         keyword_hints = []
         for subject in subjects:
             subject_lower = subject.lower()
+            # Try to find keywords in our reference database
             keywords = self.SUBJECT_KEYWORDS.get(subject_lower, [])
+            
             if keywords:
                 keyword_hints.append(f"  - **{subject.title()}**: {', '.join(keywords[:12])}")
+            else:
+                # For unknown subjects, provide generic guidance
+                # The AI will use its knowledge to identify questions for this subject
+                keyword_hints.append(f"  - **{subject.title()}**: Use your knowledge to identify questions related to {subject}")
         
-        keyword_section = "\n".join(keyword_hints) if keyword_hints else ""
+        keyword_section = "\n".join(keyword_hints) if keyword_hints else "  - Use your knowledge to categorize questions based on their content"
         
         image_instruction = ""
         if is_image:

@@ -57,6 +57,26 @@ class QuestionCreateSerializer(serializers.ModelSerializer):
             'pattern_section_name': {'required': False, 'allow_null': True},
             'question_number_in_pattern': {'required': False, 'allow_null': True},
         }
+    
+    def run_validators(self, value):
+        """
+        Override to skip unique_together validation - we handle duplicates in create()
+        """
+        # Get all validators except UniqueTogetherValidator
+        for validator in self.validators:
+            if hasattr(validator, 'requires_context'):
+                # Skip UniqueTogetherValidator
+                if 'UniqueTogetherValidator' in type(validator).__name__:
+                    continue
+            if hasattr(validator, 'set_context'):
+                validator.set_context(self)
+            try:
+                validator(value)
+            except serializers.ValidationError as exc:
+                # Skip unique_together errors - we'll handle them in create()
+                if 'unique set' in str(exc).lower():
+                    continue
+                raise
 
     def validate(self, data):
         initial = getattr(self, 'initial_data', {})
@@ -102,6 +122,36 @@ class QuestionCreateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({'options': 'MCQ questions must have at least 2 options'})
         
         return data
+    
+    def create(self, validated_data):
+        """
+        Create or update a question. If a question with the same exam and question_number
+        already exists, update it instead of creating a duplicate.
+        """
+        exam = validated_data.get('exam')
+        question_number = validated_data.get('question_number')
+        institute = validated_data.get('institute')
+        
+        # Check for existing question with same exam and question_number
+        if exam and question_number and institute:
+            exam_id = exam.id if hasattr(exam, 'id') else exam
+            existing_question = Question.objects.filter(
+                exam_id=exam_id,
+                question_number=question_number,
+                institute=institute,
+                is_active=True
+            ).first()
+            
+            if existing_question:
+                # Update existing question
+                for field, value in validated_data.items():
+                    if field not in ['institute', 'created_by']:
+                        setattr(existing_question, field, value)
+                existing_question.save()
+                return existing_question
+        
+        # Create new question
+        return super().create(validated_data)
 
 
 class QuestionBankSerializer(serializers.ModelSerializer):

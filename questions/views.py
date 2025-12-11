@@ -93,6 +93,29 @@ class QuestionListView(generics.ListCreateAPIView):
         return queryset.order_by('-created_at')
 
     def perform_create(self, serializer):
+        # Check if a question with the same exam and question_number already exists
+        exam = serializer.validated_data.get('exam')
+        question_number = serializer.validated_data.get('question_number')
+        
+        if exam and question_number:
+            exam_id = exam.id if hasattr(exam, 'id') else exam
+            existing_question = Question.objects.filter(
+                exam_id=exam_id,
+                question_number=question_number,
+                institute=self.request.user.institute,
+                is_active=True
+            ).first()
+            
+            if existing_question:
+                # Update existing question instead of creating a duplicate
+                for field, value in serializer.validated_data.items():
+                    if field not in ['exam', 'institute', 'created_by']:
+                        setattr(existing_question, field, value)
+                existing_question.save()
+                # Update the serializer instance so the response returns the updated question
+                serializer.instance = existing_question
+                return
+        
         serializer.save(
             institute=self.request.user.institute,
             created_by=self.request.user
@@ -909,6 +932,355 @@ def add_question_comment(request, question_id):
             'created_at': comment.created_at
         }
     }, status=status.HTTP_201_CREATED)
+
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def debug_pattern_questions(request):
+    """Debug endpoint to see what questions exist for a pattern"""
+    user = request.user
+    pattern_id = request.query_params.get('pattern_id')
+    exam_id = request.query_params.get('exam_id')
+    
+    if not pattern_id:
+        return Response({'error': 'pattern_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+    
+    try:
+        from patterns.models import ExamPattern, PatternSection
+        pattern = ExamPattern.objects.prefetch_related('sections').get(id=pattern_id)
+    except ExamPattern.DoesNotExist:
+        return Response({'error': 'Pattern not found'}, status=status.HTTP_404_NOT_FOUND)
+    
+    sections = pattern.sections.all().order_by('order', 'start_question')
+    section_ids = [s.id for s in sections]
+    
+    # Get ALL questions for this pattern (no exam filter)
+    all_questions = Question.objects.filter(
+        institute=user.institute,
+        pattern_section_id__in=section_ids,
+        is_active=True
+    ).values('id', 'question_number', 'question_number_in_pattern', 'pattern_section_id', 'exam_id', 'subject')
+    
+    # Get questions filtered by exam
+    exam_questions = []
+    if exam_id:
+        exam_questions = Question.objects.filter(
+            institute=user.institute,
+            pattern_section_id__in=section_ids,
+            exam_id=exam_id,
+            is_active=True
+        ).values('id', 'question_number', 'question_number_in_pattern', 'pattern_section_id', 'exam_id', 'subject')
+    
+    return Response({
+        'pattern_id': pattern_id,
+        'exam_id': exam_id,
+        'sections': [{'id': s.id, 'name': s.name, 'subject': s.subject, 'start': s.start_question, 'end': s.end_question} for s in sections],
+        'all_questions_count': all_questions.count(),
+        'all_questions': list(all_questions)[:50],  # First 50
+        'exam_questions_count': len(list(exam_questions)) if exam_id else 0,
+        'exam_questions': list(exam_questions)[:50] if exam_id else [],
+    })
+
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def get_pattern_questions_bulk(request):
+    """
+    Optimized endpoint to fetch ALL questions for a pattern/exam in a single call.
+    Returns questions grouped by section with proper numbering.
+    
+    Query params:
+    - pattern_id (required): Pattern ID
+    - exam_id (optional): Exam ID to filter questions
+    
+    Returns:
+    - sections: List of sections with their questions
+    - questions_by_section: Dict mapping section_id to list of questions
+    - existing_numbers_by_section: Dict mapping section_id to set of existing question numbers
+    - total_questions: Total count of questions
+    """
+    user = request.user
+    
+    pattern_id = request.query_params.get('pattern_id')
+    exam_id = request.query_params.get('exam_id')
+    
+    if not pattern_id:
+        return Response({'error': 'pattern_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+    
+    try:
+        from patterns.models import ExamPattern, PatternSection
+        pattern = ExamPattern.objects.prefetch_related('sections').get(id=pattern_id)
+    except ExamPattern.DoesNotExist:
+        return Response({'error': 'Pattern not found'}, status=status.HTTP_404_NOT_FOUND)
+    
+    # Build base queryset for questions
+    questions_qs = Question.objects.filter(
+        institute=user.institute,
+        is_active=True
+    ).select_related('created_by', 'verified_by')
+    
+    # Filter by exam if provided
+    if exam_id:
+        questions_qs = questions_qs.filter(exam_id=exam_id)
+    
+    # Get all sections for this pattern
+    sections = pattern.sections.all().order_by('order', 'start_question')
+    section_ids = [s.id for s in sections]
+    
+    # Filter questions by pattern sections
+    questions_qs = questions_qs.filter(pattern_section_id__in=section_ids)
+    
+    # Order by section and question number
+    questions_qs = questions_qs.order_by('pattern_section_id', 'question_number')
+    
+    # Serialize all questions at once
+    all_questions = list(questions_qs)
+    
+    # Group questions by section
+    questions_by_section = {}
+    existing_numbers_by_section = {}
+    
+    # First, compute subject_start for each section (grouped by subject)
+    subject_offsets = {}  # subject -> current offset
+    section_subject_starts = {}  # section_id -> subject_start
+    
+    for section in sections:
+        subject = section.subject
+        if subject not in subject_offsets:
+            subject_offsets[subject] = 0
+        
+        section_length = section.end_question - section.start_question + 1
+        section_subject_starts[section.id] = subject_offsets[subject] + 1  # 1-indexed
+        subject_offsets[subject] += section_length
+    
+    for section in sections:
+        section_questions = [q for q in all_questions if q.pattern_section_id == section.id]
+        questions_by_section[section.id] = QuestionSerializer(section_questions, many=True).data
+        
+        # Build set of existing question numbers for this section
+        # These should be subject-local numbers (1, 2, 3... within the subject)
+        existing_nums = set()
+        subject_start = section_subject_starts.get(section.id, 1)
+        
+        for idx, q in enumerate(section_questions):
+            # Use question_number_in_pattern if available
+            if q.question_number_in_pattern is not None:
+                existing_nums.add(q.question_number_in_pattern)
+            elif q.question_number is not None:
+                # Convert database question_number to subject-local number
+                # question_number is absolute (31, 32, 33...)
+                # We need to convert to subject-local (1, 2, 3...)
+                offset = q.question_number - section.start_question
+                subject_local = subject_start + offset
+                existing_nums.add(subject_local)
+            else:
+                # Fallback: use index-based numbering
+                subject_local = subject_start + idx
+                existing_nums.add(subject_local)
+        
+        existing_numbers_by_section[section.id] = list(existing_nums)
+    
+    # Build section stats with complete information
+    section_stats = []
+    for section in sections:
+        total_needed = section.end_question - section.start_question + 1
+        total_added = len(questions_by_section.get(section.id, []))
+        
+        section_stats.append({
+            'section_id': section.id,
+            'id': section.id,  # Alias for frontend compatibility
+            'section_name': section.name,
+            'name': section.name,  # Alias for frontend compatibility
+            'subject': section.subject,
+            'question_type': section.question_type,
+            'start_question': section.start_question,
+            'end_question': section.end_question,
+            'marks_per_question': section.marks_per_question,
+            'negative_marking': float(section.negative_marking),
+            'min_questions_to_attempt': section.min_questions_to_attempt,
+            'is_compulsory': section.is_compulsory,
+            'order': section.order,
+            'total_needed': total_needed,
+            'total_added': total_added,
+            'remaining': total_needed - total_added,
+            'progress_percentage': (total_added / total_needed * 100) if total_needed > 0 else 0,
+        })
+    
+    return Response({
+        'pattern_id': pattern.id,
+        'pattern_name': pattern.name,
+        'sections': section_stats,
+        'questions_by_section': questions_by_section,
+        'existing_numbers_by_section': existing_numbers_by_section,
+        'total_questions': len(all_questions),
+    })
+
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def get_section_questions(request, section_id):
+    """
+    Optimized endpoint to fetch all questions for a specific section.
+    
+    Query params:
+    - exam_id (optional): Exam ID to filter questions
+    
+    Returns:
+    - questions: List of questions in this section
+    - existing_numbers: List of existing question numbers (subject-local)
+    - section: Section details
+    """
+    user = request.user
+    exam_id = request.query_params.get('exam_id')
+    
+    try:
+        from patterns.models import PatternSection
+        section = PatternSection.objects.select_related('pattern').get(id=section_id)
+    except PatternSection.DoesNotExist:
+        return Response({'error': 'Section not found'}, status=status.HTTP_404_NOT_FOUND)
+    
+    # Build queryset
+    questions_qs = Question.objects.filter(
+        institute=user.institute,
+        is_active=True,
+        pattern_section_id=section_id
+    ).select_related('created_by', 'verified_by').order_by('question_number')
+    
+    if exam_id:
+        questions_qs = questions_qs.filter(exam_id=exam_id)
+    
+    questions = list(questions_qs)
+    
+    # Build existing numbers set
+    existing_numbers = []
+    questions_map = {}  # Map question_number_in_pattern -> question data
+    
+    for q in questions:
+        q_data = QuestionSerializer(q).data
+        
+        # Determine the subject-local question number
+        if q.question_number_in_pattern is not None:
+            local_num = q.question_number_in_pattern
+        elif q.question_number is not None:
+            # Compute subject-local from database question_number
+            local_num = q.question_number
+        else:
+            continue
+        
+        existing_numbers.append(local_num)
+        questions_map[local_num] = q_data
+    
+    return Response({
+        'section': {
+            'id': section.id,
+            'name': section.name,
+            'subject': section.subject,
+            'question_type': section.question_type,
+            'start_question': section.start_question,
+            'end_question': section.end_question,
+            'marks_per_question': section.marks_per_question,
+            'negative_marking': float(section.negative_marking),
+            'total_needed': section.end_question - section.start_question + 1,
+        },
+        'questions': QuestionSerializer(questions, many=True).data,
+        'existing_numbers': existing_numbers,
+        'questions_map': questions_map,
+        'total_count': len(questions),
+    })
+
+
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+def fix_question_numbers(request):
+    """
+    Fix question_number_in_pattern for questions in a specific exam/pattern.
+    This ensures imported questions show up correctly in the question navigator.
+    
+    POST body:
+    - exam_id (optional): Fix questions for specific exam
+    - pattern_id (optional): Fix questions for specific pattern
+    
+    At least one of exam_id or pattern_id must be provided.
+    """
+    user = request.user
+    if not user.can_manage_exams():
+        return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
+    
+    exam_id = request.data.get('exam_id')
+    pattern_id = request.data.get('pattern_id')
+    
+    if not exam_id and not pattern_id:
+        return Response(
+            {'error': 'Either exam_id or pattern_id is required'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    from patterns.models import PatternSection
+    
+    # Build base queryset
+    questions_qs = Question.objects.filter(
+        institute=user.institute,
+        pattern_section_id__isnull=False,
+        is_active=True
+    )
+    
+    if exam_id:
+        questions_qs = questions_qs.filter(exam_id=exam_id)
+    
+    if pattern_id:
+        section_ids = list(PatternSection.objects.filter(
+            pattern_id=pattern_id
+        ).values_list('id', flat=True))
+        questions_qs = questions_qs.filter(pattern_section_id__in=section_ids)
+    
+    # Group by section and fix numbers
+    section_ids = questions_qs.values_list('pattern_section_id', flat=True).distinct()
+    
+    total_fixed = 0
+    sections_processed = []
+    
+    for section_id in section_ids:
+        try:
+            section = PatternSection.objects.get(id=section_id)
+        except PatternSection.DoesNotExist:
+            continue
+        
+        # Get questions for this section, ordered by question_number or id
+        section_questions = list(questions_qs.filter(
+            pattern_section_id=section_id
+        ).order_by('question_number', 'id'))
+        
+        questions_to_update = []
+        
+        for idx, question in enumerate(section_questions):
+            expected_number = idx + 1
+            
+            if question.question_number_in_pattern != expected_number:
+                question.question_number_in_pattern = expected_number
+                questions_to_update.append(question)
+        
+        if questions_to_update:
+            with transaction.atomic():
+                Question.objects.bulk_update(
+                    questions_to_update,
+                    ['question_number_in_pattern'],
+                    batch_size=100
+                )
+            total_fixed += len(questions_to_update)
+        
+        sections_processed.append({
+            'section_id': section_id,
+            'section_name': section.name,
+            'questions_fixed': len(questions_to_update),
+            'total_questions': len(section_questions)
+        })
+    
+    return Response({
+        'success': True,
+        'total_fixed': total_fixed,
+        'sections_processed': sections_processed,
+        'message': f'Fixed {total_fixed} question numbers across {len(sections_processed)} sections'
+    })
 
 
 @api_view(['GET'])

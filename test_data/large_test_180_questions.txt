@@ -1,0 +1,1090 @@
+PHYSICS SECTION
+
+Q.1 What is the answer to question 1 in Physics?
+A) Option A for question 1
+B) Option B for question 1
+C) Option C for question 1
+D) Option D for question 1
+Answer: B
+Solution: This is the solution for question 1.
+
+Q.2 Select all correct answers for question 2 in Chemistry:
+A) First correct option
+B) Incorrect option
+C) Second correct option
+D) Another incorrect option
+E) Third correct option
+Answer: A, C, E
+Solution: Options A, C, and E are correct because...
+
+Q.3 True or False: Statement 3 about Mathematics is correct.
+A) True
+B) False
+Answer: True
+Solution: This statement is true because...
+
+Q.4 Fill in the blank: The answer to question 4 is _____.
+Answer: correct_answer_4
+Solution: The blank should be filled with the correct answer.
+
+Q.5 Calculate the value of expression 5 in Physics.
+Answer: 50
+Tolerance: ±0.5
+Solution: The calculation gives us 50.
+
+Q.6 Explain the concept related to question 6 in Chemistry. (100-150 words)
+Answer: This is a detailed explanation of the concept...
+Solution: The key points to cover are...
+
+Q.7 What is the answer to question 7 in Mathematics?
+A) Option A for question 7
+B) Option B for question 7
+C) Option C for question 7
+D) Option D for question 7
+Answer: B
+Solution: This is the solution for question 7.
+
+Q.8 Select all correct answers for question 8 in Biology:
+A) First correct option
+B) Incorrect option
+C) Second correct option
+D) Another incorrect option
+E) Third correct option
+Answer: A, C, E
+Solution: Options A, C, and E are correct because...
+
+Q.9 True or False: Statement 9 about Physics is correct.
+A) True
+B) False
+Answer: True
+Solution: This statement is true because...
+
+Q.10 Fill in the blank: The answer to question 10 is _____.
+Answer: correct_answer_10
+Solution: The blank should be filled with the correct answer.
+
+Q.11 Calculate the value of expression 11 in Mathematics.
+Answer: 110
+Tolerance: ±0.5
+Solution: The calculation gives us 110.
+
+Q.12 Explain the concept related to question 12 in Biology. (100-150 words)
+Answer: This is a detailed explanation of the concept...
+Solution: The key points to cover are...
+
+Q.13 What is the answer to question 13 in Physics?
+A) Option A for question 13
+B) Option B for question 13
+C) Option C for question 13
+D) Option D for question 13
+Answer: B
+Solution: This is the solution for question 13.
+
+Q.14 Select all correct answers for question 14 in Chemistry:
+A) First correct option
+B) Incorrect option
+C) Second correct option
+D) Another incorrect option
+E) Third correct option
+Answer: A, C, E
+Solution: Options A, C, and E are correct because...
+
+Q.15 True or False: Statement 15 about Mathematics is correct.
+A) True
+B) False
+Answer: True
+Solution: This statement is true because...
+
+Q.16 Fill in the blank: The answer to question 16 is _____.
+Answer: correct_answer_16
+Solution: The blank should be filled with the correct answer.
+
+Q.17 Calculate the value of expression 17 in Physics.
+Answer: 170
+Tolerance: ±0.5
+Solution: The calculation gives us 170.
+
+Q.18 Explain the concept related to question 18 in Chemistry. (100-150 words)
+Answer: This is a detailed explanation of the concept...
+Solution: The key points to cover are...
+
+Q.19 What is the answer to question 19 in Mathematics?
+A) Option A for question 19
+B) Option B for question 19
+C) Option C for question 19
+D) Option D for question 19
+Answer: B
+Solution: This is the solution for question 19.
+
+Q.20 Select all correct answers for question 20 in Biology:
+A) First correct option
+B) Incorrect option
+C) Second correct option
+D) Another incorrect option
+E) Third correct option
+Answer: A, C, E
+Solution: Options A, C, and E are correct because...
+
+Q.21 True or False: Statement 21 about Physics is correct.
+A) True
+B) False
+Answer: True
+Solution: This statement is true because...
+
+Q.22 Fill in the blank: The answer to question 22 is _____.
+Answer: correct_answer_22
+Solution: The blank should be filled with the correct answer.
+
+Q.23 Calculate the value of expression 23 in Mathematics.
+Answer: 230
+Tolerance: ±0.5
+Solution: The calculation gives us 230.
+
+Q.24 Explain the concept related to question 24 in Biology. (100-150 words)
+Answer: This is a detailed explanation of the concept...
+Solution: The key points to cover are...
+
+Q.25 What is the answer to question 25 in Physics?
+A) Option A for question 25
+B) Option B for question 25
+C) Option C for question 25
+D) Option D for question 25
+Answer: B
+Solution: This is the solution for question 25.
+
+Q.26 Select all correct answers for question 26 in Chemistry:
+A) First correct option
+B) Incorrect option
+C) Second correct option
+D) Another incorrect option
+E) Third correct option
+Answer: A, C, E
+Solution: Options A, C, and E are correct because...
+
+Q.27 True or False: Statement 27 about Mathematics is correct.
+A) True
+B) False
+Answer: True
+Solution: This statement is true because...
+
+Q.28 Fill in the blank: The answer to question 28 is _____.
+Answer: correct_answer_28
+Solution: The blank should be filled with the correct answer.
+
+Q.29 Calculate the value of expression 29 in Physics.
+Answer: 290
+Tolerance: ±0.5
+Solution: The calculation gives us 290.
+
+Q.30 Explain the concept related to question 30 in Chemistry. (100-150 words)
+Answer: This is a detailed explanation of the concept...
+Solution: The key points to cover are...
+
+Q.31 What is the answer to question 31 in Mathematics?
+A) Option A for question 31
+B) Option B for question 31
+C) Option C for question 31
+D) Option D for question 31
+Answer: B
+Solution: This is the solution for question 31.
+
+Q.32 Select all correct answers for question 32 in Biology:
+A) First correct option
+B) Incorrect option
+C) Second correct option
+D) Another incorrect option
+E) Third correct option
+Answer: A, C, E
+Solution: Options A, C, and E are correct because...
+
+Q.33 True or False: Statement 33 about Physics is correct.
+A) True
+B) False
+Answer: True
+Solution: This statement is true because...
+
+Q.34 Fill in the blank: The answer to question 34 is _____.
+Answer: correct_answer_34
+Solution: The blank should be filled with the correct answer.
+
+Q.35 Calculate the value of expression 35 in Mathematics.
+Answer: 350
+Tolerance: ±0.5
+Solution: The calculation gives us 350.
+
+Q.36 Explain the concept related to question 36 in Biology. (100-150 words)
+Answer: This is a detailed explanation of the concept...
+Solution: The key points to cover are...
+
+Q.37 What is the answer to question 37 in Physics?
+A) Option A for question 37
+B) Option B for question 37
+C) Option C for question 37
+D) Option D for question 37
+Answer: B
+Solution: This is the solution for question 37.
+
+Q.38 Select all correct answers for question 38 in Chemistry:
+A) First correct option
+B) Incorrect option
+C) Second correct option
+D) Another incorrect option
+E) Third correct option
+Answer: A, C, E
+Solution: Options A, C, and E are correct because...
+
+Q.39 True or False: Statement 39 about Mathematics is correct.
+A) True
+B) False
+Answer: True
+Solution: This statement is true because...
+
+Q.40 Fill in the blank: The answer to question 40 is _____.
+Answer: correct_answer_40
+Solution: The blank should be filled with the correct answer.
+
+Q.41 Calculate the value of expression 41 in Physics.
+Answer: 410
+Tolerance: ±0.5
+Solution: The calculation gives us 410.
+
+Q.42 Explain the concept related to question 42 in Chemistry. (100-150 words)
+Answer: This is a detailed explanation of the concept...
+Solution: The key points to cover are...
+
+Q.43 What is the answer to question 43 in Mathematics?
+A) Option A for question 43
+B) Option B for question 43
+C) Option C for question 43
+D) Option D for question 43
+Answer: B
+Solution: This is the solution for question 43.
+
+Q.44 Select all correct answers for question 44 in Biology:
+A) First correct option
+B) Incorrect option
+C) Second correct option
+D) Another incorrect option
+E) Third correct option
+Answer: A, C, E
+Solution: Options A, C, and E are correct because...
+
+Q.45 True or False: Statement 45 about Physics is correct.
+A) True
+B) False
+Answer: True
+Solution: This statement is true because...
+
+
+CHEMISTRY SECTION
+
+Q.46 Fill in the blank: The answer to question 46 is _____.
+Answer: correct_answer_46
+Solution: The blank should be filled with the correct answer.
+
+Q.47 Calculate the value of expression 47 in Mathematics.
+Answer: 470
+Tolerance: ±0.5
+Solution: The calculation gives us 470.
+
+Q.48 Explain the concept related to question 48 in Biology. (100-150 words)
+Answer: This is a detailed explanation of the concept...
+Solution: The key points to cover are...
+
+Q.49 What is the answer to question 49 in Physics?
+A) Option A for question 49
+B) Option B for question 49
+C) Option C for question 49
+D) Option D for question 49
+Answer: B
+Solution: This is the solution for question 49.
+
+Q.50 Select all correct answers for question 50 in Chemistry:
+A) First correct option
+B) Incorrect option
+C) Second correct option
+D) Another incorrect option
+E) Third correct option
+Answer: A, C, E
+Solution: Options A, C, and E are correct because...
+
+Q.51 True or False: Statement 51 about Mathematics is correct.
+A) True
+B) False
+Answer: True
+Solution: This statement is true because...
+
+Q.52 Fill in the blank: The answer to question 52 is _____.
+Answer: correct_answer_52
+Solution: The blank should be filled with the correct answer.
+
+Q.53 Calculate the value of expression 53 in Physics.
+Answer: 530
+Tolerance: ±0.5
+Solution: The calculation gives us 530.
+
+Q.54 Explain the concept related to question 54 in Chemistry. (100-150 words)
+Answer: This is a detailed explanation of the concept...
+Solution: The key points to cover are...
+
+Q.55 What is the answer to question 55 in Mathematics?
+A) Option A for question 55
+B) Option B for question 55
+C) Option C for question 55
+D) Option D for question 55
+Answer: B
+Solution: This is the solution for question 55.
+
+Q.56 Select all correct answers for question 56 in Biology:
+A) First correct option
+B) Incorrect option
+C) Second correct option
+D) Another incorrect option
+E) Third correct option
+Answer: A, C, E
+Solution: Options A, C, and E are correct because...
+
+Q.57 True or False: Statement 57 about Physics is correct.
+A) True
+B) False
+Answer: True
+Solution: This statement is true because...
+
+Q.58 Fill in the blank: The answer to question 58 is _____.
+Answer: correct_answer_58
+Solution: The blank should be filled with the correct answer.
+
+Q.59 Calculate the value of expression 59 in Mathematics.
+Answer: 590
+Tolerance: ±0.5
+Solution: The calculation gives us 590.
+
+Q.60 Explain the concept related to question 60 in Biology. (100-150 words)
+Answer: This is a detailed explanation of the concept...
+Solution: The key points to cover are...
+
+Q.61 What is the answer to question 61 in Physics?
+A) Option A for question 61
+B) Option B for question 61
+C) Option C for question 61
+D) Option D for question 61
+Answer: B
+Solution: This is the solution for question 61.
+
+Q.62 Select all correct answers for question 62 in Chemistry:
+A) First correct option
+B) Incorrect option
+C) Second correct option
+D) Another incorrect option
+E) Third correct option
+Answer: A, C, E
+Solution: Options A, C, and E are correct because...
+
+Q.63 True or False: Statement 63 about Mathematics is correct.
+A) True
+B) False
+Answer: True
+Solution: This statement is true because...
+
+Q.64 Fill in the blank: The answer to question 64 is _____.
+Answer: correct_answer_64
+Solution: The blank should be filled with the correct answer.
+
+Q.65 Calculate the value of expression 65 in Physics.
+Answer: 650
+Tolerance: ±0.5
+Solution: The calculation gives us 650.
+
+Q.66 Explain the concept related to question 66 in Chemistry. (100-150 words)
+Answer: This is a detailed explanation of the concept...
+Solution: The key points to cover are...
+
+Q.67 What is the answer to question 67 in Mathematics?
+A) Option A for question 67
+B) Option B for question 67
+C) Option C for question 67
+D) Option D for question 67
+Answer: B
+Solution: This is the solution for question 67.
+
+Q.68 Select all correct answers for question 68 in Biology:
+A) First correct option
+B) Incorrect option
+C) Second correct option
+D) Another incorrect option
+E) Third correct option
+Answer: A, C, E
+Solution: Options A, C, and E are correct because...
+
+Q.69 True or False: Statement 69 about Physics is correct.
+A) True
+B) False
+Answer: True
+Solution: This statement is true because...
+
+Q.70 Fill in the blank: The answer to question 70 is _____.
+Answer: correct_answer_70
+Solution: The blank should be filled with the correct answer.
+
+Q.71 Calculate the value of expression 71 in Mathematics.
+Answer: 710
+Tolerance: ±0.5
+Solution: The calculation gives us 710.
+
+Q.72 Explain the concept related to question 72 in Biology. (100-150 words)
+Answer: This is a detailed explanation of the concept...
+Solution: The key points to cover are...
+
+Q.73 What is the answer to question 73 in Physics?
+A) Option A for question 73
+B) Option B for question 73
+C) Option C for question 73
+D) Option D for question 73
+Answer: B
+Solution: This is the solution for question 73.
+
+Q.74 Select all correct answers for question 74 in Chemistry:
+A) First correct option
+B) Incorrect option
+C) Second correct option
+D) Another incorrect option
+E) Third correct option
+Answer: A, C, E
+Solution: Options A, C, and E are correct because...
+
+Q.75 True or False: Statement 75 about Mathematics is correct.
+A) True
+B) False
+Answer: True
+Solution: This statement is true because...
+
+Q.76 Fill in the blank: The answer to question 76 is _____.
+Answer: correct_answer_76
+Solution: The blank should be filled with the correct answer.
+
+Q.77 Calculate the value of expression 77 in Physics.
+Answer: 770
+Tolerance: ±0.5
+Solution: The calculation gives us 770.
+
+Q.78 Explain the concept related to question 78 in Chemistry. (100-150 words)
+Answer: This is a detailed explanation of the concept...
+Solution: The key points to cover are...
+
+Q.79 What is the answer to question 79 in Mathematics?
+A) Option A for question 79
+B) Option B for question 79
+C) Option C for question 79
+D) Option D for question 79
+Answer: B
+Solution: This is the solution for question 79.
+
+Q.80 Select all correct answers for question 80 in Biology:
+A) First correct option
+B) Incorrect option
+C) Second correct option
+D) Another incorrect option
+E) Third correct option
+Answer: A, C, E
+Solution: Options A, C, and E are correct because...
+
+Q.81 True or False: Statement 81 about Physics is correct.
+A) True
+B) False
+Answer: True
+Solution: This statement is true because...
+
+Q.82 Fill in the blank: The answer to question 82 is _____.
+Answer: correct_answer_82
+Solution: The blank should be filled with the correct answer.
+
+Q.83 Calculate the value of expression 83 in Mathematics.
+Answer: 830
+Tolerance: ±0.5
+Solution: The calculation gives us 830.
+
+Q.84 Explain the concept related to question 84 in Biology. (100-150 words)
+Answer: This is a detailed explanation of the concept...
+Solution: The key points to cover are...
+
+Q.85 What is the answer to question 85 in Physics?
+A) Option A for question 85
+B) Option B for question 85
+C) Option C for question 85
+D) Option D for question 85
+Answer: B
+Solution: This is the solution for question 85.
+
+Q.86 Select all correct answers for question 86 in Chemistry:
+A) First correct option
+B) Incorrect option
+C) Second correct option
+D) Another incorrect option
+E) Third correct option
+Answer: A, C, E
+Solution: Options A, C, and E are correct because...
+
+Q.87 True or False: Statement 87 about Mathematics is correct.
+A) True
+B) False
+Answer: True
+Solution: This statement is true because...
+
+Q.88 Fill in the blank: The answer to question 88 is _____.
+Answer: correct_answer_88
+Solution: The blank should be filled with the correct answer.
+
+Q.89 Calculate the value of expression 89 in Physics.
+Answer: 890
+Tolerance: ±0.5
+Solution: The calculation gives us 890.
+
+Q.90 Explain the concept related to question 90 in Chemistry. (100-150 words)
+Answer: This is a detailed explanation of the concept...
+Solution: The key points to cover are...
+
+
+MATHEMATICS SECTION
+
+Q.91 What is the answer to question 91 in Mathematics?
+A) Option A for question 91
+B) Option B for question 91
+C) Option C for question 91
+D) Option D for question 91
+Answer: B
+Solution: This is the solution for question 91.
+
+Q.92 Select all correct answers for question 92 in Biology:
+A) First correct option
+B) Incorrect option
+C) Second correct option
+D) Another incorrect option
+E) Third correct option
+Answer: A, C, E
+Solution: Options A, C, and E are correct because...
+
+Q.93 True or False: Statement 93 about Physics is correct.
+A) True
+B) False
+Answer: True
+Solution: This statement is true because...
+
+Q.94 Fill in the blank: The answer to question 94 is _____.
+Answer: correct_answer_94
+Solution: The blank should be filled with the correct answer.
+
+Q.95 Calculate the value of expression 95 in Mathematics.
+Answer: 950
+Tolerance: ±0.5
+Solution: The calculation gives us 950.
+
+Q.96 Explain the concept related to question 96 in Biology. (100-150 words)
+Answer: This is a detailed explanation of the concept...
+Solution: The key points to cover are...
+
+Q.97 What is the answer to question 97 in Physics?
+A) Option A for question 97
+B) Option B for question 97
+C) Option C for question 97
+D) Option D for question 97
+Answer: B
+Solution: This is the solution for question 97.
+
+Q.98 Select all correct answers for question 98 in Chemistry:
+A) First correct option
+B) Incorrect option
+C) Second correct option
+D) Another incorrect option
+E) Third correct option
+Answer: A, C, E
+Solution: Options A, C, and E are correct because...
+
+Q.99 True or False: Statement 99 about Mathematics is correct.
+A) True
+B) False
+Answer: True
+Solution: This statement is true because...
+
+Q.100 Fill in the blank: The answer to question 100 is _____.
+Answer: correct_answer_100
+Solution: The blank should be filled with the correct answer.
+
+Q.101 Calculate the value of expression 101 in Physics.
+Answer: 1010
+Tolerance: ±0.5
+Solution: The calculation gives us 1010.
+
+Q.102 Explain the concept related to question 102 in Chemistry. (100-150 words)
+Answer: This is a detailed explanation of the concept...
+Solution: The key points to cover are...
+
+Q.103 What is the answer to question 103 in Mathematics?
+A) Option A for question 103
+B) Option B for question 103
+C) Option C for question 103
+D) Option D for question 103
+Answer: B
+Solution: This is the solution for question 103.
+
+Q.104 Select all correct answers for question 104 in Biology:
+A) First correct option
+B) Incorrect option
+C) Second correct option
+D) Another incorrect option
+E) Third correct option
+Answer: A, C, E
+Solution: Options A, C, and E are correct because...
+
+Q.105 True or False: Statement 105 about Physics is correct.
+A) True
+B) False
+Answer: True
+Solution: This statement is true because...
+
+Q.106 Fill in the blank: The answer to question 106 is _____.
+Answer: correct_answer_106
+Solution: The blank should be filled with the correct answer.
+
+Q.107 Calculate the value of expression 107 in Mathematics.
+Answer: 1070
+Tolerance: ±0.5
+Solution: The calculation gives us 1070.
+
+Q.108 Explain the concept related to question 108 in Biology. (100-150 words)
+Answer: This is a detailed explanation of the concept...
+Solution: The key points to cover are...
+
+Q.109 What is the answer to question 109 in Physics?
+A) Option A for question 109
+B) Option B for question 109
+C) Option C for question 109
+D) Option D for question 109
+Answer: B
+Solution: This is the solution for question 109.
+
+Q.110 Select all correct answers for question 110 in Chemistry:
+A) First correct option
+B) Incorrect option
+C) Second correct option
+D) Another incorrect option
+E) Third correct option
+Answer: A, C, E
+Solution: Options A, C, and E are correct because...
+
+Q.111 True or False: Statement 111 about Mathematics is correct.
+A) True
+B) False
+Answer: True
+Solution: This statement is true because...
+
+Q.112 Fill in the blank: The answer to question 112 is _____.
+Answer: correct_answer_112
+Solution: The blank should be filled with the correct answer.
+
+Q.113 Calculate the value of expression 113 in Physics.
+Answer: 1130
+Tolerance: ±0.5
+Solution: The calculation gives us 1130.
+
+Q.114 Explain the concept related to question 114 in Chemistry. (100-150 words)
+Answer: This is a detailed explanation of the concept...
+Solution: The key points to cover are...
+
+Q.115 What is the answer to question 115 in Mathematics?
+A) Option A for question 115
+B) Option B for question 115
+C) Option C for question 115
+D) Option D for question 115
+Answer: B
+Solution: This is the solution for question 115.
+
+Q.116 Select all correct answers for question 116 in Biology:
+A) First correct option
+B) Incorrect option
+C) Second correct option
+D) Another incorrect option
+E) Third correct option
+Answer: A, C, E
+Solution: Options A, C, and E are correct because...
+
+Q.117 True or False: Statement 117 about Physics is correct.
+A) True
+B) False
+Answer: True
+Solution: This statement is true because...
+
+Q.118 Fill in the blank: The answer to question 118 is _____.
+Answer: correct_answer_118
+Solution: The blank should be filled with the correct answer.
+
+Q.119 Calculate the value of expression 119 in Mathematics.
+Answer: 1190
+Tolerance: ±0.5
+Solution: The calculation gives us 1190.
+
+Q.120 Explain the concept related to question 120 in Biology. (100-150 words)
+Answer: This is a detailed explanation of the concept...
+Solution: The key points to cover are...
+
+Q.121 What is the answer to question 121 in Physics?
+A) Option A for question 121
+B) Option B for question 121
+C) Option C for question 121
+D) Option D for question 121
+Answer: B
+Solution: This is the solution for question 121.
+
+Q.122 Select all correct answers for question 122 in Chemistry:
+A) First correct option
+B) Incorrect option
+C) Second correct option
+D) Another incorrect option
+E) Third correct option
+Answer: A, C, E
+Solution: Options A, C, and E are correct because...
+
+Q.123 True or False: Statement 123 about Mathematics is correct.
+A) True
+B) False
+Answer: True
+Solution: This statement is true because...
+
+Q.124 Fill in the blank: The answer to question 124 is _____.
+Answer: correct_answer_124
+Solution: The blank should be filled with the correct answer.
+
+Q.125 Calculate the value of expression 125 in Physics.
+Answer: 1250
+Tolerance: ±0.5
+Solution: The calculation gives us 1250.
+
+Q.126 Explain the concept related to question 126 in Chemistry. (100-150 words)
+Answer: This is a detailed explanation of the concept...
+Solution: The key points to cover are...
+
+Q.127 What is the answer to question 127 in Mathematics?
+A) Option A for question 127
+B) Option B for question 127
+C) Option C for question 127
+D) Option D for question 127
+Answer: B
+Solution: This is the solution for question 127.
+
+Q.128 Select all correct answers for question 128 in Biology:
+A) First correct option
+B) Incorrect option
+C) Second correct option
+D) Another incorrect option
+E) Third correct option
+Answer: A, C, E
+Solution: Options A, C, and E are correct because...
+
+Q.129 True or False: Statement 129 about Physics is correct.
+A) True
+B) False
+Answer: True
+Solution: This statement is true because...
+
+Q.130 Fill in the blank: The answer to question 130 is _____.
+Answer: correct_answer_130
+Solution: The blank should be filled with the correct answer.
+
+Q.131 Calculate the value of expression 131 in Mathematics.
+Answer: 1310
+Tolerance: ±0.5
+Solution: The calculation gives us 1310.
+
+Q.132 Explain the concept related to question 132 in Biology. (100-150 words)
+Answer: This is a detailed explanation of the concept...
+Solution: The key points to cover are...
+
+Q.133 What is the answer to question 133 in Physics?
+A) Option A for question 133
+B) Option B for question 133
+C) Option C for question 133
+D) Option D for question 133
+Answer: B
+Solution: This is the solution for question 133.
+
+Q.134 Select all correct answers for question 134 in Chemistry:
+A) First correct option
+B) Incorrect option
+C) Second correct option
+D) Another incorrect option
+E) Third correct option
+Answer: A, C, E
+Solution: Options A, C, and E are correct because...
+
+Q.135 True or False: Statement 135 about Mathematics is correct.
+A) True
+B) False
+Answer: True
+Solution: This statement is true because...
+
+
+BIOLOGY SECTION
+
+Q.136 Fill in the blank: The answer to question 136 is _____.
+Answer: correct_answer_136
+Solution: The blank should be filled with the correct answer.
+
+Q.137 Calculate the value of expression 137 in Physics.
+Answer: 1370
+Tolerance: ±0.5
+Solution: The calculation gives us 1370.
+
+Q.138 Explain the concept related to question 138 in Chemistry. (100-150 words)
+Answer: This is a detailed explanation of the concept...
+Solution: The key points to cover are...
+
+Q.139 What is the answer to question 139 in Mathematics?
+A) Option A for question 139
+B) Option B for question 139
+C) Option C for question 139
+D) Option D for question 139
+Answer: B
+Solution: This is the solution for question 139.
+
+Q.140 Select all correct answers for question 140 in Biology:
+A) First correct option
+B) Incorrect option
+C) Second correct option
+D) Another incorrect option
+E) Third correct option
+Answer: A, C, E
+Solution: Options A, C, and E are correct because...
+
+Q.141 True or False: Statement 141 about Physics is correct.
+A) True
+B) False
+Answer: True
+Solution: This statement is true because...
+
+Q.142 Fill in the blank: The answer to question 142 is _____.
+Answer: correct_answer_142
+Solution: The blank should be filled with the correct answer.
+
+Q.143 Calculate the value of expression 143 in Mathematics.
+Answer: 1430
+Tolerance: ±0.5
+Solution: The calculation gives us 1430.
+
+Q.144 Explain the concept related to question 144 in Biology. (100-150 words)
+Answer: This is a detailed explanation of the concept...
+Solution: The key points to cover are...
+
+Q.145 What is the answer to question 145 in Physics?
+A) Option A for question 145
+B) Option B for question 145
+C) Option C for question 145
+D) Option D for question 145
+Answer: B
+Solution: This is the solution for question 145.
+
+Q.146 Select all correct answers for question 146 in Chemistry:
+A) First correct option
+B) Incorrect option
+C) Second correct option
+D) Another incorrect option
+E) Third correct option
+Answer: A, C, E
+Solution: Options A, C, and E are correct because...
+
+Q.147 True or False: Statement 147 about Mathematics is correct.
+A) True
+B) False
+Answer: True
+Solution: This statement is true because...
+
+Q.148 Fill in the blank: The answer to question 148 is _____.
+Answer: correct_answer_148
+Solution: The blank should be filled with the correct answer.
+
+Q.149 Calculate the value of expression 149 in Physics.
+Answer: 1490
+Tolerance: ±0.5
+Solution: The calculation gives us 1490.
+
+Q.150 Explain the concept related to question 150 in Chemistry. (100-150 words)
+Answer: This is a detailed explanation of the concept...
+Solution: The key points to cover are...
+
+Q.151 What is the answer to question 151 in Mathematics?
+A) Option A for question 151
+B) Option B for question 151
+C) Option C for question 151
+D) Option D for question 151
+Answer: B
+Solution: This is the solution for question 151.
+
+Q.152 Select all correct answers for question 152 in Biology:
+A) First correct option
+B) Incorrect option
+C) Second correct option
+D) Another incorrect option
+E) Third correct option
+Answer: A, C, E
+Solution: Options A, C, and E are correct because...
+
+Q.153 True or False: Statement 153 about Physics is correct.
+A) True
+B) False
+Answer: True
+Solution: This statement is true because...
+
+Q.154 Fill in the blank: The answer to question 154 is _____.
+Answer: correct_answer_154
+Solution: The blank should be filled with the correct answer.
+
+Q.155 Calculate the value of expression 155 in Mathematics.
+Answer: 1550
+Tolerance: ±0.5
+Solution: The calculation gives us 1550.
+
+Q.156 Explain the concept related to question 156 in Biology. (100-150 words)
+Answer: This is a detailed explanation of the concept...
+Solution: The key points to cover are...
+
+Q.157 What is the answer to question 157 in Physics?
+A) Option A for question 157
+B) Option B for question 157
+C) Option C for question 157
+D) Option D for question 157
+Answer: B
+Solution: This is the solution for question 157.
+
+Q.158 Select all correct answers for question 158 in Chemistry:
+A) First correct option
+B) Incorrect option
+C) Second correct option
+D) Another incorrect option
+E) Third correct option
+Answer: A, C, E
+Solution: Options A, C, and E are correct because...
+
+Q.159 True or False: Statement 159 about Mathematics is correct.
+A) True
+B) False
+Answer: True
+Solution: This statement is true because...
+
+Q.160 Fill in the blank: The answer to question 160 is _____.
+Answer: correct_answer_160
+Solution: The blank should be filled with the correct answer.
+
+Q.161 Calculate the value of expression 161 in Physics.
+Answer: 1610
+Tolerance: ±0.5
+Solution: The calculation gives us 1610.
+
+Q.162 Explain the concept related to question 162 in Chemistry. (100-150 words)
+Answer: This is a detailed explanation of the concept...
+Solution: The key points to cover are...
+
+Q.163 What is the answer to question 163 in Mathematics?
+A) Option A for question 163
+B) Option B for question 163
+C) Option C for question 163
+D) Option D for question 163
+Answer: B
+Solution: This is the solution for question 163.
+
+Q.164 Select all correct answers for question 164 in Biology:
+A) First correct option
+B) Incorrect option
+C) Second correct option
+D) Another incorrect option
+E) Third correct option
+Answer: A, C, E
+Solution: Options A, C, and E are correct because...
+
+Q.165 True or False: Statement 165 about Physics is correct.
+A) True
+B) False
+Answer: True
+Solution: This statement is true because...
+
+Q.166 Fill in the blank: The answer to question 166 is _____.
+Answer: correct_answer_166
+Solution: The blank should be filled with the correct answer.
+
+Q.167 Calculate the value of expression 167 in Mathematics.
+Answer: 1670
+Tolerance: ±0.5
+Solution: The calculation gives us 1670.
+
+Q.168 Explain the concept related to question 168 in Biology. (100-150 words)
+Answer: This is a detailed explanation of the concept...
+Solution: The key points to cover are...
+
+Q.169 What is the answer to question 169 in Physics?
+A) Option A for question 169
+B) Option B for question 169
+C) Option C for question 169
+D) Option D for question 169
+Answer: B
+Solution: This is the solution for question 169.
+
+Q.170 Select all correct answers for question 170 in Chemistry:
+A) First correct option
+B) Incorrect option
+C) Second correct option
+D) Another incorrect option
+E) Third correct option
+Answer: A, C, E
+Solution: Options A, C, and E are correct because...
+
+Q.171 True or False: Statement 171 about Mathematics is correct.
+A) True
+B) False
+Answer: True
+Solution: This statement is true because...
+
+Q.172 Fill in the blank: The answer to question 172 is _____.
+Answer: correct_answer_172
+Solution: The blank should be filled with the correct answer.
+
+Q.173 Calculate the value of expression 173 in Physics.
+Answer: 1730
+Tolerance: ±0.5
+Solution: The calculation gives us 1730.
+
+Q.174 Explain the concept related to question 174 in Chemistry. (100-150 words)
+Answer: This is a detailed explanation of the concept...
+Solution: The key points to cover are...
+
+Q.175 What is the answer to question 175 in Mathematics?
+A) Option A for question 175
+B) Option B for question 175
+C) Option C for question 175
+D) Option D for question 175
+Answer: B
+Solution: This is the solution for question 175.
+
+Q.176 Select all correct answers for question 176 in Biology:
+A) First correct option
+B) Incorrect option
+C) Second correct option
+D) Another incorrect option
+E) Third correct option
+Answer: A, C, E
+Solution: Options A, C, and E are correct because...
+
+Q.177 True or False: Statement 177 about Physics is correct.
+A) True
+B) False
+Answer: True
+Solution: This statement is true because...
+
+Q.178 Fill in the blank: The answer to question 178 is _____.
+Answer: correct_answer_178
+Solution: The blank should be filled with the correct answer.
+
+Q.179 Calculate the value of expression 179 in Mathematics.
+Answer: 1790
+Tolerance: ±0.5
+Solution: The calculation gives us 1790.
+
+Q.180 Explain the concept related to question 180 in Biology. (100-150 words)
+Answer: This is a detailed explanation of the concept...
+Solution: The key points to cover are...

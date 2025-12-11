@@ -4,7 +4,7 @@ Django settings for exam_flow_backend project.
 
 import os
 from pathlib import Path
-from config import SECRET_KEY, DEBUG, DATABASE_URL, ALLOWED_HOSTS, CORS_ALLOWED_ORIGINS, GEMINI_API_KEY as CONFIG_GEMINI_API_KEY
+from config import SECRET_KEY, DEBUG, DATABASE_URL, ALLOWED_HOSTS, CORS_ALLOWED_ORIGINS, GEMINI_API_KEY as CONFIG_GEMINI_API_KEY, MATHPIX_APP_ID as CONFIG_MATHPIX_APP_ID, MATHPIX_APP_KEY as CONFIG_MATHPIX_APP_KEY
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -296,11 +296,20 @@ GEMINI_TEMPERATURE = float(os.getenv('GEMINI_TEMPERATURE', '0.7'))
 GEMINI_TOP_P = float(os.getenv('GEMINI_TOP_P', '0.95'))
 GEMINI_MAX_TOKENS = int(os.getenv('GEMINI_MAX_TOKENS', '8192'))
 
+# ===========================
+# Mathpix OCR Configuration (for PDF extraction)
+# ===========================
+MATHPIX_APP_ID = CONFIG_MATHPIX_APP_ID or os.getenv('MATHPIX_APP_ID', '')
+MATHPIX_APP_KEY = CONFIG_MATHPIX_APP_KEY or os.getenv('MATHPIX_APP_KEY', '')
+
 # File Upload Settings for Question Extraction
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10MB
 ALLOWED_EXTRACTION_FILE_TYPES = [
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document',  # .docx
     'application/msword',  # .doc
     'text/plain',  # .txt
+    'application/pdf',  # .pdf (via Mathpix OCR)
+    'image/jpeg',  # .jpg (via Mathpix OCR)
+    'image/png',  # .png (via Mathpix OCR)
 ]
-EXTRACTION_FILE_EXTENSIONS = ['.txt', '.docx', '.doc']
+EXTRACTION_FILE_EXTENSIONS = ['.txt', '.docx', '.doc', '.pdf', '.jpg', '.jpeg', '.png']

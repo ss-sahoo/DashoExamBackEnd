@@ -66,13 +66,38 @@ class BulkImportService:
             # Create mapping dictionary for quick lookup
             mapping_dict = {m['extracted_question_id']: m for m in question_mappings}
             
-            # Get starting question number for this exam
-            last_question = Question.objects.filter(
-                exam=job.exam,
-                is_active=True
-            ).order_by('-question_number').first()
+            # Track next question number per section
+            section_next_numbers = {}
             
-            next_question_number = (last_question.question_number + 1) if last_question else 1
+            def get_next_question_number_for_section(section_id):
+                """Get the next available question number for a section"""
+                if section_id not in section_next_numbers:
+                    # Get the section to know its range
+                    try:
+                        section = PatternSection.objects.get(id=section_id)
+                        # Find the last question in this section for this exam
+                        last_in_section = Question.objects.filter(
+                            exam=job.exam,
+                            pattern_section_id=section_id,
+                            is_active=True
+                        ).order_by('-question_number').first()
+                        
+                        if last_in_section:
+                            section_next_numbers[section_id] = last_in_section.question_number + 1
+                        else:
+                            # Start from section's start_question
+                            section_next_numbers[section_id] = section.start_question
+                    except PatternSection.DoesNotExist:
+                        # Fallback to sequential numbering
+                        last_question = Question.objects.filter(
+                            exam=job.exam,
+                            is_active=True
+                        ).order_by('-question_number').first()
+                        section_next_numbers[section_id] = (last_question.question_number + 1) if last_question else 1
+                
+                current = section_next_numbers[section_id]
+                section_next_numbers[section_id] += 1
+                return current
             
             # Import questions - each in its own transaction
             imported_count = 0
@@ -86,8 +111,10 @@ class BulkImportService:
                 
                 try:
                     with transaction.atomic():
-                        # Update mapping with actual question number
-                        mapping['question_number'] = next_question_number
+                        # Get question number based on section
+                        section_id = mapping.get('section_id')
+                        question_number = get_next_question_number_for_section(section_id)
+                        mapping['question_number'] = question_number
                         
                         # Create Question record
                         question = self._create_question(
@@ -99,9 +126,6 @@ class BulkImportService:
                         # Mark as imported
                         extracted_q.mark_imported(question)
                         imported_count += 1
-                        
-                        # Increment for next question
-                        next_question_number += 1
                     
                 except Exception as e:
                     logger.error(f"Failed to import question {extracted_q.id}: {e}")

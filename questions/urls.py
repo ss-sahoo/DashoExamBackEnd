@@ -42,16 +42,42 @@ urlpatterns = [
     # Statistics
     path('statistics/', views.question_statistics, name='question-statistics'),
     
+    # Optimized bulk endpoints for pattern questions
+    path('pattern-questions/', views.get_pattern_questions_bulk, name='pattern-questions-bulk'),
+    path('section-questions/<int:section_id>/', views.get_section_questions, name='section-questions'),
+    path('fix-question-numbers/', views.fix_question_numbers, name='fix-question-numbers'),
+    path('debug-pattern-questions/', views.debug_pattern_questions, name='debug-pattern-questions'),
+    
     # AI Question Extraction Endpoints
     path('bulk-extract/', extraction_views.ExtractionJobViewSet.as_view({'post': 'upload_file'}), name='bulk-extract'),
     path('extraction-status/<uuid:pk>/', extraction_views.ExtractionJobViewSet.as_view({'get': 'get_status'}), name='extraction-status'),
     path('extracted/<uuid:pk>/', extraction_views.ExtractionJobViewSet.as_view({'get': 'get_extracted_questions'}), name='extracted-questions'),
     path('bulk-import-extracted/', extraction_views.bulk_import_questions, name='bulk-import-extracted'),
     path('extraction-history/', extraction_views.extraction_history, name='extraction-history'),
+    path('download-extracted/<uuid:job_id>/', extraction_views.download_extracted_questions, name='download-extracted'),
     
     # Enhanced Extraction Endpoints
     path('pattern-structure/<int:pattern_id>/', extraction_views.get_pattern_structure, name='pattern-structure'),
     path('analyze-mismatches/', extraction_views.analyze_extraction_mismatches, name='analyze-mismatches'),
+    
+    # Document Pre-Analysis Endpoints
+    path('pre-analyze/', extraction_views.pre_analyze_document, name='pre-analyze'),
+    path('pre-analyze/<uuid:job_id>/subjects/', extraction_views.get_pre_analysis_subjects, name='pre-analysis-subjects'),
+    path('pre-analyze/<uuid:job_id>/subjects/<str:subject>/download/', extraction_views.download_subject_content, name='download-subject-content'),
+    path('pre-analyze/<uuid:job_id>/confirm/', extraction_views.confirm_pre_analysis, name='confirm-pre-analysis'),
+    
+    # Import Preview Endpoint (NEW - shows what will be imported before confirming)
+    path('import-preview/<uuid:job_id>/', extraction_views.get_import_preview, name='import-preview'),
+    
+    # Section-Based Extraction & Import Confirmation Endpoints
+    path('extract-by-section/', extraction_views.extract_questions_by_section, name='extract-by-section'),
+    path('section-import-preview/', extraction_views.get_section_import_preview, name='section-import-preview'),
+    path('section-capacity/<int:pattern_id>/<str:subject>/', extraction_views.get_section_capacity, name='section-capacity'),
+    path('confirm-section-import/', extraction_views.confirm_section_import, name='confirm-section-import'),
+    path('full-extraction-flow/', extraction_views.full_extraction_flow, name='full-extraction-flow'),
+    
+    # Image to Text Extraction (Mathpix OCR)
+    path('image-to-text/', extraction_views.extract_text_from_image, name='image-to-text'),
     
     # Include extraction router URLs
     path('', include(extraction_router.urls)),

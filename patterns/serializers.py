@@ -13,6 +13,7 @@ class PatternSectionSerializer(serializers.ModelSerializer):
     total_marks_in_section = serializers.ReadOnlyField()
     subject_name = serializers.ReadOnlyField(source='subject')
     marking_scheme = serializers.SerializerMethodField(read_only=True)
+    questions_added = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = PatternSection
@@ -20,8 +21,35 @@ class PatternSectionSerializer(serializers.ModelSerializer):
             'id', 'name', 'subject', 'subject_name', 'question_type', 
             'start_question', 'end_question', 'marks_per_question', 'negative_marking', 
             'min_questions_to_attempt', 'is_compulsory', 'order', 
-            'total_questions_in_section', 'total_marks_in_section', 'marking_scheme'
+            'total_questions_in_section', 'total_marks_in_section', 'marking_scheme',
+            'questions_added'
         ]
+
+    def get_questions_added(self, obj):
+        """Get the count of questions added to this section for the current exam"""
+        # Get exam_id from context if available
+        request = self.context.get('request')
+        exam_id = None
+        
+        if request:
+            # Try to get exam_id from query params or view kwargs
+            exam_id = request.query_params.get('exam_id')
+            if not exam_id and hasattr(request, 'parser_context'):
+                exam_id = request.parser_context.get('kwargs', {}).get('exam_id')
+        
+        # Also check if exam is in context directly
+        if not exam_id:
+            exam_id = self.context.get('exam_id')
+        
+        if exam_id:
+            from questions.models import Question
+            return Question.objects.filter(
+                exam_id=exam_id,
+                pattern_section_id=obj.id,
+                is_active=True
+            ).count()
+        
+        return None
 
     def get_marking_scheme(self, obj):
         """Convert flat fields to marking_scheme object for frontend"""
@@ -46,7 +74,7 @@ class PatternSectionSerializer(serializers.ModelSerializer):
 
 
 class ExamPatternSerializer(serializers.ModelSerializer):
-    sections = PatternSectionSerializer(many=True, read_only=True)
+    sections = serializers.SerializerMethodField()
     created_by_name = serializers.CharField(source='created_by.get_full_name', read_only=True)
     institute_name = serializers.CharField(source='institute.name', read_only=True)
 
@@ -58,6 +86,11 @@ class ExamPatternSerializer(serializers.ModelSerializer):
             'created_by', 'created_by_name', 'sections', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_by', 'created_at', 'updated_at']
+
+    def get_sections(self, obj):
+        """Serialize sections with exam_id context for question counts"""
+        sections = obj.sections.all()
+        return PatternSectionSerializer(sections, many=True, context=self.context).data
 
     def validate(self, attrs):
         # Validate that sections don't overlap WITHIN THE SAME SUBJECT

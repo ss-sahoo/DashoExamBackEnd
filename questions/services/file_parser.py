@@ -1,5 +1,6 @@
 """
 File Parser Service for extracting text from various file formats
+Supports PDF extraction via Mathpix OCR for high-quality text extraction
 """
 import os
 import logging
@@ -26,13 +27,17 @@ class FileParserService:
         'application/vnd.openxmlformats-officedocument.wordprocessingml.document',  # .docx
         'application/msword',  # .doc
         'text/plain',  # .txt
+        'application/pdf',  # .pdf (via Mathpix)
+        'image/jpeg',  # .jpg (via Mathpix)
+        'image/png',  # .png (via Mathpix)
     ]
     
-    SUPPORTED_EXTENSIONS = ['.txt', '.docx', '.doc']
+    SUPPORTED_EXTENSIONS = ['.txt', '.docx', '.doc', '.pdf', '.jpg', '.jpeg', '.png']
     
     def __init__(self):
         """Initialize the file parser service"""
         self.gemini_client = None  # Will be initialized when needed for image parsing
+        self.mathpix_service = None  # Will be initialized when needed for PDF/image parsing
     
     def parse_file(self, file_path: str, file_type: str) -> str:
         """
@@ -63,11 +68,17 @@ class FileParserService:
         
         try:
             # Route to appropriate parser based on file type
-            if file_type in ['application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/msword'] or file_path.endswith(('.docx', '.doc')):
+            if file_type == 'application/pdf' or file_path.endswith('.pdf'):
+                return self.parse_pdf_mathpix(file_path)
+            
+            elif file_type in ['application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/msword'] or file_path.endswith(('.docx', '.doc')):
                 return self.parse_docx(file_path)
             
             elif file_type == 'text/plain' or file_path.endswith('.txt'):
                 return self.parse_text(file_path)
+            
+            elif file_type in ['image/jpeg', 'image/png'] or file_path.endswith(('.jpg', '.jpeg', '.png')):
+                return self.parse_image_mathpix(file_path)
             
             else:
                 raise UnsupportedFileTypeError(f"Unsupported file type: {file_type}")
@@ -78,9 +89,91 @@ class FileParserService:
             logger.error(f"Error parsing file {file_path}: {str(e)}")
             raise FileParsingError(f"Failed to parse file: {str(e)}")
     
-    def parse_pdf(self, file_path: str) -> str:
+    def _get_mathpix_service(self):
+        """Lazy initialization of Mathpix service"""
+        if self.mathpix_service is None:
+            try:
+                from .mathpix_service import MathpixService
+                self.mathpix_service = MathpixService()
+            except Exception as e:
+                logger.error(f"Failed to initialize Mathpix service: {e}")
+                raise FileParsingError(f"Mathpix service not available: {str(e)}")
+        return self.mathpix_service
+    
+    def parse_pdf_mathpix(self, file_path: str) -> str:
         """
-        Extract text from PDF using PyPDF2
+        Extract text from PDF using Mathpix OCR API with caching.
+        
+        This provides high-quality OCR with:
+        - LaTeX extraction for math equations
+        - Table recognition
+        - Support for scanned PDFs
+        - Result caching to avoid redundant API calls
+        
+        Args:
+            file_path: Path to PDF file
+            
+        Returns:
+            Extracted text content with LaTeX preserved
+        """
+        try:
+            mathpix = self._get_mathpix_service()
+            
+            # Use cached extraction method (checks cache first, stores result after)
+            text_content, ocr_result = mathpix.extract_pdf_with_cache(file_path)
+            
+            if not text_content or not text_content.strip():
+                raise FileParsingError("No text content extracted from PDF")
+            
+            cache_status = "CACHED" if ocr_result.usage_count > 0 else "NEW"
+            logger.info(
+                f"Successfully extracted {len(text_content)} characters from PDF via Mathpix "
+                f"[{cache_status}] (pages: {ocr_result.page_count})"
+            )
+            return text_content
+            
+        except FileParsingError:
+            raise
+        except Exception as e:
+            logger.error(f"Mathpix PDF extraction failed: {str(e)}")
+            # Fallback to PyPDF2 for simple text PDFs
+            logger.info("Attempting fallback to PyPDF2...")
+            return self.parse_pdf_pypdf2(file_path)
+    
+    def parse_image_mathpix(self, file_path: str) -> str:
+        """
+        Extract text from image using Mathpix OCR API with caching.
+        
+        Args:
+            file_path: Path to image file
+            
+        Returns:
+            Extracted text content with LaTeX preserved
+        """
+        try:
+            mathpix = self._get_mathpix_service()
+            
+            # Use cached extraction method
+            text_content, ocr_result = mathpix.extract_image_with_cache(file_path)
+            
+            if not text_content or not text_content.strip():
+                raise FileParsingError("No text content extracted from image")
+            
+            cache_status = "CACHED" if ocr_result.usage_count > 0 else "NEW"
+            logger.info(
+                f"Successfully extracted {len(text_content)} characters from image via Mathpix "
+                f"[{cache_status}]"
+            )
+            return text_content
+            
+        except Exception as e:
+            logger.error(f"Mathpix image extraction failed: {str(e)}")
+            raise FileParsingError(f"Failed to extract text from image: {str(e)}")
+    
+    def parse_pdf_pypdf2(self, file_path: str) -> str:
+        """
+        Fallback: Extract text from PDF using PyPDF2
+        Used when Mathpix is unavailable or fails
         
         Args:
             file_path: Path to PDF file
@@ -113,6 +206,44 @@ class FileParserService:
         except Exception as e:
             raise FileParsingError(f"Failed to parse PDF: {str(e)}")
     
+    def parse_pdf(self, file_path: str) -> str:
+        """
+        Extract text from PDF - routes to Mathpix by default
+        
+        Args:
+            file_path: Path to PDF file
+            
+        Returns:
+            Extracted text content
+        """
+        return self.parse_pdf_mathpix(file_path)
+    
+    def _is_actually_text_file(self, file_path: str) -> bool:
+        """
+        Check if a file is actually plain text despite its extension
+        
+        DOCX files are ZIP archives and start with 'PK' (0x504B)
+        If a file doesn't start with PK, it's likely plain text
+        """
+        try:
+            with open(file_path, 'rb') as f:
+                header = f.read(4)
+            
+            # DOCX/ZIP files start with PK (0x504B0304)
+            if header[:2] == b'PK':
+                return False
+            
+            # Check if content is readable as text
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    f.read(1000)  # Try reading first 1000 chars
+                return True
+            except UnicodeDecodeError:
+                return False
+                
+        except Exception:
+            return False
+    
     def parse_docx(self, file_path: str) -> str:
         """
         Extract text from Word document using python-docx
@@ -123,6 +254,14 @@ class FileParserService:
         Returns:
             Extracted text content
         """
+        # First check if the file is actually plain text (common mistake)
+        if self._is_actually_text_file(file_path):
+            logger.warning(
+                f"File {file_path} has .docx extension but is actually plain text. "
+                "Parsing as text file instead."
+            )
+            return self.parse_text(file_path)
+        
         try:
             from docx import Document
             
@@ -154,7 +293,12 @@ class FileParserService:
         except ImportError:
             raise FileParsingError("python-docx library not installed. Run: pip install python-docx")
         except Exception as e:
-            raise FileParsingError(f"Failed to parse DOCX: {str(e)}")
+            # If DOCX parsing fails, try as plain text as fallback
+            logger.warning(f"DOCX parsing failed, trying as plain text: {e}")
+            try:
+                return self.parse_text(file_path)
+            except:
+                raise FileParsingError(f"Failed to parse DOCX: {str(e)}")
     
     def parse_image(self, file_path: str) -> str:
         """

@@ -7,6 +7,7 @@ from celery import shared_task
 from django.core.cache import cache
 
 from questions.services.extraction_pipeline import ExtractionPipeline
+from questions.services.extraction_pipeline_v2 import ExtractionPipelineV2
 from questions.models import ExtractionJob
 
 logger = logging.getLogger('extraction')
@@ -20,12 +21,13 @@ logger = logging.getLogger('extraction')
     time_limit=1800,  # 30 minutes
     soft_time_limit=1700,  # 28 minutes (soft limit before hard limit)
 )
-def extract_questions_task(self, job_id: str):
+def extract_questions_task(self, job_id: str, use_v2: bool = True):
     """
     Celery task to extract questions from uploaded file
     
     Args:
         job_id: UUID string of the extraction job
+        use_v2: Whether to use V2 enhanced pipeline (default: True)
         
     Returns:
         Dictionary with extraction results
@@ -33,25 +35,39 @@ def extract_questions_task(self, job_id: str):
     job_uuid = UUID(job_id)
     
     try:
-        logger.info(f"Starting extraction task for job {job_id}")
+        logger.info(f"Starting extraction task for job {job_id} (V2: {use_v2})")
         
         # Create pipeline and process file
-        pipeline = ExtractionPipeline()
-        pipeline.process_file(job_uuid)
+        if use_v2:
+            pipeline = ExtractionPipelineV2()
+            result = pipeline.process_file(job_uuid)
+        else:
+            pipeline = ExtractionPipeline()
+            pipeline.process_file(job_uuid)
+            result = None
         
         # Get final job status
         job = ExtractionJob.objects.get(id=job_uuid)
         
-        result = {
+        task_result = {
             'success': True,
             'job_id': str(job.id),
             'status': job.status,
             'questions_extracted': job.questions_extracted,
             'questions_failed': job.questions_failed,
+            'expected_count': job.total_questions_found,
+            'completeness': (job.questions_extracted / job.total_questions_found * 100) if job.total_questions_found > 0 else 0,
         }
         
-        logger.info(f"Extraction task completed for job {job_id}: {result}")
-        return result
+        if result:
+            task_result.update({
+                'type_distribution': result.get('type_distribution', {}),
+                'has_latex': result.get('has_latex', False),
+                'processing_time': result.get('processing_time', 0),
+            })
+        
+        logger.info(f"Extraction task completed for job {job_id}: {task_result}")
+        return task_result
         
     except ExtractionJob.DoesNotExist:
         error_msg = f"Extraction job {job_id} not found"
@@ -96,6 +112,27 @@ def extract_questions_task(self, job_id: str):
             'success': False,
             'error': str(exc)
         }
+
+
+@shared_task(
+    bind=True,
+    name='questions.extract_questions_v2',
+    max_retries=3,
+    default_retry_delay=60,
+    time_limit=2400,  # 40 minutes for large files
+    soft_time_limit=2300,
+)
+def extract_questions_v2_task(self, job_id: str):
+    """
+    V2 extraction task with enhanced features
+    
+    Features:
+    - Complete extraction (100% of questions)
+    - Accurate type classification
+    - LaTeX preservation
+    - Large file support (500+ questions)
+    """
+    return extract_questions_task(self, job_id, use_v2=True)
 
 
 @shared_task(name='questions.cleanup_old_extraction_jobs')
