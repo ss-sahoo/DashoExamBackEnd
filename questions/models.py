@@ -931,16 +931,40 @@ class PreAnalysisJob(models.Model):
     
     def get_subject_content(self, subject):
         """Get separated content for a specific subject"""
-        return self.subject_separated_content.get(subject, '')
+        data = self.subject_separated_content.get(subject, {})
+        # Handle both new format (dict) and old format (string) for backward compatibility
+        if isinstance(data, dict):
+            return data.get('content', '')
+        else:
+            return str(data) if data else ''
+    
+    def get_subject_instructions(self, subject):
+        """Get instructions for a specific subject"""
+        data = self.subject_separated_content.get(subject, {})
+        # Handle both new format (dict) and old format (string) for backward compatibility
+        if isinstance(data, dict):
+            return data.get('instructions', '')
+        else:
+            return ''
     
     def get_all_subjects_preview(self, max_chars=500):
         """Get preview of content for all subjects"""
         previews = {}
-        for subject, content in self.subject_separated_content.items():
+        for subject, data in self.subject_separated_content.items():
+            # Handle both new format (dict) and old format (string) for backward compatibility
+            if isinstance(data, dict):
+                content = data.get('content', '')
+                instructions = data.get('instructions', '')
+            else:
+                content = str(data) if data else ''
+                instructions = ''
+            
             previews[subject] = {
                 'subject': subject,
                 'question_count': self.subject_question_counts.get(subject, 0),
                 'content_preview': content[:max_chars] + '...' if len(content) > max_chars else content,
-                'full_content_length': len(content)
+                'full_content_length': len(content),
+                'has_instructions': bool(instructions),
+                'instructions_preview': instructions[:200] + '...' if len(instructions) > 200 else instructions
             }
         return previews

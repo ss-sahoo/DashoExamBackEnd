@@ -855,12 +855,22 @@ def get_pre_analysis_subjects(request, job_id):
         
         # Build subjects response
         subjects = []
-        for subject, content in job.subject_separated_content.items():
+        for subject, data in job.subject_separated_content.items():
+            # Handle both new format (dict) and old format (string) for backward compatibility
+            if isinstance(data, dict):
+                content = data.get('content', '')
+                instructions = data.get('instructions', '')
+            else:
+                content = str(data) if data else ''
+                instructions = ''
+            
             subjects.append({
                 'subject': subject,
                 'question_count': job.subject_question_counts.get(subject, 0),
                 'content_preview': content[:500] + '...' if len(content) > 500 else content,
                 'full_content_length': len(content),
+                'has_instructions': bool(instructions),
+                'instructions_preview': instructions[:200] + '...' if len(instructions) > 200 else instructions,
                 'download_url': f'/api/questions/pre-analyze/{job_id}/subjects/{subject.lower()}/download/'
             })
         
@@ -909,23 +919,34 @@ def download_subject_content(request, job_id, subject):
             )
         
         # Find subject (case-insensitive)
-        subject_content = None
+        subject_data = None
         subject_name = None
         
-        for s, content in job.subject_separated_content.items():
+        for s, data in job.subject_separated_content.items():
             if s.lower() == subject.lower():
-                subject_content = content
+                subject_data = data
                 subject_name = s
                 break
         
-        if subject_content is None:
+        if subject_data is None:
             return Response(
                 {'error': f'Subject "{subject}" not found in this document'},
                 status=status.HTTP_404_NOT_FOUND
             )
         
-        # Build file content - just the raw content, no metadata
-        content = subject_content
+        # Handle both new format (dict) and old format (string) for backward compatibility
+        if isinstance(subject_data, dict):
+            subject_content = subject_data.get('content', '')
+            subject_instructions = subject_data.get('instructions', '')
+        else:
+            subject_content = str(subject_data) if subject_data else ''
+            subject_instructions = ''
+        
+        # Build file content - include instructions at the top if available, then raw content
+        if subject_instructions:
+            content = f"INSTRUCTIONS:\n{subject_instructions}\n\n{'='*60}\n\n{subject_content}"
+        else:
+            content = subject_content
         
         # Create response
         response = HttpResponse(content, content_type='text/plain; charset=utf-8')
@@ -1331,34 +1352,60 @@ def extract_questions_by_section(request):
                 status=status.HTTP_403_FORBIDDEN
             )
         
-        # Get subject content
-        subject_content = job.subject_separated_content.get(subject, '')
+        # Get subject content (handle new format with instructions)
+        subject_data = job.subject_separated_content.get(subject, {})
+        if isinstance(subject_data, dict):
+            subject_content = subject_data.get('content', '')
+            subject_instructions = subject_data.get('instructions', '')
+        else:
+            # Backward compatibility: old format (just string)
+            subject_content = str(subject_data) if subject_data else ''
+            subject_instructions = ''
+        
         if not subject_content:
             return Response(
                 {'error': f'No content found for subject: {subject}'},
                 status=status.HTTP_404_NOT_FOUND
             )
         
-        # Get document structure (from request or from job)
-        if not document_structure:
-            # Try to get from pre-analysis result
-            document_structure = job.document_structure
-            logger.info(f"Document structure from job: {document_structure}")
+        # ALWAYS detect sections at subject level using subject-specific content and instructions
+        # This ensures accurate section detection per subject, not at document level
+        logger.info(f"Detecting sections for {subject} using subject-specific content and instructions")
         
-        # If still no document_structure or no sections, create a basic structure
-        if not document_structure or not document_structure.get('sections'):
-            logger.warning(f"No document structure found, creating basic structure for {subject}")
+        # Get expected question count for this subject
+        expected_count = job.subject_question_counts.get(subject, 0)
+        
+        try:
+            from questions.services.subject_section_detector import SubjectSectionDetector
+            
+            # Use the new subject-level section detector
+            detector = SubjectSectionDetector()
+            document_structure = detector.detect_sections_for_subject(
+                subject=subject,
+                subject_content=subject_content,
+                subject_instructions=subject_instructions,
+                expected_question_count=expected_count
+            )
+            
+            logger.info(
+                f"Detected {len(document_structure.get('sections', []))} sections for {subject}: "
+                f"{[s.get('name', 'Unknown') for s in document_structure.get('sections', [])]}"
+            )
+            
+        except Exception as e:
+            logger.error(f"Failed to detect sections for {subject}: {e}", exc_info=True)
+            # Fallback to basic structure
             document_structure = {
                 'sections': [{
-                    'name': 'General',
-                    'type_hint': 'single_mcq',
-                    'question_range': str(job.subject_question_counts.get(subject, 'All')),
+                    'name': f'{subject} - General',
+                    'type_hint': 'mixed',
+                    'question_range': f'1-{expected_count}' if expected_count > 0 else 'All',
                     'format_description': 'Mixed questions',
                     'start_marker': ''
-                }]
+                }],
+                'has_instructions': bool(subject_instructions),
+                'instructions_text': subject_instructions[:1000] if subject_instructions else ''
             }
-        else:
-            logger.info(f"Using document structure with {len(document_structure.get('sections', []))} sections")
         
         # Get expected question count for this subject from pre-analysis
         expected_count = job.subject_question_counts.get(subject, 0)
@@ -1923,7 +1970,16 @@ def full_extraction_flow(request):
         total_overflow = 0
         
         for subject in job.matched_subjects:
-            subject_content = job.subject_separated_content.get(subject, '')
+            # Get subject content (handle new format with instructions)
+            subject_data = job.subject_separated_content.get(subject, {})
+            if isinstance(subject_data, dict):
+                subject_content = subject_data.get('content', '')
+                subject_instructions = subject_data.get('instructions', '')
+            else:
+                # Backward compatibility: old format (just string)
+                subject_content = str(subject_data) if subject_data else ''
+                subject_instructions = ''
+            
             if not subject_content:
                 continue
             

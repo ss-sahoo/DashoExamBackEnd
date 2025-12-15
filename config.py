@@ -40,7 +40,10 @@ CORS_ALLOWED_ORIGINS = get_config('CORS_ALLOWED_ORIGINS',
 
 # AI Configuration - Disabled for low-memory deployment
 OPENAI_API_KEY = get_config('OPENAI_API_KEY', default='')
-GEMINI_API_KEY = get_config('GEMINI_API_KEY', default='')
+# Primary Gemini API Key: AIzaSyBRBA_VMMB1B0zzYuL4QJWUmRmTE90TsmI
+# Previous key (backup): AIzaSyCCnt7RH4e_Mb2gRcdpCTZoOKpsagjnWBc
+# Can be overridden by GEMINI_API_KEY environment variable
+GEMINI_API_KEY = get_config('GEMINI_API_KEY', default='AIzaSyBRBA_VMMB1B0zzYuL4QJWUmRmTE90TsmI')
 USE_OLLAMA = get_config('USE_OLLAMA', default='false')
 OLLAMA_BASE_URL = get_config('OLLAMA_BASE_URL', default='http://localhost:11434')
 

@@ -146,9 +146,9 @@ class ExtractionPipelineV2:
         logger.info("USING PRE-ANALYSIS SUBJECT-SEPARATED CONTENT")
         logger.info("="*60)
         
-        # Get subject-separated content
-        subject_content = pre_analysis.subject_separated_content
-        subjects = list(subject_content.keys())
+        # Get subject-separated content (now includes instructions per subject)
+        subject_content_dict = pre_analysis.subject_separated_content
+        subjects = list(subject_content_dict.keys())
         total_subjects = len(subjects)
         
         # Get document structure if available (sections, instructions, marking scheme)
@@ -174,6 +174,7 @@ class ExtractionPipelineV2:
         # Build context - ENHANCED: include document structure
         context = self._build_context(job)
         context['document_structure'] = document_structure  # Add structure to context
+        # Default instructions from document structure (will be overridden per subject)
         context['instructions'] = document_structure.get('instructions_text', '')
         context['marking_scheme'] = document_structure.get('marking_scheme', {})
         context['detected_sections'] = document_structure.get('sections', [])
@@ -187,7 +188,15 @@ class ExtractionPipelineV2:
         subject_question_counts = pre_analysis.subject_question_counts or {}
         
         for i, subject in enumerate(subjects):
-            content = subject_content[subject]
+            # Get subject data (handle both new format with instructions and old format)
+            subject_data = subject_content_dict.get(subject, {})
+            if isinstance(subject_data, dict):
+                content = subject_data.get('content', '')
+                subject_instructions = subject_data.get('instructions', '')
+            else:
+                # Backward compatibility: old format (just string)
+                content = str(subject_data) if subject_data else ''
+                subject_instructions = ''
             
             if not content or not content.strip():
                 logger.warning(f"Empty content for subject: {subject}")
@@ -206,12 +215,16 @@ class ExtractionPipelineV2:
             # Get expected question count for this subject from pre-analysis
             expected_for_subject = subject_question_counts.get(subject, 0)
             logger.info(f"Extracting subject {i+1}/{total_subjects}: {subject} ({len(content)} chars, ~{expected_for_subject} questions expected)")
+            if subject_instructions:
+                logger.info(f"  Using subject-specific instructions ({len(subject_instructions)} chars)")
             
-            # Create subject-specific context with expected count
+            # Create subject-specific context with expected count and subject-specific instructions
             subject_context = context.copy()
             subject_context['subject'] = subject
             subject_context['current_subject'] = subject
             subject_context['expected_question_count'] = expected_for_subject  # CRITICAL: Pass expected count
+            # Use subject-specific instructions if available, otherwise fall back to document-level
+            subject_context['instructions'] = subject_instructions if subject_instructions else context.get('instructions', '')
             
             try:
                 # Extract questions from this subject's content ONLY

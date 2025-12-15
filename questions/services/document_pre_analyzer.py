@@ -5,6 +5,8 @@ and separate questions by subject before extraction.
 """
 import json
 import re
+import os
+import time
 import logging
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
@@ -50,7 +52,7 @@ class PreAnalysisResult:
     matched_subjects: List[str]
     unmatched_subjects: List[str]
     subject_question_counts: Dict[str, int]
-    subject_separated_content: Dict[str, str]
+    subject_separated_content: Dict[str, Dict]  # Changed to Dict[str, Dict] with 'content' and 'instructions' keys
     total_estimated_questions: int
     # New: Document structure information
     document_structure: Optional[Dict] = None
@@ -77,7 +79,7 @@ class DocumentPreAnalyzer:
     def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None):
         """Initialize the document pre-analyzer"""
         self.api_key = api_key or getattr(settings, 'GEMINI_API_KEY', None)
-        self.model = model or getattr(settings, 'GEMINI_MODEL', 'gemini-2.0-flash')
+        self.model = model or getattr(settings, 'GEMINI_MODEL', 'gemini-2.5-flash')
         
         if not self.api_key:
             raise DocumentPreAnalysisError("Gemini API key not configured")
@@ -85,6 +87,18 @@ class DocumentPreAnalyzer:
         # Initialize Gemini client
         try:
             import google.generativeai as genai
+            # Log which API key is being used (first 10 and last 4 chars for security)
+            if self.api_key:
+                key_preview = f"{self.api_key[:10]}...{self.api_key[-4:]}" if len(self.api_key) > 14 else "***"
+                logger.info(f"🔑 Initializing Gemini with model: {self.model}, API key: {key_preview}")
+                # Verify it matches the expected key
+                expected_key = "AIzaSyBRBA_VMMB1B0zzYuL4QJWUmRmTE90TsmI"
+                if self.api_key == expected_key:
+                    logger.info("✅ API Key verified: Matches expected key (AIzaSyBRBA...TsmI)")
+                else:
+                    logger.warning(f"⚠️ API Key does NOT match expected key!")
+                    logger.warning(f"   Expected: {expected_key[:10]}...{expected_key[-4:]}")
+                    logger.warning(f"   Using:    {self.api_key[:10]}...{self.api_key[-4:]}")
             genai.configure(api_key=self.api_key)
             self.client = genai.GenerativeModel(self.model)
             self.genai = genai
@@ -111,11 +125,80 @@ class DocumentPreAnalyzer:
         Returns:
             PreAnalysisResult with document type, detected subjects, and question counts
         """
-        logger.info("Starting document pre-analysis...")
+        logger.info("=" * 80)
+        logger.info("🚀 Starting document pre-analysis...")
+        logger.info("=" * 80)
+        analysis_start_time = time.time()
+        
+        # Check if we should skip AI and use regex only (for quota issues)
+        # This prevents wasting time on API calls that will fail
+        use_ai = True
+        # Allow disabling AI via environment variable for quota issues
+        disable_ai = os.getenv('DISABLE_GEMINI_AI', '').lower() in ('true', '1', 'yes')
+        if disable_ai:
+            logger.info("⚠️ AI disabled via DISABLE_GEMINI_AI environment variable, using regex-only mode")
+            use_ai = False
+        else:
+            # Test API credentials
+            logger.info("🔍 Testing Gemini API credentials...")
+            api_key_preview = self.api_key[:10] + "..." if self.api_key else "None"
+            logger.info(f"   API Key: {api_key_preview}")
+            logger.info(f"   Model: {self.model}")
+            
+            # Quick test call to verify credentials
+            try:
+                test_start = time.time()
+                test_response = self.client.generate_content(
+                    "Say 'API working' if you can read this.",
+                    generation_config={'max_output_tokens': 10}
+                )
+                test_elapsed = time.time() - test_start
+                
+                # Handle response text extraction safely
+                try:
+                    response_text = test_response.text
+                except AttributeError:
+                    # Fallback to parts accessor
+                    if hasattr(test_response, 'parts') and test_response.parts:
+                        response_text = ''.join(part.text for part in test_response.parts if hasattr(part, 'text'))
+                    elif hasattr(test_response, 'candidates') and test_response.candidates:
+                        response_text = ''.join(
+                            part.text for part in test_response.candidates[0].content.parts 
+                            if hasattr(part, 'text')
+                        )
+                    else:
+                        response_text = "Response received (format check passed)"
+                
+                logger.info(f"✅ API credentials verified! Test call took {test_elapsed:.2f} seconds")
+                logger.info(f"   Test response: {response_text[:50]}")
+            except Exception as e:
+                error_msg = str(e)
+                # Don't fail on text extraction errors - API is working if we got a response
+                if 'quick accessor' in error_msg or 'parts' in error_msg.lower():
+                    logger.info(f"✅ API credentials verified! (Response format check passed)")
+                    logger.info(f"   Note: {error_msg[:100]}")
+                else:
+                    logger.error(f"❌ API credentials test FAILED: {error_msg}")
+                    logger.warning("⚠️ Will use regex fallback for all operations")
+                    use_ai = False
         
         try:
             # Step 1: Detect document type
-            doc_type_result = self.detect_document_type(text_content)
+            step1_start = time.time()
+            if use_ai:
+                try:
+                    logger.info("📝 Step 1: Detecting document type with AI...")
+                    doc_type_result = self.detect_document_type(text_content)
+                    logger.info(f"✅ Document type detected: {doc_type_result.get('document_type')} (AI)")
+                except Exception as e:
+                    logger.warning(f"⚠️ AI document type detection failed: {e}, using regex fallback")
+                    doc_type_result = self._fallback_document_type_detection(text_content)
+                    logger.info(f"✅ Document type detected: {doc_type_result.get('document_type')} (Regex)")
+            else:
+                logger.info("📝 Step 1: Detecting document type with regex...")
+                doc_type_result = self._fallback_document_type_detection(text_content)
+                logger.info(f"✅ Document type detected: {doc_type_result.get('document_type')} (Regex)")
+            logger.info(f"   Step 1 took {time.time() - step1_start:.2f} seconds")
             
             if doc_type_result['document_type'] == 'other':
                 return PreAnalysisResult(
@@ -134,10 +217,27 @@ class DocumentPreAnalyzer:
                 )
             
             # Step 2: Detect subjects in the document
-            subject_result = self.detect_subjects(text_content, pattern_subjects)
+            step2_start = time.time()
+            if use_ai:
+                try:
+                    logger.info("📚 Step 2: Detecting subjects with AI...")
+                    subject_result = self.detect_subjects(text_content, pattern_subjects)
+                    logger.info(f"✅ Subjects detected (AI): {subject_result.get('detected_subjects')}")
+                except Exception as e:
+                    logger.warning(f"⚠️ AI subject detection failed: {e}, using regex fallback")
+                    subject_result = self._fallback_subject_detection(text_content, pattern_subjects)
+                    logger.info(f"✅ Subjects detected (Regex): {subject_result.get('detected_subjects')}")
+            else:
+                logger.info("📚 Step 2: Detecting subjects with regex...")
+                subject_result = self._fallback_subject_detection(text_content, pattern_subjects)
+                logger.info(f"✅ Subjects detected (Regex): {subject_result.get('detected_subjects')}")
+            logger.info(f"   Step 2 took {time.time() - step2_start:.2f} seconds")
             
             # Step 3: Separate content by subject
             separated_content = {}
+            # Extract general instructions from document beginning
+            general_instructions = self._extract_instructions_from_text(text_content[:2000])
+            
             if len(subject_result['matched_subjects']) > 1:
                 separated_content = self.separate_by_subject(
                     text_content, 
@@ -145,7 +245,13 @@ class DocumentPreAnalyzer:
                 )
             elif len(subject_result['matched_subjects']) == 1:
                 # Single subject - all content belongs to it
-                separated_content = {subject_result['matched_subjects'][0]: text_content}
+                subject = subject_result['matched_subjects'][0]
+                separated_content = {
+                    subject: {
+                        'content': text_content,
+                        'instructions': general_instructions
+                    }
+                }
             elif len(subject_result['detected_subjects']) > 0:
                 # Use detected subjects even if not matched
                 separated_content = self.separate_by_subject(
@@ -154,7 +260,12 @@ class DocumentPreAnalyzer:
                 )
             else:
                 # No subjects detected - treat as single subject
-                separated_content = {'General': text_content}
+                separated_content = {
+                    'General': {
+                        'content': text_content,
+                        'instructions': general_instructions
+                    }
+                }
             
             # CRITICAL: Re-count questions in SEPARATED content (not initial AI estimate)
             # This ensures we pass the correct count to the extraction pipeline
@@ -172,8 +283,24 @@ class DocumentPreAnalyzer:
             
             # Step 4: AI-powered document structure detection
             # Analyzes the document to detect sections, question types, and structure
-            logger.info("Step 4: Detecting document structure with AI...")
-            document_structure = self.detect_document_structure_ai(text_content)
+            step4_start = time.time()
+            if use_ai:
+                try:
+                    logger.info("📊 Step 4: Detecting document structure with AI...")
+                    document_structure = self.detect_document_structure_ai(text_content)
+                    sections_count = document_structure.get('total_sections', 0)
+                    logger.info(f"✅ Structure detected (AI): {sections_count} sections found")
+                except Exception as e:
+                    logger.warning(f"⚠️ AI structure detection failed: {e}, using regex fallback")
+                    document_structure = self._fallback_structure_detection(text_content)
+                    sections_count = document_structure.get('total_sections', 0)
+                    logger.info(f"✅ Structure detected (Regex): {sections_count} sections found")
+            else:
+                logger.info("📊 Step 4: Detecting document structure with regex (AI unavailable)...")
+                document_structure = self._fallback_structure_detection(text_content)
+                sections_count = document_structure.get('total_sections', 0)
+                logger.info(f"✅ Structure detected (Regex): {sections_count} sections found")
+            logger.info(f"   Step 4 took {time.time() - step4_start:.2f} seconds")
             
             # ENSURE UNIQUE subjects before returning (safety net)
             unique_detected = list(dict.fromkeys(subject_result['detected_subjects']))
@@ -229,6 +356,14 @@ class DocumentPreAnalyzer:
             
             return result
             
+        except DocumentPreAnalysisError as e:
+            error_str = str(e)
+            if '429' in error_str or 'quota' in error_str.lower():
+                logger.warning("Quota exhausted for document type detection, using regex fallback")
+                return self._fallback_document_type_detection(text_content)
+            else:
+                logger.error(f"Document type detection failed: {e}")
+                return self._fallback_document_type_detection(text_content)
         except Exception as e:
             logger.error(f"Document type detection failed: {e}")
             # Fallback to regex-based detection
@@ -276,12 +411,24 @@ class DocumentPreAnalyzer:
             logger.info(f"Prompt built, length: {len(prompt)} characters")
             
             # Call Gemini with larger token limit for detailed analysis
-            response = self._call_gemini(prompt, max_tokens=8192)
-            logger.info(f"AI response received, length: {len(response)} characters")
-            logger.debug(f"AI response preview: {response[:500]}...")
-            
-            # Parse the response
-            structure = self._parse_ai_structure_response(response)
+            try:
+                response = self._call_gemini(prompt, max_tokens=8192)
+                logger.info(f"AI response received, length: {len(response)} characters")
+                logger.debug(f"AI response preview: {response[:500]}...")
+                
+                # Parse the response
+                structure = self._parse_ai_structure_response(response)
+            except DocumentPreAnalysisError as e:
+                error_str = str(e)
+                is_quota_error = '429' in error_str or 'quota' in error_str.lower()
+                is_timeout_error = '504' in error_str or 'timeout' in error_str.lower() or 'Deadline Exceeded' in error_str
+                
+                if is_quota_error or is_timeout_error:
+                    logger.warning(f"{'Quota exhausted' if is_quota_error else 'Request timed out'} for structure detection, using regex fallback")
+                    # Use regex-based fallback
+                    structure = self._fallback_structure_detection(text_content)
+                else:
+                    raise
             
             logger.info(
                 f"AI detected {structure.get('total_sections', 0)} sections, "
@@ -302,13 +449,14 @@ class DocumentPreAnalyzer:
         Build a comprehensive prompt for AI to analyze document structure.
         Works with ANY document format globally.
         """
-        # Sample document intelligently
+        # Sample document intelligently - REDUCED SIZE to prevent timeouts
         text_len = len(text_content)
+        max_sample_size = 30000  # Keep larger sample for better analysis
         
-        if text_len <= 30000:
+        if text_len <= max_sample_size:
             sample_text = text_content
         else:
-            # Large document - sample strategically
+            # Large document - sample strategically but keep comprehensive samples
             # Beginning (instructions usually here)
             beginning = text_content[:10000]
             
@@ -354,7 +502,8 @@ class DocumentPreAnalyzer:
 3. **ANALYZE EACH QUESTION TYPE** by looking at actual questions:
    - Has 4 options A/B/C/D with single answer → single_mcq
    - Has options with multiple correct answers → multiple_mcq  
-   - Asks to calculate/find numerical value → numerical
+   - Asks to calculate/find numerical value OR answer is just a number (like "Answer (4)" or "Answer: 23") → numerical
+   - Questions asking for numerical values, calculations, or where answer format is "Answer (NUMBER)" → numerical
    - True/False or T/F → true_false
    - Has blanks ___ to fill → fill_blank
    - Asks to explain/describe/discuss → subjective
@@ -362,12 +511,24 @@ class DocumentPreAnalyzer:
    - Assertion-Reason format → assertion_reason
    - Based on a passage/paragraph → comprehension
 
-4. **DETECT SECTIONS** by finding:
-   - Explicit headers (Section A, Part 1, भाग-क, etc.)
-   - OR group questions by type if no explicit sections
-   - Consecutive questions of same type = one section
+4. **DETECT SECTIONS** - THIS IS CRITICAL:
+   - **MANDATORY**: Look for explicit section headers like:
+     * "SECTION - A", "SECTION A", "Section A", "## SECTION - A"
+     * "SECTION - B", "SECTION B", "Section B", "## SECTION - B"
+     * "SECTION - C", "SECTION C", "Section C", "## SECTION - C"
+   - **EACH SECTION MUST BE LISTED SEPARATELY** - if you see "SECTION - A" and "SECTION - B", create TWO separate section entries
+   - Each section has different question types:
+     * Section A usually = single_mcq (MCQ with options A/B/C/D)
+     * Section B usually = numerical (numeric answers, no options)
+     * Section C usually = true_false or other types
+   - **QUESTION RANGES**: Identify which question numbers belong to each section:
+     * Section A might be questions 1-20 or 1-30
+     * Section B might be questions 21-30 or 31-40
+   - **DETECT FROM ACTUAL CONTENT**: Look for section headers in the document text itself
+   - If you find "SECTION - A" followed by questions 1-20, and "SECTION - B" followed by questions 21-30, create TWO sections
+   - **DO NOT** combine sections - if document has Section A and Section B, return BOTH
 
-5. **COUNT QUESTIONS** in each detected section
+5. **COUNT QUESTIONS** in each detected section by looking at question numbers
 
 **OUTPUT FORMAT (JSON only):**
 ```json
@@ -398,13 +559,23 @@ class DocumentPreAnalyzer:
 }}
 ```
 
-**IMPORTANT RULES:**
-- Do NOT assume standard formats - detect from actual content
-- If no clear section headers exist, group by question TYPE
-- A section = consecutive questions of the SAME type
-- Works for documents in ANY language
-- If unsure about a section, mark type_hint as "mixed"
-- Count actual questions, don't guess
+**CRITICAL RULES FOR SECTION DETECTION:**
+- **MUST DETECT ALL SECTIONS**: If document has "SECTION - A" and "SECTION - B", you MUST return BOTH sections
+- **DO NOT** combine multiple sections into one "General" section
+- **LOOK FOR SECTION HEADERS**: Search the entire document for patterns like:
+  * "SECTION - A", "SECTION A", "Section A", "## SECTION - A"
+  * "SECTION - B", "SECTION B", "Section B", "## SECTION - B"
+- **IDENTIFY QUESTION RANGES**: For each section, identify which question numbers it contains:
+  * Example: Section A = questions 1-20, Section B = questions 21-30
+- **DETERMINE QUESTION TYPE** from section headers and content:
+  * "Section A" with "Multiple Choice" or "MCQ" → single_mcq
+  * "Section B" with "Numerical" or "Numeric" → numerical
+  * Look at actual questions: if they have options A/B/C/D → single_mcq, if answer is a number → numerical
+- **COUNT QUESTIONS**: Count actual question numbers in each section (e.g., if Section A has questions 1-20, count = 20)
+- **OUTPUT FORMAT**: Return a "sections" array with ONE entry per detected section
+- If document has 2 sections, return 2 section objects in the array
+- Pay attention to answer formats: "Answer (4)" or "Answer: 23" indicates numerical type, not MCQ
+- "Answer (A)" or "Answer: B" indicates single_mcq type
 
 **DOCUMENT TO ANALYZE:**
 {sample_text}
@@ -464,10 +635,19 @@ class DocumentPreAnalyzer:
                         'negative_marking': section.get('negative_marking'),
                     })
             
+            # Clean instructions_text to remove question content
+            instructions_text = str(result.get('instructions_text', ''))
+            # Remove question content patterns
+            instructions_text = re.sub(r'Q\.?\s*\d+.*?(?=\n|$)', '', instructions_text, flags=re.IGNORECASE | re.MULTILINE)
+            instructions_text = re.sub(r'\d+\.\s+[A-Z].*?(?=\n|$)', '', instructions_text, flags=re.MULTILINE)
+            instructions_text = re.sub(r'Sol\.\s+.*?(?=\n|$)', '', instructions_text, flags=re.IGNORECASE | re.MULTILINE)
+            instructions_text = re.sub(r'Answer\s*\([A-D\d]+\)\s*.*?(?=\n|$)', '', instructions_text, flags=re.IGNORECASE | re.MULTILINE)
+            instructions_text = re.sub(r'\s+', ' ', instructions_text).strip()  # Normalize whitespace
+            
             # Build final structure
             structure = {
                 'has_instructions': result.get('has_instructions', False),
-                'instructions_text': str(result.get('instructions_text', ''))[:500],
+                'instructions_text': instructions_text[:500],  # Limit to 500 chars
                 'marking_scheme': result.get('marking_scheme', {}),
                 'sections': valid_sections,
                 'question_numbering_format': result.get('question_numbering_format', 'auto-detect'),
@@ -892,8 +1072,8 @@ You MUST identify ALL sections present across the ENTIRE document.
     
     def _build_document_type_prompt(self, text_content: str) -> str:
         """Build prompt for document type detection"""
-        # Limit text to first 5000 chars for type detection
-        sample_text = text_content[:5000]
+        # Limit text to first 3000 chars for type detection (reduced to prevent timeouts)
+        sample_text = text_content[:3000]
         
         return f"""Analyze this document and determine its type.
 
@@ -1047,8 +1227,24 @@ You MUST identify ALL sections present across the ENTIRE document.
             
             return result
             
+        except DocumentPreAnalysisError as e:
+            error_str = str(e)
+            is_quota_error = '429' in error_str or 'quota' in error_str.lower()
+            is_timeout_error = '504' in error_str or 'timeout' in error_str.lower() or 'Deadline Exceeded' in error_str
+            
+            if is_quota_error or is_timeout_error:
+                logger.warning(f"{'Quota exhausted' if is_quota_error else 'Request timed out'} for subject detection, using regex fallback")
+                return self._fallback_subject_detection(text_content, pattern_subjects)
+            else:
+                logger.error(f"Subject detection failed: {e}")
+                return self._fallback_subject_detection(text_content, pattern_subjects)
         except Exception as e:
-            logger.error(f"Subject detection failed: {e}")
+            error_str = str(e)
+            is_timeout_error = '504' in error_str or 'timeout' in error_str.lower() or 'Deadline Exceeded' in error_str
+            if is_timeout_error:
+                logger.warning("Request timed out for subject detection, using regex fallback")
+            else:
+                logger.error(f"Subject detection failed: {e}")
             return self._fallback_subject_detection(text_content, pattern_subjects)
     
     def _build_subject_detection_prompt(
@@ -1065,9 +1261,10 @@ You MUST identify ALL sections present across the ENTIRE document.
             subjects_instruction = f"Identify which of these subjects are present: {subjects_str}"
         
         # Sample text for analysis - use beginning, middle, and end to capture all subjects
-        # This ensures we detect subjects even if they appear later in the document
+        # Keep larger samples for better subject detection
         text_len = len(text_content)
-        if text_len <= 15000:
+        max_sample = 15000  # Keep larger sample for better detection
+        if text_len <= max_sample:
             sample_text = text_content
         else:
             # Take samples from beginning, middle, and end to capture all subjects
@@ -1255,7 +1452,7 @@ You MUST identify ALL sections present across the ENTIRE document.
         self,
         text_content: str,
         subjects: List[str]
-    ) -> Dict[str, str]:
+    ) -> Dict[str, Dict]:
         """
         Separate document content by subject using regex-based approach
         This is more reliable for large files than AI-based separation
@@ -1265,7 +1462,14 @@ You MUST identify ALL sections present across the ENTIRE document.
             subjects: List of subjects to separate
             
         Returns:
-            Dictionary mapping subject to its raw content
+            Dictionary mapping subject to dict with 'content' and 'instructions' keys
+            Format: {
+                'Physics': {
+                    'content': 'raw content string',
+                    'instructions': 'instructions text for Physics'
+                },
+                ...
+            }
         """
         logger.info(f"Separating content into subjects: {subjects}, document length: {len(text_content)} chars")
         
@@ -1273,12 +1477,19 @@ You MUST identify ALL sections present across the ENTIRE document.
         result = self._regex_based_separation(text_content, subjects)
         
         # Check if we got meaningful content for each subject
-        subjects_with_content = [s for s, content in result.items() if content.strip()]
+        subjects_with_content = [s for s, data in result.items() if isinstance(data, dict) and data.get('content', '').strip()]
         
         # Log what we found
         for s in subjects:
-            content_len = len(result.get(s, ''))
-            logger.info(f"  Subject '{s}': {content_len} chars")
+            data = result.get(s, {})
+            if isinstance(data, dict):
+                content_len = len(data.get('content', ''))
+                instructions_len = len(data.get('instructions', ''))
+                logger.info(f"  Subject '{s}': {content_len} chars content, {instructions_len} chars instructions")
+            else:
+                # Backward compatibility: if old format (string), convert it
+                result[s] = {'content': str(data), 'instructions': ''}
+                logger.info(f"  Subject '{s}': {len(str(data))} chars (converted from old format)")
         
         if len(subjects_with_content) >= len(subjects) * 0.5:  # At least 50% subjects found
             logger.info(f"Regex separation successful: {len(subjects_with_content)} subjects with content")
@@ -1294,9 +1505,20 @@ You MUST identify ALL sections present across the ENTIRE document.
                 ai_result = self._parse_separation_response(response, subjects)
                 
                 # Verify AI result has actual content (not just metadata)
-                if ai_result and any(len(v) > 100 for v in ai_result.values()):
-                    logger.info(f"AI separation successful")
-                    return ai_result
+                if ai_result:
+                    # Check if it's new format (dict) or old format (string)
+                    has_content = False
+                    for v in ai_result.values():
+                        if isinstance(v, dict) and len(v.get('content', '')) > 100:
+                            has_content = True
+                            break
+                        elif isinstance(v, str) and len(v) > 100:
+                            has_content = True
+                            break
+                    
+                    if has_content:
+                        logger.info(f"AI separation successful")
+                        return ai_result
             except Exception as e:
                 logger.warning(f"AI separation failed: {e}")
         
@@ -1308,12 +1530,13 @@ You MUST identify ALL sections present across the ENTIRE document.
         self,
         text_content: str,
         subjects: List[str]
-    ) -> Dict[str, str]:
+    ) -> Dict[str, Dict]:
         """
         Separate content using regex patterns to find subject sections
         Enhanced with multiple detection strategies
+        Now extracts instructions for each subject
         """
-        result = {s: '' for s in subjects}
+        result = {s: {'content': '', 'instructions': ''} for s in subjects}
         
         # Strategy 1: Look for explicit subject headers
         subject_positions = self._find_subject_headers(text_content, subjects)
@@ -1323,7 +1546,7 @@ You MUST identify ALL sections present across the ENTIRE document.
             result = self._extract_content_by_positions(text_content, subject_positions, subjects)
             
             # Verify we got content for most subjects
-            subjects_with_content = sum(1 for s in subjects if result.get(s, '').strip())
+            subjects_with_content = sum(1 for s in subjects if isinstance(result.get(s), dict) and result.get(s, {}).get('content', '').strip())
             if subjects_with_content >= len(subjects) * 0.5:
                 return result
         
@@ -1331,7 +1554,7 @@ You MUST identify ALL sections present across the ENTIRE document.
         logger.info("Trying flexible subject detection...")
         result = self._flexible_subject_detection(text_content, subjects)
         
-        subjects_with_content = sum(1 for s in subjects if result.get(s, '').strip())
+        subjects_with_content = sum(1 for s in subjects if isinstance(result.get(s), dict) and result.get(s, {}).get('content', '').strip())
         if subjects_with_content >= len(subjects) * 0.5:
             return result
         
@@ -1389,18 +1612,31 @@ You MUST identify ALL sections present across the ENTIRE document.
         text_content: str,
         positions: List[Tuple[int, int, str]],
         subjects: List[str]
-    ) -> Dict[str, str]:
-        """Extract content between subject positions"""
-        result = {s: '' for s in subjects}
+    ) -> Dict[str, Dict]:
+        """Extract content between subject positions, including instructions before each subject"""
+        result = {s: {'content': '', 'instructions': ''} for s in subjects}
         
         for i, (start, header_end, subject) in enumerate(positions):
+            # Extract instructions before this subject section
+            # Look backwards from the header start to find instructions
+            instructions_start = max(0, start - 2000)  # Look up to 2000 chars before header
+            instructions_text = self._extract_instructions_from_text(
+                text_content[instructions_start:start]
+            )
+            
+            # Extract content after the header
             if i + 1 < len(positions):
                 next_start = positions[i + 1][0]
                 content = text_content[header_end:next_start].strip()
             else:
                 content = text_content[header_end:].strip()
             
-            result[subject] = content
+            result[subject] = {
+                'content': content,
+                'instructions': instructions_text
+            }
+            
+            logger.info(f"Extracted for {subject}: {len(content)} chars content, {len(instructions_text)} chars instructions")
         
         return result
     
@@ -1408,11 +1644,12 @@ You MUST identify ALL sections present across the ENTIRE document.
         self,
         text_content: str,
         subjects: List[str]
-    ) -> Dict[str, str]:
+    ) -> Dict[str, Dict]:
         """
         More flexible detection - find subject mentions and extract surrounding content
+        Now also extracts instructions for each subject
         """
-        result = {s: '' for s in subjects}
+        result = {s: {'content': '', 'instructions': ''} for s in subjects}
         
         # Find all positions where subjects are mentioned
         all_mentions = []
@@ -1436,6 +1673,12 @@ You MUST identify ALL sections present across the ENTIRE document.
         
         # Extract content between mentions
         for i, (start, end, subject) in enumerate(all_mentions):
+            # Extract instructions before this subject section
+            instructions_start = max(0, start - 2000)
+            instructions_text = self._extract_instructions_from_text(
+                text_content[instructions_start:start]
+            )
+            
             if i + 1 < len(all_mentions):
                 next_start = all_mentions[i + 1][0]
                 content = text_content[end:next_start].strip()
@@ -1443,24 +1686,107 @@ You MUST identify ALL sections present across the ENTIRE document.
                 content = text_content[end:].strip()
             
             # Append to existing content for this subject
-            if result[subject]:
-                result[subject] += '\n\n' + content
+            if result[subject]['content']:
+                result[subject]['content'] += '\n\n' + content
+                # Merge instructions if found
+                if instructions_text and instructions_text not in result[subject]['instructions']:
+                    result[subject]['instructions'] = (result[subject]['instructions'] + '\n\n' + instructions_text).strip()
             else:
-                result[subject] = content
+                result[subject] = {
+                    'content': content,
+                    'instructions': instructions_text
+                }
         
         return result
+    
+    def _extract_instructions_from_text(self, text_before_subject: str) -> str:
+        """
+        Extract instructions from text that appears before a subject section.
+        Looks for common instruction patterns including section-specific instructions.
+        EXCLUDES question content - stops when it encounters actual questions.
+        """
+        if not text_before_subject or len(text_before_subject.strip()) < 20:
+            return ''
+        
+        # Reverse the text to look from the end (closest to subject header)
+        text = text_before_subject[-3000:] if len(text_before_subject) > 3000 else text_before_subject
+        
+        # STOP when we encounter actual questions - these patterns indicate question content, not instructions
+        question_indicators = [
+            r'\n\s*Q\.?\s*\d+',  # Q1, Q.1, Q 1
+            r'\n\s*\d+\.\s+[A-Z]',  # 1. Question text starting with capital
+            r'\n\s*\(\d+\)\s+',  # (1) Question
+            r'Answer\s*\([A-D]\)',  # Answer (A) - indicates MCQ question
+            r'Answer\s*:\s*\d+',  # Answer: 23 - indicates numerical question
+            r'Sol\.\s+',  # Solution - indicates question solution
+        ]
+        
+        # Find the earliest question indicator to stop extraction there
+        earliest_question_pos = len(text)
+        for pattern in question_indicators:
+            matches = list(re.finditer(pattern, text, re.IGNORECASE | re.MULTILINE))
+            if matches:
+                earliest_question_pos = min(earliest_question_pos, matches[0].start())
+        
+        # Only extract from text before questions
+        text_before_questions = text[:earliest_question_pos] if earliest_question_pos < len(text) else text
+        
+        # Patterns to detect instructions - improved to catch SECTION headers
+        instruction_patterns = [
+            # Section headers with instructions (e.g., "## SECTION - A\nMultiple Choice Questions...")
+            r'(?:^|\n)\s*##?\s*SECTION\s*[-–—]?\s*[A-Z]\s*[^\n]*(?:\n[^\n]{0,200}){0,10}(?=\n\s*(?:SECTION|PART|SUBJECT|Q\.?|\d+\.|$))',
+            # Instructions keyword followed by text (but not question content)
+            r'(?:^|\n).*?(?:instructions?|rules?|note|important|marking scheme|read carefully)[\s:]*[-–—]?\s*([^\n]{20,500})(?=\n\s*(?:SECTION|PART|SUBJECT|Q\.?|\d+\.|$))',
+            # Marking scheme patterns
+            r'(?:^|\n).*?(?:\+?\d+\s*marks?|marking|negative|correct|wrong)[^\n]{10,200}(?=\n\s*(?:SECTION|PART|SUBJECT|Q\.?|\d+\.|$))',
+        ]
+        
+        all_instructions = []
+        
+        for pattern in instruction_patterns:
+            matches = re.finditer(pattern, text_before_questions, re.IGNORECASE | re.MULTILINE | re.DOTALL)
+            for match in reversed(list(matches)):  # Start from the end (closest to subject)
+                instruction_text = match.group(1 if match.lastindex else 0).strip()
+                
+                # EXCLUDE question-like content
+                if any(re.search(q_pattern, instruction_text, re.IGNORECASE) for q_pattern in question_indicators):
+                    continue
+                
+                # Filter out very short or very long matches
+                if 30 <= len(instruction_text) <= 1000:
+                    # Clean up the instruction text
+                    instruction_text = re.sub(r'\s+', ' ', instruction_text)  # Normalize whitespace
+                    # Avoid duplicates
+                    if instruction_text not in all_instructions:
+                        all_instructions.append(instruction_text)
+                        logger.debug(f"Found instructions: {instruction_text[:100]}...")
+        
+        # Combine all found instructions
+        if all_instructions:
+            # Reverse to get chronological order (first found = first in document)
+            combined = '\n\n'.join(reversed(all_instructions))
+            # Final cleanup - remove any remaining question content
+            combined = re.sub(r'Q\.?\s*\d+.*?$', '', combined, flags=re.IGNORECASE | re.MULTILINE)
+            combined = re.sub(r'\d+\.\s+[A-Z].*?$', '', combined, flags=re.MULTILINE)
+            return combined[:1000].strip()  # Limit total length
+        
+        return ''
     
     def _keyword_based_separation(
         self,
         text_content: str,
         subjects: List[str]
-    ) -> Dict[str, str]:
+    ) -> Dict[str, Dict]:
         """
         Separate content by detecting subject-specific keywords in questions.
         DYNAMIC: Works with ANY subject - uses comprehensive keyword database
         plus dynamic fallback for unknown subjects.
+        Now also extracts general instructions from document start.
         """
-        result = {s: '' for s in subjects}
+        result = {s: {'content': '', 'instructions': ''} for s in subjects}
+        
+        # Extract general instructions from document beginning (first 2000 chars)
+        general_instructions = self._extract_instructions_from_text(text_content[:2000])
         
         # Comprehensive subject-specific keywords (weighted)
         # This is a reference database for common subjects, but the system 
@@ -1540,7 +1866,10 @@ You MUST identify ALL sections present across the ENTIRE document.
         if not question_blocks:
             # No clear question numbering, put all in first subject
             if subjects:
-                result[subjects[0]] = text_content
+                result[subjects[0]] = {
+                    'content': text_content,
+                    'instructions': general_instructions
+                }
             return result
         
         logger.info(f"Found {len(question_blocks)} question blocks")
@@ -1595,27 +1924,37 @@ You MUST identify ALL sections present across the ENTIRE document.
             full_question = f"Q.{q_num}. {q_text.strip()}"
             current_content[best_subject].append(full_question)
         
-        # Combine questions for each subject
+        # Combine questions for each subject and add instructions
         for subject in subjects:
             if current_content[subject]:
-                result[subject] = '\n\n'.join(current_content[subject])
+                result[subject] = {
+                    'content': '\n\n'.join(current_content[subject]),
+                    'instructions': general_instructions  # Use general instructions for keyword-based separation
+                }
         
         return result
     
-    def _count_questions_in_separated_content(self, separated_content: Dict[str, str]) -> Dict[str, int]:
+    def _count_questions_in_separated_content(self, separated_content: Dict[str, Dict]) -> Dict[str, int]:
         """
         Count actual questions in each subject's separated content.
         This gives us ACCURATE counts instead of AI estimates.
         
         Args:
-            separated_content: Dict mapping subject to content string
+            separated_content: Dict mapping subject to dict with 'content' and 'instructions' keys
             
         Returns:
             Dict mapping subject to actual question count
         """
         counts = {}
         
-        for subject, content in separated_content.items():
+        for subject, data in separated_content.items():
+            # Handle both new format (dict) and old format (string) for backward compatibility
+            if isinstance(data, dict):
+                content = data.get('content', '')
+            else:
+                # Old format - just a string
+                content = str(data)
+            
             if not content or not content.strip():
                 counts[subject] = 0
                 continue
@@ -1718,7 +2057,7 @@ You MUST identify ALL sections present across the ENTIRE document.
         text_content: str,
         subjects: List[str]
     ) -> str:
-        """Build prompt for content separation by subject - NO question extraction"""
+        """Build prompt for content separation by subject - NO question extraction, but includes instructions"""
         subjects_str = ', '.join(subjects)
         
         # For large documents, we should NOT use AI separation - use regex instead
@@ -1726,26 +2065,35 @@ You MUST identify ALL sections present across the ENTIRE document.
         # But we still need to handle the content properly
         max_content = text_content[:100000] if len(text_content) > 100000 else text_content
         
-        return f"""You are a document separator. Your ONLY job is to split this document into sections by subject.
+        return f"""You are a document separator. Your job is to split this document into sections by subject AND extract instructions for each subject.
 
 SUBJECTS: {subjects_str}
 
 INSTRUCTIONS:
 1. Find where each subject's content starts and ends
-2. Copy the EXACT text for each subject - do NOT summarize or modify
-3. Return JSON with subject names as keys and their FULL raw content as values
+2. For each subject, look for instructions that appear BEFORE that subject's section (rules, marking scheme, etc.)
+3. Copy the EXACT text for each subject - do NOT summarize or modify
+4. Return JSON with subject names as keys and objects containing 'content' and 'instructions'
 
 IMPORTANT:
 - Copy ALL text exactly as written
-- Include ALL questions, options, answers, solutions
+- Include ALL questions, options, answers, solutions in the 'content' field
+- Extract any instructions/rules that appear before each subject section into the 'instructions' field
+- If no specific instructions found for a subject, use general instructions from document start
 - Do NOT summarize or describe the content
 - Do NOT say "here are the questions" - just return the actual text
 
 OUTPUT FORMAT:
 ```json
 {{
-    "Physics": "[paste ALL physics content here exactly as it appears]",
-    "Chemistry": "[paste ALL chemistry content here exactly as it appears]"
+    "Physics": {{
+        "content": "[paste ALL physics content here exactly as it appears]",
+        "instructions": "[paste instructions/rules for Physics section if found, otherwise general instructions]"
+    }},
+    "Chemistry": {{
+        "content": "[paste ALL chemistry content here exactly as it appears]",
+        "instructions": "[paste instructions/rules for Chemistry section if found, otherwise general instructions]"
+    }}
 }}
 ```
 
@@ -1758,7 +2106,7 @@ Return JSON only with the actual content (not descriptions):"""
         self,
         response: str,
         subjects: List[str]
-    ) -> Dict[str, str]:
+    ) -> Dict[str, Dict]:
         """Parse Gemini response for subject separation"""
         try:
             # Extract JSON
@@ -1775,12 +2123,23 @@ Return JSON only with the actual content (not descriptions):"""
             
             result = json.loads(json_str)
             
-            # Normalize keys
+            # Normalize keys and ensure new format
             normalized = {}
             for key, value in result.items():
                 normalized_key = self._normalize_subject(key)
                 if normalized_key in [self._normalize_subject(s) for s in subjects]:
-                    normalized[normalized_key] = value
+                    # Handle both new format (dict) and old format (string) for backward compatibility
+                    if isinstance(value, dict):
+                        normalized[normalized_key] = {
+                            'content': value.get('content', ''),
+                            'instructions': value.get('instructions', '')
+                        }
+                    else:
+                        # Old format - convert to new format
+                        normalized[normalized_key] = {
+                            'content': str(value),
+                            'instructions': ''
+                        }
             
             return normalized
             
@@ -1826,19 +2185,101 @@ Return JSON only with the actual content (not descriptions):"""
         return matched, unmatched
     
     def _call_gemini(self, prompt: str, max_tokens: int = 65536) -> str:
-        """Call Gemini API with configurable max tokens - increased to 64K for large documents"""
-        try:
-            response = self.client.generate_content(
-                prompt,
-                generation_config={
-                    'temperature': 0.1,  # Very low for exact copying
-                    'top_p': 0.95,
-                    'max_output_tokens': max_tokens,
-                }
-            )
-            return response.text
-        except Exception as e:
-            raise DocumentPreAnalysisError(f"Gemini API call failed: {str(e)}")
+        """Call Gemini API with configurable max tokens and timeout handling"""
+        import time
+        import re
+        
+        max_retries = 3  # More retries for timeout issues
+        retry_delay = 5  # Start with 5 seconds for timeouts
+        
+        # Log API key being used (first 10 chars for security)
+        api_key_preview = self.api_key[:10] + "..." if self.api_key else "None"
+        logger.info(f"🔑 Using Gemini API Key: {api_key_preview} | Model: {self.model}")
+        
+        # Don't truncate prompts - keep full content for better analysis
+        # We'll handle timeouts with retry logic instead
+        logger.info(f"📝 Prompt size: {len(prompt)} chars (full content)")
+        
+        for attempt in range(max_retries):
+            try:
+                start_time = time.time()
+                logger.info(f"🤖 Calling Gemini API (attempt {attempt + 1}/{max_retries})...")
+                logger.info(f"   Prompt size: {len(prompt)} chars | Max tokens: {min(max_tokens, 4096)}")
+                
+                response = self.client.generate_content(
+                    prompt,
+                    generation_config={
+                        'temperature': 0.1,  # Very low for exact copying
+                        'top_p': 0.95,
+                        'max_output_tokens': min(max_tokens, 4096),  # Reduced to prevent timeouts
+                    }
+                )
+                
+                elapsed_time = time.time() - start_time
+                
+                # Handle response text extraction safely
+                try:
+                    response_text = response.text
+                except (AttributeError, ValueError) as text_error:
+                    # Fallback to parts accessor if text property doesn't work
+                    try:
+                        if hasattr(response, 'parts') and response.parts:
+                            response_text = ''.join(part.text for part in response.parts if hasattr(part, 'text'))
+                        elif hasattr(response, 'candidates') and response.candidates:
+                            response_text = ''.join(
+                                part.text for part in response.candidates[0].content.parts 
+                                if hasattr(part, 'text')
+                            )
+                        else:
+                            response_text = str(response)
+                    except Exception as parts_error:
+                        logger.warning(f"Could not extract text from response: {parts_error}")
+                        response_text = str(response)
+                
+                logger.info(f"✅ Gemini API call SUCCESSFUL in {elapsed_time:.2f} seconds")
+                logger.info(f"   Response length: {len(response_text)} chars")
+                return response_text
+            except Exception as e:
+                error_str = str(e)
+                is_quota_error = '429' in error_str or 'quota' in error_str.lower() or 'ResourceExhausted' in error_str
+                is_timeout_error = '504' in error_str or 'timeout' in error_str.lower() or 'Deadline Exceeded' in error_str
+                
+                # For timeout errors, retry with longer delay
+                if is_timeout_error and attempt < max_retries - 1:
+                    logger.warning(
+                        f"⏱️ TIMEOUT ERROR on attempt {attempt + 1}/{max_retries}. "
+                        f"Retrying with longer delay ({retry_delay} seconds)..."
+                    )
+                    time.sleep(retry_delay)
+                    retry_delay = retry_delay * 2  # Exponential backoff: 5s, 10s, 20s
+                    continue
+                elif is_timeout_error:
+                    logger.error(
+                        f"❌ TIMEOUT ERROR after {max_retries} attempts. "
+                        f"API is taking too long. Falling back to regex."
+                    )
+                    raise DocumentPreAnalysisError(f"Request timed out after {max_retries} attempts")
+                
+                # For quota errors, retry with delay
+                if is_quota_error and attempt < max_retries - 1:
+                    retry_match = re.search(r'retry.*?(\d+\.?\d*)\s*s', error_str, re.IGNORECASE)
+                    if retry_match:
+                        retry_delay = float(retry_match.group(1)) + 2
+                    else:
+                        retry_delay = retry_delay * 2
+                    
+                    logger.warning(
+                        f"Quota error on attempt {attempt + 1}/{max_retries}. "
+                        f"Retrying in {retry_delay} seconds..."
+                    )
+                    time.sleep(retry_delay)
+                    continue
+                else:
+                    # Not a retryable error or max retries reached
+                    raise DocumentPreAnalysisError(f"Gemini API call failed: {str(e)}")
+        
+        # If we get here, all retries failed
+        raise DocumentPreAnalysisError(f"Gemini API call failed after {max_retries} attempts")
     
     def to_dict(self, result: PreAnalysisResult) -> Dict:
         """Convert PreAnalysisResult to dictionary for API response"""
