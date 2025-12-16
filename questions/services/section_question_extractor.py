@@ -72,43 +72,79 @@ class SectionQuestionExtractor:
         expected_question_count: int = 0,  # NEW: Expected count from pre-analysis
         progress_callback: Optional[callable] = None
     ) -> Dict:
-        """Extract ALL questions and classify them by type using AI."""
+        """Extract questions section by section using detected document structure."""
         logger.info(f"Starting AI extraction for subject: {subject}")
         logger.info(f"Content length: {len(text_content)} chars")
         
-        # Count actual questions in content if expected_count not provided
-        if expected_question_count <= 0:
-            expected_question_count = self._count_questions_in_content(text_content)
+        # Get sections from document structure
+        sections = document_structure.get('sections', [])
         
-        logger.info(f"Expected question count for {subject}: {expected_question_count}")
+        # If no sections detected, fallback to old behavior (group by type)
+        if not sections:
+            logger.warning("No sections detected in document_structure, falling back to type-based extraction")
+            return self._extract_and_group_by_type(text_content, subject, expected_question_count, progress_callback)
+        
+        logger.info(f"Extracting questions from {len(sections)} detected sections")
         
         if progress_callback:
-            progress_callback(10, "Analyzing content with AI...")
+            progress_callback(10, f"Extracting from {len(sections)} sections...")
         
         try:
-            all_questions = self._ai_extract_and_classify(text_content, subject, expected_question_count)
-            
-            if progress_callback:
-                progress_callback(70, "Grouping questions by type...")
-            
-            questions_by_type = self._group_by_type(all_questions)
-            
             results = []
             total_extracted = 0
+            all_types_found = set()
             
-            for q_type, questions in questions_by_type.items():
+            # Extract questions section by section
+            for i, section_info in enumerate(sections):
+                section_name = section_info.get('name', f'Section {i+1}')
+                section_type = section_info.get('type_hint', 'mixed')
+                start_marker = section_info.get('start_marker', '')
+                question_range = section_info.get('question_range', '')
+                expected_count = section_info.get('question_count', 0)
+                
+                logger.info(f"Processing section: {section_name} (type: {section_type})")
+                
+                if progress_callback:
+                    progress_callback(10 + (i * 70 // len(sections)), f"Extracting from {section_name}...")
+                
+                # Extract content for this section
+                section_content = self._extract_section_content(text_content, start_marker, sections, i)
+                
+                if not section_content:
+                    logger.warning(f"Could not extract content for section: {section_name}")
+                    continue
+                
+                # Extract questions from this section
+                if expected_count > 0:
+                    section_questions = self._ai_extract_and_classify(section_content, subject, expected_count)
+                else:
+                    # Count questions in this section
+                    section_expected = self._count_questions_in_content(section_content)
+                    section_questions = self._ai_extract_and_classify(section_content, subject, section_expected)
+                
+                # Ensure question type matches section type
+                for q in section_questions:
+                    # Use section type if question type doesn't match or is unclear
+                    detected_type = q.get('question_type', 'single_mcq')
+                    if section_type != 'mixed' and detected_type != section_type:
+                        # Trust the section type hint if it's specific
+                        logger.debug(f"Overriding question type {detected_type} with section type {section_type}")
+                        q['question_type'] = section_type
+                    all_types_found.add(q.get('question_type', section_type))
+                
                 result = SectionQuestionResult(
-                    section_name=f"{subject} - {self._get_type_display(q_type)}",
-                    section_type=q_type,
-                    questions=questions,
-                    total_extracted=len(questions),
-                    expected_count=len(questions),
+                    section_name=section_name,
+                    section_type=section_type,
+                    questions=section_questions,
+                    total_extracted=len(section_questions),
+                    expected_count=expected_count if expected_count > 0 else len(section_questions),
                     extraction_confidence=0.85,
                     warnings=[]
                 )
+                
                 results.append(result)
-                total_extracted += len(questions)
-                logger.info(f"Type '{q_type}': {len(questions)} questions")
+                total_extracted += len(section_questions)
+                logger.info(f"Section '{section_name}': {len(section_questions)} questions extracted")
             
             if progress_callback:
                 progress_callback(100, "Extraction complete")
@@ -134,7 +170,7 @@ class SectionQuestionExtractor:
                 'total_expected': expected_question_count if expected_question_count > 0 else total_extracted,
                 'extraction_summary': {
                     'sections_processed': len(results),
-                    'types_found': list(questions_by_type.keys()),
+                    'types_found': list(all_types_found),
                     'completeness': (total_extracted / expected_question_count * 100) if expected_question_count > 0 else 100.0,
                     'expected_count': expected_question_count,
                     'extracted_count': total_extracted
@@ -144,6 +180,133 @@ class SectionQuestionExtractor:
         except Exception as e:
             logger.error(f"AI extraction failed: {e}", exc_info=True)
             raise SectionExtractionError(f"Extraction failed: {str(e)}")
+    
+    def _extract_and_group_by_type(
+        self,
+        text_content: str,
+        subject: str,
+        expected_question_count: int,
+        progress_callback: Optional[callable] = None
+    ) -> Dict:
+        """Fallback: Extract all questions and group by type (old behavior)."""
+        # Count actual questions in content if expected_count not provided
+        if expected_question_count <= 0:
+            expected_question_count = self._count_questions_in_content(text_content)
+        
+        if progress_callback:
+            progress_callback(10, "Analyzing content with AI...")
+        
+        all_questions = self._ai_extract_and_classify(text_content, subject, expected_question_count)
+        
+        if progress_callback:
+            progress_callback(70, "Grouping questions by type...")
+        
+        questions_by_type = self._group_by_type(all_questions)
+        
+        results = []
+        total_extracted = 0
+        
+        for q_type, questions in questions_by_type.items():
+            result = SectionQuestionResult(
+                section_name=f"{subject} - {self._get_type_display(q_type)}",
+                section_type=q_type,
+                questions=questions,
+                total_extracted=len(questions),
+                expected_count=len(questions),
+                extraction_confidence=0.85,
+                warnings=[]
+            )
+            results.append(result)
+            total_extracted += len(questions)
+        
+        if progress_callback:
+            progress_callback(100, "Extraction complete")
+        
+        return {
+            'subject': subject,
+            'sections': results,
+            'total_extracted': total_extracted,
+            'total_expected': expected_question_count if expected_question_count > 0 else total_extracted,
+            'extraction_summary': {
+                'sections_processed': len(results),
+                'types_found': list(questions_by_type.keys()),
+                'completeness': (total_extracted / expected_question_count * 100) if expected_question_count > 0 else 100.0,
+                'expected_count': expected_question_count,
+                'extracted_count': total_extracted
+            }
+        }
+    
+    def _extract_section_content(self, text_content: str, start_marker: str, all_sections: List[Dict], section_index: int) -> str:
+        """Extract content for a specific section using start_marker."""
+        if not start_marker:
+            # If no marker, try to find section boundaries using section name
+            section_info = all_sections[section_index]
+            section_name = section_info.get('name', '')
+            # Try to find section header in content
+            patterns = [
+                re.escape(section_name),
+                section_name.replace(' ', r'\s+'),
+                section_name.split('-')[-1].strip() if '-' in section_name else section_name
+            ]
+            
+            for pattern in patterns:
+                match = re.search(pattern, text_content, re.IGNORECASE)
+                if match:
+                    start_pos = match.start()
+                    break
+            else:
+                # If no match found, return empty (will use full content as fallback)
+                logger.warning(f"Could not find section marker for: {section_name}")
+                return text_content if section_index == 0 else ""
+        else:
+            # Find start position using marker
+            # Try exact match first
+            start_pos = text_content.find(start_marker)
+            if start_pos == -1:
+                # Try case-insensitive
+                match = re.search(re.escape(start_marker), text_content, re.IGNORECASE)
+                if match:
+                    start_pos = match.start()
+                else:
+                    # Try partial match (first few words)
+                    marker_words = start_marker.split()[:3]  # First 3 words
+                    marker_pattern = r'\b' + r'\s+'.join(re.escape(w) for w in marker_words) + r'\b'
+                    match = re.search(marker_pattern, text_content, re.IGNORECASE)
+                    if match:
+                        start_pos = match.start()
+                    else:
+                        logger.warning(f"Could not find start_marker: {start_marker}")
+                        return text_content if section_index == 0 else ""
+        
+        # Find end position (start of next section or end of content)
+        if section_index + 1 < len(all_sections):
+            next_section = all_sections[section_index + 1]
+            next_marker = next_section.get('start_marker', '')
+            next_name = next_section.get('name', '')
+            
+            # Try to find next section start
+            end_pos = len(text_content)
+            if next_marker:
+                next_pos = text_content.find(next_marker, start_pos)
+                if next_pos != -1:
+                    end_pos = next_pos
+            else:
+                # Try finding by name
+                patterns = [
+                    re.escape(next_name),
+                    next_name.replace(' ', r'\s+'),
+                ]
+                for pattern in patterns:
+                    match = re.search(pattern, text_content[start_pos:], re.IGNORECASE)
+                    if match:
+                        end_pos = start_pos + match.start()
+                        break
+        else:
+            end_pos = len(text_content)
+        
+        section_content = text_content[start_pos:end_pos]
+        logger.debug(f"Extracted section content: {len(section_content)} chars from position {start_pos} to {end_pos}")
+        return section_content
     
     def _count_questions_in_content(self, content: str) -> int:
         """Count actual questions in content using regex patterns"""

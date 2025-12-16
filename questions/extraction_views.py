@@ -2132,13 +2132,44 @@ def extract_text_from_image(request):
             
             logger.info(f"Successfully extracted {len(extracted_text)} chars from image via Mathpix")
             
-            return Response({
+            # Parse question structure using Gemini AI
+            parsed_structure = None
+            parsing_error = None
+            try:
+                from questions.services.question_structure_parser import QuestionStructureParser, QuestionStructureParseError
+                
+                logger.info(f"Attempting to parse question structure from {len(extracted_text)} characters of text")
+                parser = QuestionStructureParser()
+                parsed_structure = parser.parse_question_structure(extracted_text)
+                logger.info("Successfully parsed question structure using Gemini AI")
+            except QuestionStructureParseError as e:
+                parsing_error = str(e)
+                logger.warning(f"Failed to parse question structure: {parsing_error}. Returning raw text only.", exc_info=True)
+                # Continue without parsed structure - backward compatible
+            except Exception as e:
+                parsing_error = str(e)
+                logger.error(f"Unexpected error during question structure parsing: {parsing_error}", exc_info=True)
+                # Continue without parsed structure - backward compatible
+            
+            # Build response
+            response_data = {
                 'success': True,
                 'extracted_text': extracted_text,
                 'has_latex': has_latex,
                 'confidence': 0.95,
                 'message': 'Successfully extracted text from image'
-            }, status=status.HTTP_200_OK)
+            }
+            
+            # Add parsed structure if available
+            if parsed_structure:
+                response_data['parsed_structure'] = parsed_structure
+                response_data['message'] = 'Successfully extracted and parsed text from image'
+            elif parsing_error:
+                # Include parsing error in response for debugging (can be removed in production)
+                response_data['parsing_error'] = parsing_error
+                response_data['message'] = 'Successfully extracted text from image (parsing failed)'
+            
+            return Response(response_data, status=status.HTTP_200_OK)
             
         except MathpixError as e:
             # Clean up temp file
