@@ -9,7 +9,13 @@ from typing import List, Dict, Any
 import numpy as np
 from django.conf import settings
 from .models import Question, QuestionEmbedding
-import google.generativeai as genai
+# Google AI import - optional
+try:
+    import google.generativeai as genai
+    GOOGLE_AI_AVAILABLE = True
+except ImportError:
+    genai = None
+    GOOGLE_AI_AVAILABLE = False
 
 # Check which AI backend to use
 def get_use_ollama():

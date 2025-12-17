@@ -15,9 +15,20 @@ from .serializers import (
     ExamQuestionSerializer, QuestionTemplateSerializer, QuestionSearchSerializer,
     BulkQuestionImportSerializer
 )
-from .rag_utils import configure_gemini
-from google.api_core import exceptions as google_exceptions
-import google.generativeai as genai
+# RAG utils - optional import
+try:
+    from .rag_utils import configure_gemini
+except ImportError:
+    configure_gemini = None
+# Google AI imports - optional
+try:
+    from google.api_core import exceptions as google_exceptions
+    import google.generativeai as genai
+    GOOGLE_AI_AVAILABLE = True
+except ImportError:
+    google_exceptions = None
+    genai = None
+    GOOGLE_AI_AVAILABLE = False
 
 
 class QuestionListView(generics.ListCreateAPIView):
@@ -563,6 +574,11 @@ def generate_ai_question(request):
     )
 
     try:
+        if not GOOGLE_AI_AVAILABLE or genai is None:
+            return Response(
+                {"error": "Google AI (Gemini) is not available. Please install google-generativeai package."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE
+            )
         model = genai.GenerativeModel('gemini-2.5-flash')
         response = model.generate_content(
             prompt,
@@ -677,34 +693,43 @@ def generate_ai_question(request):
             'message': 'AI generated a draft question. Review and adjust before saving.'
         })
 
-    except google_exceptions.ResourceExhausted as exc:
-        retry_seconds = None
-        details = str(exc)
-        retry_delay = getattr(exc, 'retry_delay', None)
-        if retry_delay is not None and getattr(retry_delay, 'seconds', None) is not None:
-            retry_seconds = retry_delay.seconds
-        message = "Gemini API free-tier quota reached. Please wait a minute and try again."
-        if retry_seconds:
-            message = f"Gemini API free-tier quota reached. Please wait about {retry_seconds} seconds and try again."
-        return Response(
-            {'error': message, 'details': details},
-            status=status.HTTP_429_TOO_MANY_REQUESTS
-        )
-    except google_exceptions.GoogleAPIError as exc:
-        return Response(
-            {'error': f'Gemini API error: {exc}'},
-            status=status.HTTP_502_BAD_GATEWAY
-        )
     except json.JSONDecodeError:
         return Response(
             {'error': 'AI response could not be parsed. Please try again.'},
             status=status.HTTP_502_BAD_GATEWAY
         )
     except Exception as exc:
-        return Response(
-            {'error': f'Question generation failed: {exc}'},
-            status=status.HTTP_502_BAD_GATEWAY
-        )
+        if not GOOGLE_AI_AVAILABLE or google_exceptions is None:
+            return Response(
+                {"error": "Google AI (Gemini) is not available. Please install google-generativeai package."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE
+            )
+        
+        # Handle Google API exceptions
+        if isinstance(exc, google_exceptions.ResourceExhausted):
+            retry_seconds = None
+            details = str(exc)
+            retry_delay = getattr(exc, 'retry_delay', None)
+            if retry_delay is not None and getattr(retry_delay, 'seconds', None) is not None:
+                retry_seconds = retry_delay.seconds
+            message = "Gemini API free-tier quota reached. Please wait a minute and try again."
+            if retry_seconds:
+                message = f"Gemini API free-tier quota reached. Please wait about {retry_seconds} seconds and try again."
+            return Response(
+                {'error': message, 'details': details},
+                status=status.HTTP_429_TOO_MANY_REQUESTS
+            )
+        elif isinstance(exc, google_exceptions.GoogleAPIError):
+            return Response(
+                {'error': f'Gemini API error: {exc}'},
+                status=status.HTTP_502_BAD_GATEWAY
+            )
+        else:
+            # Return generic error for other exceptions
+            return Response(
+                {'error': f'Question generation failed: {exc}'},
+                status=status.HTTP_502_BAD_GATEWAY
+            )
 
 
 @api_view(['POST'])

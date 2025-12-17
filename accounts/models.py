@@ -1,21 +1,58 @@
 from django.contrib.auth.models import AbstractUser
 from django.db import models
 from django.core.validators import RegexValidator
+import uuid
+
+
+class TimeStampedModel(models.Model):
+    """
+    Base abstract model for common timestamp fields.
+    Makes all child models automatically track creation & update times.
+    """
+    id = models.UUIDField(
+        primary_key=True,
+        default=uuid.uuid4,
+        editable=False,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        abstract = True
 
 
 class Institute(models.Model):
-    """Institute/Organization model"""
-    name = models.CharField(max_length=200, unique=True)
+    """
+    Merged Institute model supporting both exam and timetable systems.
+    """
+    # UUID primary key for timetable compatibility
+    id = models.UUIDField(
+        primary_key=True,
+        default=uuid.uuid4,
+        editable=False,
+    )
+    
+    # Basic fields from exam system
+    name = models.CharField(max_length=255, unique=True)
     domain = models.CharField(max_length=100, unique=True, blank=True, null=True, help_text="Optional email domain (e.g., 'university.edu')")
     description = models.TextField(blank=True, help_text="Brief description of the institute")
     address = models.TextField(blank=True)
-    contact_email = models.EmailField()
+    contact_email = models.EmailField(blank=True, default='')
     contact_phone = models.CharField(max_length=20, blank=True)
     website = models.URLField(blank=True)
     logo = models.ImageField(upload_to='institute_logos/', blank=True, null=True)
     is_active = models.BooleanField(default=True)
     is_verified = models.BooleanField(default=False, help_text="Whether the institute is verified by super admin")
     created_by = models.ForeignKey('User', on_delete=models.SET_NULL, null=True, blank=True, related_name='created_institutes')
+    
+    # Timetable-specific fields
+    head_office_location = models.CharField(
+        max_length=255,
+        blank=True,
+        help_text="City / address of the head office. Example: Delhi.",
+    )
+    
+    # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -35,15 +72,339 @@ class Institute(models.Model):
     
     def get_admins(self):
         """Get all admin users in this institute"""
-        return self.users.filter(role__in=['institute_admin', 'super_admin'])
+        return self.users.filter(role__in=['institute_admin', 'super_admin', 'ADMIN', 'SUPER_ADMIN'])
     
     def can_be_managed_by(self, user):
         """Check if a user can manage this institute"""
-        if user.role == 'super_admin':
+        if user.role in ['super_admin', 'SUPER_ADMIN']:
             return True
-        return user.institute == self and user.role in ['institute_admin', 'super_admin']
+        return user.institute == self and user.role in ['institute_admin', 'super_admin', 'ADMIN', 'SUPER_ADMIN']
 
 
+class User(AbstractUser):
+    """
+    Merged User model supporting both exam and timetable systems.
+    Combines fields from both systems with role compatibility.
+    """
+    # ===========
+    # ROLE DEFINITIONS - Supporting both exam and timetable roles
+    # ===========
+    # Exam system roles (primary)
+    ROLE_SUPER_ADMIN = 'super_admin'
+    ROLE_INSTITUTE_ADMIN = 'institute_admin'
+    ROLE_EXAM_ADMIN = 'exam_admin'
+    ROLE_TEACHER = 'teacher'
+    ROLE_STUDENT = 'student'
+    
+    # Timetable system roles (for compatibility)
+    ROLE_ADMIN = 'ADMIN'  # Center admin
+    ROLE_STAFF = 'STAFF'  # Non-teaching staff
+    
+    # Combined role choices
+    ROLE_CHOICES = [
+        # Exam system roles
+        ('super_admin', 'Super Admin'),
+        ('institute_admin', 'Institute Admin'),
+        ('exam_admin', 'Exam Admin'),
+        ('teacher', 'Teacher'),
+        ('student', 'Student'),
+        # Timetable system roles
+        ('ADMIN', 'Center Admin'),
+        ('STAFF', 'Staff'),
+    ]
+    
+    # ===========
+    # BASIC FIELDS
+    # ===========
+    email = models.EmailField(unique=True)
+    role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='student')
+    institute = models.ForeignKey(Institute, on_delete=models.CASCADE, related_name='users', null=True, blank=True)
+    
+    # Phone number (supporting both field names)
+    phone = models.CharField(
+        max_length=20, 
+        blank=True,
+        validators=[RegexValidator(regex=r'^\+?1?\d{9,15}$', message="Phone number must be entered in the format: '+999999999'. Up to 15 digits allowed.")]
+    )
+    phone_number = models.CharField(
+        max_length=20,
+        blank=True,
+        help_text="Primary contact phone number (timetable system).",
+    )
+    
+    # Profile images (supporting both field names)
+    profile_picture = models.ImageField(upload_to='profiles/', blank=True, null=True)
+    profile_image = models.ImageField(
+        upload_to="profiles/",
+        blank=True,
+        null=True,
+        help_text="Optional profile image (timetable system).",
+    )
+    
+    is_verified = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    # ===========
+    # TIMETABLE-SPECIFIC FIELDS
+    # ===========
+    # Teacher fields
+    teacher_code = models.CharField(
+        max_length=50,
+        blank=True,
+        help_text="Readable code for a teacher. Example: 'AK-CAP', 'BTDS', etc.",
+    )
+    teacher_employee_id = models.CharField(
+        max_length=50,
+        blank=True,
+        help_text="Official employee id of the teacher. Example: 'EMP-00123'.",
+    )
+    teacher_subjects = models.CharField(
+        max_length=255,
+        blank=True,
+        help_text="Subjects that the teacher handles. Example: 'Physics', or 'Physics, Chemistry'.",
+    )
+    default_available_slots = models.JSONField(
+        blank=True,
+        null=True,
+        help_text="Optional default weekly slot availability for this teacher.",
+    )
+    
+    # Center relation (for timetable system)
+    center = models.ForeignKey(
+        "Center",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="users",
+        help_text="Center to which the user belongs (timetable system).",
+    )
+    
+    USERNAME_FIELD = 'email'
+    REQUIRED_FIELDS = ['username', 'first_name', 'last_name']
+
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = "User"
+        verbose_name_plural = "Users"
+
+    def __str__(self):
+        return f"{self.get_full_name()} ({self.email})"
+
+    def get_full_name(self):
+        return f"{self.first_name} {self.last_name}".strip()
+    
+    # ===========
+    # EXAM SYSTEM METHODS
+    # ===========
+    def is_institute_admin(self):
+        return self.role in ['super_admin', 'institute_admin', 'SUPER_ADMIN', 'ADMIN']
+    
+    def can_manage_exams(self):
+        return self.role in ['super_admin', 'institute_admin', 'exam_admin', 'teacher', 'ADMIN', 'TEACHER']
+    
+    def can_create_exams(self):
+        return self.role in ['super_admin', 'institute_admin', 'exam_admin', 'ADMIN']
+    
+    # ===========
+    # TIMETABLE SYSTEM METHODS
+    # ===========
+    def is_super_admin(self) -> bool:
+        """Check if user is super admin (timetable system)"""
+        return self.role in [self.ROLE_SUPER_ADMIN, 'SUPER_ADMIN']
+    
+    def is_admin(self) -> bool:
+        """Check if user is center admin (timetable system)"""
+        return self.role in [self.ROLE_ADMIN, 'ADMIN', 'institute_admin']
+    
+    def is_teacher(self) -> bool:
+        """Check if user is teacher"""
+        return self.role in ['teacher', 'TEACHER']
+    
+    def is_student(self) -> bool:
+        """Check if user is student"""
+        return self.role in ['student', 'STUDENT']
+    
+    def is_staff_role(self) -> bool:
+        """Check if user is staff (timetable system)"""
+        return self.role == self.ROLE_STAFF
+    
+    # ===========
+    # PROPERTY HELPERS FOR COMPATIBILITY
+    # ===========
+    @property
+    def center_id(self):
+        """Get center ID for API compatibility"""
+        return str(self.center.id) if self.center else None
+
+
+class Center(TimeStampedModel):
+    """
+    Represents a physical or virtual center/branch of the Institute.
+    Example: 'Allen - Jaipur Center', 'Allen - Mumbai Center', etc.
+    """
+    institute = models.ForeignKey(
+        Institute,
+        on_delete=models.CASCADE,
+        related_name="centers",
+        help_text="Parent institute of this center.",
+    )
+    name = models.CharField(
+        max_length=255,
+        help_text="Name of the center. Example: 'Allen - Jaipur Center'.",
+    )
+    city = models.CharField(
+        max_length=100,
+        help_text="City where this center is located.",
+    )
+    address = models.TextField(
+        blank=True,
+        help_text="Optional full address of the center.",
+    )
+    
+    # Admin user(s) for this center
+    admins = models.ManyToManyField(
+        User,
+        blank=True,
+        related_name="admin_centers",
+        help_text="Users who are admins of this center.",
+    )
+
+    def __str__(self) -> str:
+        return f"{self.name} ({self.city})"
+
+
+class Program(TimeStampedModel):
+    """
+    Represents a Program running at a specific center.
+    Examples: 'Super 30', 'Only Board'
+    """
+    center = models.ForeignKey(
+        Center,
+        on_delete=models.CASCADE,
+        related_name="programs",
+        help_text="Center where this program is offered.",
+    )
+    name = models.CharField(
+        max_length=255,
+        help_text="Program name, e.g. 'Super 30', 'Only Board'.",
+    )
+    description = models.TextField(
+        blank=True,
+        help_text="Optional detailed description of the program.",
+    )
+    category = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text="Optional category for grouping programs.",
+    )
+    is_active = models.BooleanField(
+        default=True,
+        help_text="Programs can be deactivated instead of deleting.",
+    )
+
+    class Meta:
+        unique_together = ("center", "name")
+        ordering = ["center__name", "name"]
+
+    def __str__(self) -> str:
+        return f"{self.name} - {self.center.name}"
+
+
+class Batch(TimeStampedModel):
+    """
+    Represents a Batch inside a Program.
+    - Created by Admin of that particular center.
+    - Students are enrolled into Batches.
+    - Teachers can be assigned to Batches as well.
+    """
+    program = models.ForeignKey(
+        Program,
+        on_delete=models.CASCADE,
+        related_name="batches",
+        help_text="Program under which this batch runs.",
+    )
+    code = models.CharField(
+        max_length=50,
+        help_text="Short unique-like code for this batch. Example: 'S30-A-2025'.",
+    )
+    name = models.CharField(
+        max_length=255,
+        help_text="Batch name, e.g. 'Super 30 - Batch A (2025)'.",
+    )
+    start_date = models.DateField(
+        null=True,
+        blank=True,
+        help_text="Optional batch start date.",
+    )
+    end_date = models.DateField(
+        null=True,
+        blank=True,
+        help_text="Optional batch end date.",
+    )
+    
+    # Teachers who teach this batch
+    teachers = models.ManyToManyField(
+        User,
+        blank=True,
+        related_name="teaching_batches",
+        help_text="Teachers assigned to this batch.",
+    )
+
+    class Meta:
+        unique_together = ("program", "name")
+        ordering = ["program__name", "name"]
+
+    def __str__(self) -> str:
+        return f"{self.name} ({self.program.name})"
+
+
+class Enrollment(TimeStampedModel):
+    """
+    Represents the relationship between a Student and a Batch.
+    """
+    STATUS_ACTIVE = "ACTIVE"
+    STATUS_COMPLETED = "COMPLETED"
+    STATUS_DROPPED = "DROPPED"
+
+    STATUS_CHOICES = [
+        (STATUS_ACTIVE, "Active"),
+        (STATUS_COMPLETED, "Completed"),
+        (STATUS_DROPPED, "Dropped"),
+    ]
+
+    student = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="enrollments",
+        help_text="User with role=STUDENT enrolled in this batch.",
+    )
+    batch = models.ForeignKey(
+        Batch,
+        on_delete=models.CASCADE,
+        related_name="enrollments",
+        help_text="Batch into which the student is enrolled.",
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default=STATUS_ACTIVE,
+        help_text="Current enrollment status of the student in this batch.",
+    )
+    joined_on = models.DateField(
+        auto_now_add=True,
+        help_text="Date when the student joined this batch.",
+    )
+
+    class Meta:
+        unique_together = ("student", "batch")
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"{self.student.username} -> {self.batch.name} ({self.status})"
+
+
+# Keep existing models for exam system compatibility
 class InstituteInvitation(models.Model):
     """Model for inviting users to join an institute"""
     STATUS_CHOICES = [
@@ -62,7 +423,7 @@ class InstituteInvitation(models.Model):
         ('teacher', 'Teacher'),
         ('student', 'Student'),
     ], default='student')
-    invited_by = models.ForeignKey('User', on_delete=models.CASCADE, related_name='sent_institute_invitations')
+    invited_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='sent_institute_invitations')
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='pending')
     message = models.TextField(blank=True, help_text="Optional message to include with invitation")
     expires_at = models.DateTimeField()
@@ -79,51 +440,6 @@ class InstituteInvitation(models.Model):
     def is_expired(self):
         from django.utils import timezone
         return timezone.now() > self.expires_at
-
-
-class User(AbstractUser):
-    """Custom User model with institute-based authentication"""
-    ROLE_CHOICES = [
-        ('super_admin', 'Super Admin'),
-        ('institute_admin', 'Institute Admin'),
-        ('exam_admin', 'Exam Admin'),
-        ('teacher', 'Teacher'),
-        ('student', 'Student'),
-    ]
-
-    email = models.EmailField(unique=True)
-    role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='student')
-    institute = models.ForeignKey(Institute, on_delete=models.CASCADE, related_name='users', null=True, blank=True)
-    phone = models.CharField(
-        max_length=15, 
-        blank=True,
-        validators=[RegexValidator(regex=r'^\+?1?\d{9,15}$', message="Phone number must be entered in the format: '+999999999'. Up to 15 digits allowed.")]
-    )
-    profile_picture = models.ImageField(upload_to='profiles/', blank=True, null=True)
-    is_verified = models.BooleanField(default=False)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    USERNAME_FIELD = 'email'
-    REQUIRED_FIELDS = ['username', 'first_name', 'last_name']
-
-    class Meta:
-        ordering = ['-created_at']
-
-    def __str__(self):
-        return f"{self.get_full_name()} ({self.email})"
-
-    def get_full_name(self):
-        return f"{self.first_name} {self.last_name}".strip()
-
-    def is_institute_admin(self):
-        return self.role in ['super_admin', 'institute_admin']
-
-    def can_manage_exams(self):
-        return self.role in ['super_admin', 'institute_admin', 'exam_admin', 'teacher']
-
-    def can_create_exams(self):
-        return self.role in ['super_admin', 'institute_admin', 'exam_admin']
 
 
 class UserPermission(models.Model):

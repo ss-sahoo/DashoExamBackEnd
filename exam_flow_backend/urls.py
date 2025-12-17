@@ -15,6 +15,9 @@ urlpatterns = [
     path('api/questions/', include('questions.urls')),
     path('api/evaluation/', include('exams.evaluation_urls')),
     path('api/student-analytics/', include('exams.student_analytics_urls')),
+    
+    # Timetable APIs (now using accounts models)
+    path('api/timetable/', include('timetable.urls')),
 ]
 
 # Serve media files in development
