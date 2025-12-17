@@ -1,0 +1,483 @@
+{
+  "info": {
+    "name": "Exam & Timetable API Collection",
+    "_postman_id": "exam-timetable-collection",
+    "description": "Full collection for Exam + Timetable backend using shared accounts.User model.\nUse with an environment that defines {{base_url}}, {{superadmin_username}}, and {{superadmin_password}}.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Auth - Exam (Accounts)",
+      "item": [
+        {
+          "name": "Exam - User Register",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/auth/register/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "auth", "register", ""]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"user1@example.com\",\n  \"password\": \"User@1234\",\n  \"first_name\": \"Test\",\n  \"last_name\": \"User\"\n}"
+            },
+            "description": "Registers a generic user in the exam system. Uses accounts.User."
+          }
+        },
+        {
+          "name": "Exam - User Login",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/auth/login/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "auth", "login", ""]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"user1@example.com\",\n  \"password\": \"User@1234\"\n}"
+            },
+            "description": "Exam-side login (email + password). Returns JWT tokens."
+          }
+        },
+        {
+          "name": "Exam - User Logout",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/auth/logout/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "auth", "logout", ""]
+            },
+            "description": "Logs out the current user (uses Django session/JWT blacklisting depending on implementation)."
+          }
+        },
+        {
+          "name": "Exam - User Profile",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{exam_access_token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/auth/profile/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "auth", "profile", ""]
+            },
+            "description": "Get current logged-in exam user profile."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Auth - Timetable (Role-based)",
+      "item": [
+        {
+          "name": "Timetable - Super Admin Login",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/auth/superadmin/login/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "timetable", "auth", "superadmin", "login", ""]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{superadmin_username}}\",\n  \"password\": \"{{superadmin_password}}\"\n}"
+            },
+            "description": "Login as Super Admin (accounts.User with role SUPER_ADMIN or super_admin). Returns JWT tokens."
+          }
+        },
+        {
+          "name": "Timetable - Admin Login",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/auth/admin/login/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "timetable", "auth", "admin", "login", ""]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"ADM-XXXX-001\",\n  \"password\": \"Admin@XXXX2025\"\n}"
+            },
+            "description": "Login as Center Admin. Use credentials returned from create-admin API."
+          }
+        },
+        {
+          "name": "Timetable - Teacher Login",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/auth/teacher/login/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "timetable", "auth", "teacher", "login", ""]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"TCH-XXXX-001\",\n  \"password\": \"Teacher@XXXX2025\"\n}"
+            },
+            "description": "Login as Teacher. username can be normal username or teacher_code."
+          }
+        },
+        {
+          "name": "Timetable - Student Login",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/auth/student/login/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "timetable", "auth", "student", "login", ""]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"STU-XXXX-001\",\n  \"password\": \"Student@XXXX2025\"\n}"
+            },
+            "description": "Login as Student."
+          }
+        },
+        {
+          "name": "Timetable - Staff Login",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/auth/staff/login/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "timetable", "auth", "staff", "login", ""]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"staff_username\",\n  \"password\": \"staff_password\"\n}"
+            },
+            "description": "Login as Staff (non-teaching)."
+          }
+        },
+        {
+          "name": "Timetable - Change Password",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{timetable_access_token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/auth/change-password/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "timetable", "auth", "change-password", ""]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"old_password\": \"Old@1234\",\n  \"new_password\": \"New@1234\",\n  \"confirm_password\": \"New@1234\"\n}"
+            },
+            "description": "Change password for current timetable user (any role)."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Timetable - Super Admin Management",
+      "item": [
+        {
+          "name": "Create Center (Super Admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{timetable_access_token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/superadmin/centers/create/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "timetable", "superadmin", "centers", "create", ""]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"institute_name\": \"Allen Coaching\",\n  \"name\": \"Allen - Jaipur Center\",\n  \"city\": \"Jaipur\",\n  \"address\": \"123 Main Street, Jaipur\"\n}"
+            },
+            "description": "Creates a Center under an Institute. Auto-creates Institute if needed."
+          }
+        },
+        {
+          "name": "Create Admin (Super Admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{timetable_access_token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/superadmin/admins/create/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "timetable", "superadmin", "admins", "create", ""]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"center_name\": \"Allen - Jaipur Center\",\n  \"name\": \"Admin Name\",\n  \"email\": \"admin@example.com\",\n  \"phone_number\": \"9876543211\"\n}"
+            },
+            "description": "Creates a Center Admin. Response includes auto-generated username and password."
+          }
+        },
+        {
+          "name": "Create Teacher (Super Admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{timetable_access_token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/superadmin/teachers/create/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "timetable", "superadmin", "teachers", "create", ""]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"center_name\": \"Allen - Jaipur Center\",\n  \"name\": \"Teacher Name\",\n  \"email\": \"teacher@example.com\",\n  \"phone_number\": \"9876543212\",\n  \"employee_id\": \"EMP-001\",\n  \"subjects\": \"Physics, Chemistry\"\n}"
+            },
+            "description": "Creates a Teacher with auto-generated username/password and teacher_code."
+          }
+        },
+        {
+          "name": "Create Student (Super Admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{timetable_access_token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/superadmin/students/create/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "timetable", "superadmin", "students", "create", ""]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"center_name\": \"Allen - Jaipur Center\",\n  \"name\": \"Student Name\",\n  \"email\": \"student@example.com\",\n  \"phone_number\": \"9876543213\"\n}"
+            },
+            "description": "Creates a Student with auto-generated username/password and enrollment."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Timetable - Programs & Batches",
+      "item": [
+        {
+          "name": "Create Program (Super Admin / Admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{timetable_access_token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/superadmin/programs/create/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "timetable", "superadmin", "programs", "create", ""]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"center_name\": \"Allen - Jaipur Center\",\n  \"name\": \"JEE Main 2025\",\n  \"description\": \"One-year JEE program\"\n}"
+            },
+            "description": "Creates an academic Program under a Center."
+          }
+        },
+        {
+          "name": "List Programs",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{timetable_access_token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/programs/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "timetable", "programs", ""]
+            },
+            "description": "Lists all Programs in the current user's Center/Institute context."
+          }
+        },
+        {
+          "name": "List Batches",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{timetable_access_token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/batches/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "timetable", "batches", ""]
+            },
+            "description": "Lists all Batches."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Timetable - Timetable Core",
+      "item": [
+        {
+          "name": "List Timetables",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{timetable_access_token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/timetables/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "timetable", "timetables", ""]
+            },
+            "description": "Lists all generated timetables."
+          }
+        },
+        {
+          "name": "Get Timetable Payload for Optimization",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{timetable_access_token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/timetables/{{timetable_id}}/payload/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "timetable", "timetables", "{{timetable_id}}", "payload", ""]
+            },
+            "description": "Returns JSON payload (teachers, batches, slots, constraints) for optimization code."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Exam - Core APIs",
+      "item": [
+        {
+          "name": "List Exams",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{exam_access_token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/exams/exams/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "exams", "exams", ""]
+            },
+            "description": "Get list of exams for the institute."
+          }
+        },
+        {
+          "name": "List Patterns",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{exam_access_token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/patterns/patterns/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "patterns", "patterns", ""]
+            },
+            "description": "Get all exam patterns."
+          }
+        },
+        {
+          "name": "List Question Banks",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{exam_access_token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/questions/question-banks/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "questions", "question-banks", ""]
+            },
+            "description": "Get all question banks for the institute."
+          }
+        },
+        {
+          "name": "Get Pattern Questions (Bulk)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{exam_access_token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/questions/pattern-questions-bulk/?pattern_id={{pattern_id}}&exam_id={{exam_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "questions", "pattern-questions-bulk", ""],
+              "query": [
+                { "key": "pattern_id", "value": "{{pattern_id}}" },
+                { "key": "exam_id", "value": "{{exam_id}}" }
+              ]
+            },
+            "description": "Fetches all questions for a given pattern/exam in a single optimized call."
+          }
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://127.0.0.1:8000"
+    },
+    {
+      "key": "exam_access_token",
+      "value": ""
+    },
+    {
+      "key": "timetable_access_token",
+      "value": ""
+    },
+    {
+      "key": "timetable_id",
+      "value": ""
+    },
+    {
+      "key": "pattern_id",
+      "value": ""
+    },
+    {
+      "key": "exam_id",
+      "value": ""
+    },
+    {
+      "key": "superadmin_username",
+      "value": "testa"
+    },
+    {
+      "key": "superadmin_password",
+      "value": "SuperAdmin@2025"
+    }
+  ]
+}
+
+
