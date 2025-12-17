@@ -186,11 +186,18 @@ def build_batches_payload(timetable: Timetable) -> Dict[str, Dict[str, Any]]:
         teacher_code = load.teacher.teacher_code or load.teacher.username
 
         batches.setdefault(batch_code, {"sub_teachers": []})
+        # Extract subject from teacher's subjects or use a default
+        teacher_subjects = load.teacher.teacher_subjects or ""
+        subjects_list = [s.strip() for s in teacher_subjects.split(",") if s.strip()] if teacher_subjects else []
+        # Use first subject or create a default based on teacher code
+        subject = subjects_list[0] if subjects_list else f"Subject_{teacher_code}"
+        
         batches[batch_code]["sub_teachers"].append(
             {
                 "teacher": teacher_code,
+                "subject": subject,  # Add subject to payload
                 "min_class": int(load.total_lectures),  # total per period
-                "max_class": int(load.total_lectures),  # you can adjust logic here
+                "max_class": int(load.max_lectures_per_week or load.total_lectures),  # Use max_lectures_per_week if available
                 "min_class_day": float(load.min_lectures_per_day),
                 "max_class_day": float(load.max_lectures_per_day),
             }

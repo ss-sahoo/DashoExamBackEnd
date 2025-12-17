@@ -24,6 +24,7 @@ from timetable.views import (
     get_timetable_batch_assignments,
     assign_fixed_slot,
     get_fixed_slots,
+    run_timetable_optimization,
 )
 
 # Import timetable auth and management views from accounts
@@ -40,6 +41,14 @@ from accounts.timetable_views import (
     create_admin,
     create_teacher,
     create_student,
+    create_staff,
+)
+from accounts.center_views import (
+    list_centers,
+    get_center,
+    list_center_batches,
+    list_center_users,
+    list_center_timetables,
 )
 from accounts.program_batch_views import (
     create_program,
@@ -65,12 +74,29 @@ urlpatterns = [
     path("auth/change-password/", change_password, name="change-password"),
     
     # ===========
+    # Center Management APIs
+    # ===========
+    path("centers/", list_centers, name="list-centers"),
+    path("centers/<uuid:center_id>/", get_center, name="get-center"),
+    path("centers/<uuid:center_id>/batches/", list_center_batches, name="list-center-batches"),
+    path("centers/<uuid:center_id>/users/", list_center_users, name="list-center-users"),
+    path("centers/<uuid:center_id>/timetables/", list_center_timetables, name="list-center-timetables"),
+    
+    # ===========
     # Super Admin User Creation APIs
     # ===========
     path("superadmin/centers/create/", create_center, name="create-center"),
     path("superadmin/admins/create/", create_admin, name="create-admin"),
     path("superadmin/teachers/create/", create_teacher, name="create-teacher"),
     path("superadmin/students/create/", create_student, name="create-student"),
+    path("superadmin/staff/create/", create_staff, name="create-staff"),
+    
+    # ===========
+    # Admin User Creation APIs (for their center)
+    # ===========
+    path("admin/teachers/create/", create_teacher, name="admin-create-teacher"),
+    path("admin/students/create/", create_student, name="admin-create-student"),
+    path("admin/staff/create/", create_staff, name="admin-create-staff"),
     
     # ===========
     # Program and Batch Management APIs
@@ -114,5 +140,10 @@ urlpatterns = [
     # Optimization Payload API
     # ===========
     path("timetables/<uuid:timetable_id>/payload/", timetable_payload, name="timetable-payload"),
+    
+    # ===========
+    # Optimization Algorithm API
+    # ===========
+    path("timetables/<uuid:timetable_id>/optimize/", run_timetable_optimization, name="run-timetable-optimization"),
 ]
 

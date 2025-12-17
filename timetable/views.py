@@ -17,10 +17,14 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework import status
 from datetime import datetime
+from django.conf import settings
 
 from accounts.models import Center, Batch, User as AccountUser
-from .optimization import build_full_payload
-from .models import Timetable, DaySlot, TimetableHoliday, TeacherSlotAvailability, BatchFacultyLoad, FixedSlot
+from .optimization import build_full_payload, DAY_MAP_SHORT
+from .models import Timetable, DaySlot, TimetableHoliday, TeacherSlotAvailability, BatchFacultyLoad, FixedSlot, TimetableEntry
+from .genetic_algorithm import check_timetable_feasibility_from_start, generate_random_timetable
+from .algorithm_adapter import convert_teachers_to_algorithm_format, convert_batches_to_algorithm_format
+from django.db import transaction
 
 
 @require_GET
@@ -1542,4 +1546,229 @@ def get_fixed_slots(request, timetable_id: str):
         },
         status=status.HTTP_200_OK,
     )
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def run_timetable_optimization(request, timetable_id: str):
+    """
+    Run the generic algorithm to generate timetable.
+    
+    POST /api/timetable/timetables/<timetable_id>/optimize/
+    
+    Body (optional):
+    {
+        "start_slot": "m1",  # Default: first slot
+        "max_retries": 1000,
+        "max_try_for_slot_assign": 100,
+        "weight_power_fector": 3,
+        "max_one_subject_repetation_per_day": 2,
+        "max_one_subject_repetation_per_day_penalty_fector": 0,
+        "weight_penalty_consu_sub_repetation": [0.01, 0, 0, 0, 0],
+        "clear_existing": true  # Clear existing TimetableEntry before generating
+    }
+    
+    Returns:
+    {
+        "success": true/false,
+        "feasible": true/false,
+        "violations": {...},
+        "timetable_generated": true/false,
+        "entries_created": 0,
+        "message": "..."
+    }
+    """
+    try:
+        timetable = Timetable.objects.get(id=timetable_id)
+    except Timetable.DoesNotExist:
+        return Response(
+            {"detail": "Timetable not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+    
+    # Check permissions
+    user = request.user
+    if user.role not in (AccountUser.ROLE_ADMIN, AccountUser.ROLE_SUPER_ADMIN):
+        return Response(
+            {"detail": "Only Admin or Super Admin can run optimization."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    
+    # Get algorithm parameters from request
+    data = request.data
+    start_slot = data.get("start_slot", None)
+    max_retries = data.get("max_retries", 1000)
+    max_try_for_slot_assign = data.get("max_try_for_slot_assign", 100)
+    weight_power_fector = data.get("weight_power_fector", 3)
+    max_one_subject_repetation_per_day = data.get("max_one_subject_repetation_per_day", 2)
+    max_one_subject_repetation_per_day_penalty_fector = data.get("max_one_subject_repetation_per_day_penalty_fector", 0)
+    weight_penalty_consu_sub_repetation = data.get("weight_penalty_consu_sub_repetation", [0.01, 0, 0, 0, 0])
+    clear_existing = data.get("clear_existing", True)
+    
+    try:
+        # Build payload from models
+        payload = build_full_payload(timetable_id)
+        
+        available_slots = payload["available_slots"]
+        teachers_list = payload["teachers"]
+        batches_dict = payload["batches"]
+        fixed_slots = payload["fixed_slots"]
+        
+        # Convert to algorithm format
+        teachers_dict = convert_teachers_to_algorithm_format(teachers_list)
+        batches_dict_algo = convert_batches_to_algorithm_format(batches_dict, teachers_dict)
+        
+        # Determine start_slot if not provided
+        if not start_slot:
+            # Get first slot from available_slots
+            first_day = list(available_slots.keys())[0] if available_slots else None
+            if first_day and available_slots[first_day]:
+                start_slot = list(available_slots[first_day].keys())[0]
+            else:
+                return Response(
+                    {"detail": "No slots available in timetable."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        
+        # Step 1: Check feasibility
+        feasible, violations = check_timetable_feasibility_from_start(
+            available_slots=available_slots,
+            teachers=teachers_dict,
+            batches=batches_dict_algo,
+            new_fixed_slots=fixed_slots,
+            start_slot=start_slot
+        )
+        
+        if not feasible:
+            return Response(
+                {
+                    "success": False,
+                    "feasible": False,
+                    "violations": violations,
+                    "timetable_generated": False,
+                    "entries_created": 0,
+                    "message": "Timetable generation is not feasible. Please check violations and adjust constraints."
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        
+        # Step 2: Generate timetable
+        try:
+            generated_timetable = generate_random_timetable(
+                batches=batches_dict_algo,
+                teachers=teachers_dict,
+                avilable_slots=available_slots,
+                fixed_slots=fixed_slots,
+                MAX_RETRIES=max_retries,
+                max_try_for_slot_assign=max_try_for_slot_assign,
+                weight_power_fector=weight_power_fector,
+                max_one_subject_repetation_per_day=max_one_subject_repetation_per_day,
+                max_one_subject_repetation_per_day_penalty_fector=max_one_subject_repetation_per_day_penalty_fector,
+                weight_penalty_consu_sub_repetation=weight_penalty_consu_sub_repetation
+            )
+        except Exception as e:
+            return Response(
+                {
+                    "success": False,
+                    "feasible": True,
+                    "violations": {},
+                    "timetable_generated": False,
+                    "entries_created": 0,
+                    "message": f"Failed to generate timetable: {str(e)}"
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+        
+        # Step 3: Save results to database
+        # Create reverse mapping: day_key -> DaySlot model constant
+        DAY_MAP_REVERSE = {v: k for k, v in DAY_MAP_SHORT.items()}
+        
+        # Create mapping: slot_code -> DaySlot object
+        slot_code_to_dayslot = {}
+        for day_slot in timetable.day_slots.all():
+            day_key = DAY_MAP_SHORT[day_slot.day]
+            code = day_slot.slot_code or f"{day_key}{day_slot.slot_number}"
+            slot_code_to_dayslot[(day_key, code)] = day_slot
+        
+        # Create mapping: teacher_code -> User object
+        teacher_code_to_user = {}
+        for teacher_code, teacher_dto in teachers_dict.items():
+            user = AccountUser.objects.filter(
+                teacher_code=teacher_code
+            ).first() or AccountUser.objects.filter(
+                username=teacher_code
+            ).first()
+            if user:
+                teacher_code_to_user[teacher_code] = user
+        
+        # Create mapping: batch_code -> Batch object
+        batch_code_to_batch = {}
+        for batch_code in batches_dict_algo.keys():
+            batch = Batch.objects.filter(code=batch_code).first()
+            if batch:
+                batch_code_to_batch[batch_code] = batch
+        
+        entries_created = 0
+        
+        with transaction.atomic():
+            # Clear existing entries if requested
+            if clear_existing:
+                TimetableEntry.objects.filter(day_slot__timetable=timetable).delete()
+            
+            # Save generated timetable
+            for day_key, slots in generated_timetable.items():
+                day_constant = DAY_MAP_REVERSE.get(day_key)
+                if not day_constant:
+                    continue
+                
+                for slot_code, batch_assignments in slots.items():
+                    day_slot = slot_code_to_dayslot.get((day_key, slot_code))
+                    if not day_slot:
+                        continue
+                    
+                    for batch_code, (subject, teacher_code) in batch_assignments.items():
+                        batch = batch_code_to_batch.get(batch_code)
+                        if not batch:
+                            continue
+                        
+                        # Create or update TimetableEntry
+                        entry, created = TimetableEntry.objects.get_or_create(
+                            day_slot=day_slot,
+                            batch=batch,
+                            defaults={
+                                "subject": subject,
+                            }
+                        )
+                        if not created:
+                            entry.subject = subject
+                            entry.save()
+                        
+                        entries_created += 1
+        
+        return Response(
+            {
+                "success": True,
+                "feasible": True,
+                "violations": {},
+                "timetable_generated": True,
+                "entries_created": entries_created,
+                "message": f"Timetable generated successfully. Created {entries_created} entries."
+            },
+            status=status.HTTP_200_OK,
+        )
+        
+    except Exception as e:
+        import traceback
+        return Response(
+            {
+                "success": False,
+                "feasible": None,
+                "violations": {},
+                "timetable_generated": False,
+                "entries_created": 0,
+                "message": f"Error during optimization: {str(e)}",
+                "traceback": traceback.format_exc() if settings.DEBUG else None
+            },
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
 

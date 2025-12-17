@@ -70,6 +70,15 @@ def generate_user_code(role: str, center_code: str = None, batch_code: str = Non
         else:
             code = f"{prefix}-{random.randint(10000, 99999)}"
     
+    elif mapped_role == 'STAFF':
+        prefix = "STF"
+        if center_code:
+            center_part = center_code[:4].upper().replace("-", "")
+            suffix = f"{random.randint(100, 999)}"
+            code = f"{prefix}-{center_part}-{suffix}"
+        else:
+            code = f"{prefix}-{random.randint(1000, 9999)}"
+    
     else:
         # Fallback for other roles
         prefix = mapped_role[:3].upper()
@@ -166,6 +175,13 @@ def generate_password(role: str, center_code: str = None, batch_code: str = None
             password = f"Student@{batch_part}{year}"
         else:
             password = f"Student@{year}"
+    
+    elif mapped_role == 'STAFF':
+        if center_code:
+            center_part = center_code[:4].upper().replace("-", "").replace(" ", "")
+            password = f"Staff@{center_part}{current_year}"
+        else:
+            password = f"Staff@{current_year}"
     
     else:
         password = f"User@{current_year}"
