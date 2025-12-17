@@ -1,11 +1,27 @@
 from django.urls import path
 from . import views
+from .timetable_auth_views import (
+    SuperAdminLoginView,
+    AdminLoginView,
+    TeacherLoginView,
+    StudentLoginView,
+    StaffLoginView,
+    change_password as timetable_change_password,
+)
 
 urlpatterns = [
-    # Authentication
+    # Authentication (generic exam auth)
     path('register/', views.user_registration_view, name='user-register'),
     path('login/', views.user_login_view, name='user-login'),
     path('logout/', views.user_logout_view, name='user-logout'),
+
+    # Role-based auth endpoints (same style as timetable, but under /api/auth/)
+    path('superadmin/login/', SuperAdminLoginView.as_view(), name='exam-superadmin-login'),
+    path('admin/login/', AdminLoginView.as_view(), name='exam-admin-login'),
+    path('teacher/login/', TeacherLoginView.as_view(), name='exam-teacher-login'),
+    path('student/login/', StudentLoginView.as_view(), name='exam-student-login'),
+    path('staff/login/', StaffLoginView.as_view(), name='exam-staff-login'),
+    path('auth/change-password/', timetable_change_password, name='exam-change-password'),
     
     # User management
     path('profile/', views.UserProfileView.as_view(), name='user-profile'),
