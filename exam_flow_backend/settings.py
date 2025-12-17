@@ -38,6 +38,7 @@ LOCAL_APPS = [
     'exams',
     'questions',
     'patterns',
+    'timetable',  # Timetable management app (uses accounts models)
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS

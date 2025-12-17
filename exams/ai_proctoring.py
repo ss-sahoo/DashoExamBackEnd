@@ -14,6 +14,8 @@ import re
 
 import base64
 
+logger = logging.getLogger(__name__)
+
 # OpenCV import - handle gracefully if not available
 try:
     import cv2
@@ -28,8 +30,6 @@ from .models import (
     QuestionEvaluation
 )
 from accounts.models import User
-
-logger = logging.getLogger(__name__)
 
 
 class AIProctoringSystem:
