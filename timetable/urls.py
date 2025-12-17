@@ -24,6 +24,7 @@ from timetable.views import (
     get_timetable_batch_assignments,
     assign_fixed_slot,
     get_fixed_slots,
+    run_timetable_optimization,
 )
 
 # Import timetable auth and management views from accounts
@@ -114,5 +115,10 @@ urlpatterns = [
     # Optimization Payload API
     # ===========
     path("timetables/<uuid:timetable_id>/payload/", timetable_payload, name="timetable-payload"),
+    
+    # ===========
+    # Optimization Algorithm API
+    # ===========
+    path("timetables/<uuid:timetable_id>/optimize/", run_timetable_optimization, name="run-timetable-optimization"),
 ]
 
