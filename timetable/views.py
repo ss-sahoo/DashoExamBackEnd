@@ -22,6 +22,7 @@ from django.conf import settings
 from accounts.models import Center, Batch, User as AccountUser
 from .optimization import build_full_payload, DAY_MAP_SHORT
 from .models import Timetable, DaySlot, TimetableHoliday, TeacherSlotAvailability, BatchFacultyLoad, FixedSlot, TimetableEntry
+from django.db.models import Q
 from .genetic_algorithm import check_timetable_feasibility_from_start, generate_random_timetable
 from .algorithm_adapter import convert_teachers_to_algorithm_format, convert_batches_to_algorithm_format
 from django.db import transaction
@@ -1916,4 +1917,499 @@ def run_timetable_optimization(request, timetable_id: str):
             },
             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def get_all_batches_timetable(request, timetable_id: str):
+    """
+    Get timetable for all batches in a timetable.
+    
+    Returns timetable organized by batch, showing all slots where each batch has classes.
+    
+    GET /api/timetable/timetables/<timetable_id>/batches/
+    
+    Returns:
+    {
+        "timetable_id": "uuid",
+        "timetable": "Center Name - 2025-01-01 to 2025-03-31",
+        "batches": [
+            {
+                "batch_id": "uuid",
+                "batch_code": "BATCH-001",
+                "batch_name": "Super 30 - Batch A",
+                "program": "Super 30",
+                "slots": {
+                    "mon": [
+                        {
+                            "slot_id": "uuid",
+                            "slot_code": "m1",
+                            "slot_number": 1,
+                            "start_time": "08:00",
+                            "end_time": "09:30",
+                            "subject": "Physics",
+                            "room_number": "101",
+                            "teacher": {
+                                "teacher_code": "TCH-XXXX-001",
+                                "teacher_name": "Teacher Name"
+                            }
+                        }
+                    ],
+                    "tue": [...],
+                    ...
+                },
+                "total_classes": 10
+            }
+        ],
+        "total_batches": 5
+    }
+    """
+    try:
+        timetable = Timetable.objects.select_related('center').get(id=timetable_id)
+    except Timetable.DoesNotExist:
+        return Response(
+            {"detail": f"Timetable with id '{timetable_id}' not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+    
+    # Check permissions
+    user = request.user
+    if user.role == AccountUser.ROLE_ADMIN:
+        if not user.center:
+            return Response(
+                {"detail": "Admin user is not linked to any center."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if timetable.center != user.center:
+            return Response(
+                {"detail": f"You can only view timetables in your center '{user.center.name}'."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+    
+    # Get all batches assigned to this timetable (via BatchFacultyLoad or TimetableEntry)
+    batch_ids = set()
+    
+    # From BatchFacultyLoad
+    batch_ids.update(
+        BatchFacultyLoad.objects.filter(timetable=timetable).values_list('batch_id', flat=True)
+    )
+    
+    # From TimetableEntry
+    batch_ids.update(
+        TimetableEntry.objects.filter(day_slot__timetable=timetable).values_list('batch_id', flat=True)
+    )
+    
+    batches = Batch.objects.filter(id__in=batch_ids).select_related('program').order_by('code')
+    
+    # Get all timetable entries
+    entries = TimetableEntry.objects.filter(
+        day_slot__timetable=timetable
+    ).select_related('day_slot', 'batch').order_by('day_slot__day', 'day_slot__slot_number')
+    
+    # Get all fixed slots (for teacher info)
+    fixed_slots = FixedSlot.objects.filter(
+        timetable=timetable
+    ).select_related('day_slot', 'batch', 'teacher')
+    
+    # Create a map: (day_slot_id, batch_id) -> fixed slot info
+    fixed_slot_map = {}
+    for fs in fixed_slots:
+        key = (fs.day_slot_id, fs.batch_id)
+        fixed_slot_map[key] = {
+            "teacher_code": fs.teacher.teacher_code if fs.teacher else None,
+            "teacher_name": fs.teacher.get_full_name() if fs.teacher else None,
+        }
+    
+    # Day mapping
+    day_key_map = {
+        DaySlot.MONDAY: "mon",
+        DaySlot.TUESDAY: "tue",
+        DaySlot.WEDNESDAY: "wed",
+        DaySlot.THURSDAY: "thu",
+        DaySlot.FRIDAY: "fri",
+        DaySlot.SATURDAY: "sat",
+        DaySlot.SUNDAY: "sun",
+    }
+    
+    # Organize by batch
+    batches_data = []
+    for batch in batches:
+        batch_entries = [e for e in entries if e.batch_id == batch.id]
+        
+        slots_by_day = {
+            "mon": [], "tue": [], "wed": [], "thu": [],
+            "fri": [], "sat": [], "sun": []
+        }
+        
+        for entry in batch_entries:
+            day_key = day_key_map.get(entry.day_slot.day)
+            if day_key:
+                slot_data = {
+                    "slot_id": str(entry.day_slot.id),
+                    "slot_code": entry.day_slot.slot_code,
+                    "slot_number": entry.day_slot.slot_number,
+                    "start_time": entry.day_slot.start_time.strftime("%H:%M"),
+                    "end_time": entry.day_slot.end_time.strftime("%H:%M"),
+                    "subject": entry.subject,
+                    "room_number": entry.room_number or "",
+                }
+                
+                # Add teacher info from fixed slot if available
+                key = (entry.day_slot_id, entry.batch_id)
+                if key in fixed_slot_map:
+                    slot_data["teacher"] = fixed_slot_map[key]
+                else:
+                    slot_data["teacher"] = None
+                
+                slots_by_day[day_key].append(slot_data)
+        
+        batches_data.append({
+            "batch_id": str(batch.id),
+            "batch_code": batch.code,
+            "batch_name": batch.name,
+            "program": batch.program.name if batch.program else "",
+            "slots": slots_by_day,
+            "total_classes": len(batch_entries),
+        })
+    
+    return Response(
+        {
+            "timetable_id": str(timetable.id),
+            "timetable": str(timetable),
+            "from_date": str(timetable.from_date),
+            "to_date": str(timetable.to_date),
+            "batches": batches_data,
+            "total_batches": len(batches_data),
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def get_batch_timetable(request, timetable_id: str, batch_id: str):
+    """
+    Get timetable for a specific batch in a timetable.
+    
+    GET /api/timetable/timetables/<timetable_id>/batches/<batch_id>/
+    
+    Returns:
+    {
+        "timetable_id": "uuid",
+        "batch_id": "uuid",
+        "batch_code": "BATCH-001",
+        "batch_name": "Super 30 - Batch A",
+        "slots": {
+            "mon": [...],
+            "tue": [...],
+            ...
+        },
+        "total_classes": 10
+    }
+    """
+    try:
+        timetable = Timetable.objects.select_related('center').get(id=timetable_id)
+    except Timetable.DoesNotExist:
+        return Response(
+            {"detail": f"Timetable with id '{timetable_id}' not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+    
+    try:
+        batch = Batch.objects.select_related('program').get(id=batch_id)
+    except Batch.DoesNotExist:
+        return Response(
+            {"detail": f"Batch with id '{batch_id}' not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+    
+    # Check permissions
+    user = request.user
+    if user.role == AccountUser.ROLE_ADMIN:
+        if not user.center:
+            return Response(
+                {"detail": "Admin user is not linked to any center."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if timetable.center != user.center:
+            return Response(
+                {"detail": f"You can only view timetables in your center '{user.center.name}'."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+    
+    # Get timetable entries for this batch
+    entries = TimetableEntry.objects.filter(
+        day_slot__timetable=timetable,
+        batch=batch
+    ).select_related('day_slot').order_by('day_slot__day', 'day_slot__slot_number')
+    
+    # Get fixed slots for this batch
+    fixed_slots = FixedSlot.objects.filter(
+        timetable=timetable,
+        batch=batch
+    ).select_related('day_slot', 'teacher')
+    
+    # Create fixed slot map
+    fixed_slot_map = {}
+    for fs in fixed_slots:
+        fixed_slot_map[fs.day_slot_id] = {
+            "teacher_code": fs.teacher.teacher_code if fs.teacher else None,
+            "teacher_name": fs.teacher.get_full_name() if fs.teacher else None,
+            "subject": fs.subject or "",
+        }
+    
+    # Day mapping
+    day_key_map = {
+        DaySlot.MONDAY: "mon",
+        DaySlot.TUESDAY: "tue",
+        DaySlot.WEDNESDAY: "wed",
+        DaySlot.THURSDAY: "thu",
+        DaySlot.FRIDAY: "fri",
+        DaySlot.SATURDAY: "sat",
+        DaySlot.SUNDAY: "sun",
+    }
+    
+    slots_by_day = {
+        "mon": [], "tue": [], "wed": [], "thu": [],
+        "fri": [], "sat": [], "sun": []
+    }
+    
+    for entry in entries:
+        day_key = day_key_map.get(entry.day_slot.day)
+        if day_key:
+            slot_data = {
+                "slot_id": str(entry.day_slot.id),
+                "slot_code": entry.day_slot.slot_code,
+                "slot_number": entry.day_slot.slot_number,
+                "start_time": entry.day_slot.start_time.strftime("%H:%M"),
+                "end_time": entry.day_slot.end_time.strftime("%H:%M"),
+                "subject": entry.subject,
+                "room_number": entry.room_number or "",
+            }
+            
+            # Add teacher info from fixed slot if available
+            if entry.day_slot_id in fixed_slot_map:
+                slot_data["teacher"] = {
+                    "teacher_code": fixed_slot_map[entry.day_slot_id]["teacher_code"],
+                    "teacher_name": fixed_slot_map[entry.day_slot_id]["teacher_name"],
+                }
+                # Override subject if fixed slot has it
+                if fixed_slot_map[entry.day_slot_id]["subject"]:
+                    slot_data["subject"] = fixed_slot_map[entry.day_slot_id]["subject"]
+            else:
+                slot_data["teacher"] = None
+            
+            slots_by_day[day_key].append(slot_data)
+    
+    return Response(
+        {
+            "timetable_id": str(timetable.id),
+            "batch_id": str(batch.id),
+            "batch_code": batch.code,
+            "batch_name": batch.name,
+            "program": batch.program.name if batch.program else "",
+            "slots": slots_by_day,
+            "total_classes": len(entries),
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def get_teacher_timetable(request, timetable_id: str, teacher_id: str = None):
+    """
+    Get timetable for a specific teacher or all teachers in a timetable.
+    
+    GET /api/timetable/timetables/<timetable_id>/teachers/ - Get all teachers timetables
+    GET /api/timetable/timetables/<timetable_id>/teachers/<teacher_id>/ - Get specific teacher timetable
+    
+    Query params:
+    - teacher_code: Filter by teacher code (alternative to teacher_id)
+    
+    Returns:
+    {
+        "timetable_id": "uuid",
+        "teachers": [
+            {
+                "teacher_id": "uuid",
+                "teacher_code": "TCH-XXXX-001",
+                "teacher_name": "Teacher Name",
+                "slots": {
+                    "mon": [
+                        {
+                            "slot_id": "uuid",
+                            "slot_code": "m1",
+                            "slot_number": 1,
+                            "start_time": "08:00",
+                            "end_time": "09:30",
+                            "batch_code": "BATCH-001",
+                            "batch_name": "Super 30 - Batch A",
+                            "subject": "Physics",
+                            "room_number": "101"
+                        }
+                    ],
+                    ...
+                },
+                "total_classes": 10,
+                "batches": ["BATCH-001", "BATCH-002"]
+            }
+        ],
+        "total_teachers": 5
+    }
+    """
+    try:
+        timetable = Timetable.objects.select_related('center').get(id=timetable_id)
+    except Timetable.DoesNotExist:
+        return Response(
+            {"detail": f"Timetable with id '{timetable_id}' not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+    
+    # Check permissions
+    user = request.user
+    if user.role == AccountUser.ROLE_ADMIN:
+        if not user.center:
+            return Response(
+                {"detail": "Admin user is not linked to any center."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if timetable.center != user.center:
+            return Response(
+                {"detail": f"You can only view timetables in your center '{user.center.name}'."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+    
+    # Get teacher(s)
+    teacher_code = request.query_params.get('teacher_code')
+    
+    if teacher_id:
+        try:
+            teachers = [AccountUser.objects.get(id=teacher_id, role=AccountUser.ROLE_TEACHER)]
+        except AccountUser.DoesNotExist:
+            return Response(
+                {"detail": f"Teacher with id '{teacher_id}' not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+    elif teacher_code:
+        try:
+            teachers = [AccountUser.objects.get(
+                teacher_code__iexact=teacher_code,
+                role=AccountUser.ROLE_TEACHER,
+                center=timetable.center
+            )]
+        except AccountUser.DoesNotExist:
+            return Response(
+                {"detail": f"Teacher with code '{teacher_code}' not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+    else:
+        # Get all teachers assigned to this timetable
+        teacher_ids = set()
+        
+        # From BatchFacultyLoad
+        teacher_ids.update(
+            BatchFacultyLoad.objects.filter(timetable=timetable).values_list('teacher_id', flat=True)
+        )
+        
+        # From FixedSlot
+        teacher_ids.update(
+            FixedSlot.objects.filter(
+                timetable=timetable,
+                teacher__isnull=False
+            ).values_list('teacher_id', flat=True)
+        )
+        
+        teachers = AccountUser.objects.filter(
+            id__in=teacher_ids,
+            role=AccountUser.ROLE_TEACHER
+        ).order_by('teacher_code', 'username')
+    
+    # Get all fixed slots for these teachers
+    fixed_slots = FixedSlot.objects.filter(
+        timetable=timetable,
+        teacher__in=teachers
+    ).select_related('day_slot', 'batch', 'teacher')
+    
+    # Get all timetable entries (for batch info)
+    entries = TimetableEntry.objects.filter(
+        day_slot__timetable=timetable
+    ).select_related('day_slot', 'batch')
+    
+    # Create entry map: day_slot_id -> entry
+    entry_map = {e.day_slot_id: e for e in entries}
+    
+    # Day mapping
+    day_key_map = {
+        DaySlot.MONDAY: "mon",
+        DaySlot.TUESDAY: "tue",
+        DaySlot.WEDNESDAY: "wed",
+        DaySlot.THURSDAY: "thu",
+        DaySlot.FRIDAY: "fri",
+        DaySlot.SATURDAY: "sat",
+        DaySlot.SUNDAY: "sun",
+    }
+    
+    teachers_data = []
+    for teacher in teachers:
+        # Get fixed slots for this teacher
+        teacher_fixed_slots = [fs for fs in fixed_slots if fs.teacher_id == teacher.id]
+        
+        slots_by_day = {
+            "mon": [], "tue": [], "wed": [], "thu": [],
+            "fri": [], "sat": [], "sun": []
+        }
+        
+        batches_set = set()
+        
+        for fs in teacher_fixed_slots:
+            day_key = day_key_map.get(fs.day_slot.day)
+            if day_key:
+                # Get entry info if available
+                entry = entry_map.get(fs.day_slot_id)
+                
+                slot_data = {
+                    "slot_id": str(fs.day_slot.id),
+                    "slot_code": fs.day_slot.slot_code,
+                    "slot_number": fs.day_slot.slot_number,
+                    "start_time": fs.day_slot.start_time.strftime("%H:%M"),
+                    "end_time": fs.day_slot.end_time.strftime("%H:%M"),
+                    "batch_code": fs.batch.code,
+                    "batch_name": fs.batch.name,
+                    "subject": fs.subject or (entry.subject if entry else ""),
+                    "room_number": entry.room_number if entry else "",
+                }
+                
+                slots_by_day[day_key].append(slot_data)
+                batches_set.add(fs.batch.code)
+        
+        # Also check BatchFacultyLoad to see which batches this teacher is assigned to
+        faculty_loads = BatchFacultyLoad.objects.filter(
+            timetable=timetable,
+            teacher=teacher
+        ).select_related('batch')
+        
+        for load in faculty_loads:
+            batches_set.add(load.batch.code)
+        
+        teachers_data.append({
+            "teacher_id": str(teacher.id),
+            "teacher_code": teacher.teacher_code or teacher.username,
+            "teacher_name": teacher.get_full_name(),
+            "slots": slots_by_day,
+            "total_classes": len(teacher_fixed_slots),
+            "batches": sorted(list(batches_set)),
+        })
+    
+    return Response(
+        {
+            "timetable_id": str(timetable.id),
+            "timetable": str(timetable),
+            "from_date": str(timetable.from_date),
+            "to_date": str(timetable.to_date),
+            "teachers": teachers_data,
+            "total_teachers": len(teachers_data),
+        },
+        status=status.HTTP_200_OK,
+    )
 
