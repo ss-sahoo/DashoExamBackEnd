@@ -3,6 +3,7 @@ Timetable-specific authentication APIs using JWT tokens.
 Role-aware login endpoints for timetable system.
 """
 
+from typing import Optional, Tuple
 from django.db.models import Q
 from rest_framework import status
 from rest_framework.response import Response
@@ -14,7 +15,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from .models import User
 
 
-def _get_user_by_identifier(identifier: str) -> User | None:
+def _get_user_by_identifier(identifier: str) -> Optional[User]:
     """
     Allow login using username, email, OR teacher_code (for teachers).
     """
@@ -45,7 +46,7 @@ class BaseRoleLoginView(APIView):
     """
 
     permission_classes = [AllowAny]
-    allowed_roles: tuple[str, ...] = ()
+    allowed_roles: Tuple[str, ...] = ()
 
     def post(self, request, *args, **kwargs):
         identifier = request.data.get("username")  # username OR email
