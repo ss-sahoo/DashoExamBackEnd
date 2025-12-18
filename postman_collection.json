@@ -1225,6 +1225,41 @@
       "name": "Timetable - Timetable Core",
       "item": [
         {
+          "name": "Create Timetable with Slots (Admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{timetable_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/admin/timetables/create/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "timetable",
+                "admin",
+                "timetables",
+                "create",
+                ""
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"from_date\": \"2025-01-01\",\n  \"to_date\": \"2025-01-15\",\n  \"free_classes_count\": 0,\n  \"weekly_slots\": {\n    \"d1\": [\n      {\"code\": \"d1_s1\", \"start\": \"08:00\", \"end\": \"09:00\", \"is_free_class\": false}\n    ],\n    \"d2\": [\n      {\"code\": \"d2_s1\", \"start\": \"08:00\", \"end\": \"09:00\", \"is_free_class\": false}\n    ]\n  },\n  \"holidays\": []\n}"
+            },
+            "description": "Admin creates a timetable with date-based slots (D1..Dn) or weekly slots (mon..sun).\n\n- For date-based: keys d1..dN within from_date/to_date range.\n- For weekly: keys mon, tue, wed, thu, fri, sat, sun."
+          }
+        },
+        {
           "name": "List Timetables",
           "request": {
             "method": "GET",
