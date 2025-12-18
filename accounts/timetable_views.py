@@ -36,7 +36,7 @@ def create_center(request):
     
     Payload:
     {
-        "institute_name": "Allen Coaching",  # Will find or create institute
+        "institute_id": 1,  # Institute ID (required)
         "name": "Allen - Jaipur Center",
         "city": "Jaipur",
         "address": "Optional address"
@@ -46,22 +46,25 @@ def create_center(request):
     if not is_super:
         return error_response
     
-    institute_name = request.data.get("institute_name")
+    institute_id = request.data.get("institute_id")
     name = request.data.get("name")
     city = request.data.get("city")
     address = request.data.get("address", "")
     
-    if not institute_name or not name or not city:
+    if not institute_id or not name or not city:
         return Response(
-            {"detail": "institute_name, name, and city are required."},
+            {"detail": "institute_id, name, and city are required."},
             status=status.HTTP_400_BAD_REQUEST,
         )
     
-    # Find or create institute by name
-    institute, created = Institute.objects.get_or_create(
-        name=institute_name,
-        defaults={"head_office_location": city, "contact_email": f"contact@{institute_name.lower().replace(' ', '')}.com"}
-    )
+    # Find institute by ID
+    try:
+        institute = Institute.objects.get(id=institute_id)
+    except Institute.DoesNotExist:
+        return Response(
+            {"detail": f"Institute with id '{institute_id}' not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
     
     try:
         center = Center.objects.create(
@@ -75,7 +78,10 @@ def create_center(request):
                 "id": str(center.id),
                 "name": center.name,
                 "city": center.city,
-                "institute": institute.name,
+                "institute": {
+                    "id": institute.id,
+                    "name": institute.name,
+                },
             },
             status=status.HTTP_201_CREATED,
         )
