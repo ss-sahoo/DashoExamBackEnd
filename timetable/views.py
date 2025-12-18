@@ -16,7 +16,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework import status
-from datetime import datetime
+from datetime import datetime, timedelta
 from django.conf import settings
 
 from accounts.models import Center, Batch, User as AccountUser
@@ -163,7 +163,7 @@ def create_timetable_with_slots(request):
         description=data.get("description", ""),
     )
 
-    # Map day keys to DaySlot constants
+    # Map legacy weekly day keys to DaySlot constants
     day_map = {
         "mon": DaySlot.MONDAY,
         "tue": DaySlot.TUESDAY,
@@ -174,10 +174,40 @@ def create_timetable_with_slots(request):
         "sun": DaySlot.SUNDAY,
     }
 
+    # Helper to compute weekday constant from an actual date
+    weekday_constants = [
+        DaySlot.MONDAY,
+        DaySlot.TUESDAY,
+        DaySlot.WEDNESDAY,
+        DaySlot.THURSDAY,
+        DaySlot.FRIDAY,
+        DaySlot.SATURDAY,
+        DaySlot.SUNDAY,
+    ]
+
+    total_days = (to_date - from_date).days + 1
+
     created_slots = 0
     for day_key, slots in weekly_slots.items():
-        day_const = day_map.get(day_key.lower())
-        if not day_const:
+        key_lower = str(day_key).lower()
+
+        # Mode 1: legacy weekly timetable using mon/tue/...
+        if key_lower in day_map:
+            day_const = day_map[key_lower]
+            day_index = None
+            actual_date = None
+        # Mode 2: date-based timetable using D1, D2, ... within [from_date, to_date]
+        elif key_lower.startswith("d") and key_lower[1:].isdigit():
+            idx = int(key_lower[1:])
+            if idx < 1 or idx > total_days:
+                # Ignore invalid indices outside timetable range
+                continue
+            day_index = idx
+            actual_date = from_date + timedelta(days=idx - 1)
+            weekday_idx = actual_date.weekday()  # 0 = Monday
+            day_const = weekday_constants[weekday_idx]
+        else:
+            # Unknown day key; skip
             continue
 
         slot_number = 0
@@ -200,6 +230,8 @@ def create_timetable_with_slots(request):
             DaySlot.objects.create(
                 timetable=timetable,
                 day=day_const,
+                day_index=day_index,
+                actual_date=actual_date,
                 slot_code=code,
                 slot_number=slot_number,
                 start_time=start_time,
@@ -344,42 +376,46 @@ def get_timetable_slots(request, timetable_id: str):
             )
     
     # Get all slots for this timetable
-    day_slots = DaySlot.objects.filter(timetable=timetable).order_by("day", "slot_number")
-    
-    # Organize by day
-    slots_by_day = {
-        "mon": [],
-        "tue": [],
-        "wed": [],
-        "thu": [],
-        "fri": [],
-        "sat": [],
-        "sun": [],
-    }
-    
-    day_key_map = {
-        DaySlot.MONDAY: "mon",
-        DaySlot.TUESDAY: "tue",
-        DaySlot.WEDNESDAY: "wed",
-        DaySlot.THURSDAY: "thu",
-        DaySlot.FRIDAY: "fri",
-        DaySlot.SATURDAY: "sat",
-        DaySlot.SUNDAY: "sun",
-    }
+    day_slots = DaySlot.objects.filter(timetable=timetable).order_by("day_index", "day", "slot_number")
+
+    # Organize by logical day key
+    slots_by_day = {}
     
     total_slots = 0
     for slot in day_slots:
-        day_key = day_key_map.get(slot.day)
-        if day_key:
-            slots_by_day[day_key].append({
-                "id": str(slot.id),
-                "code": slot.slot_code,
-                "slot_number": slot.slot_number,
-                "start_time": slot.start_time.strftime("%H:%M"),
-                "end_time": slot.end_time.strftime("%H:%M"),
-                "is_free_class": slot.is_free_class,
-            })
-            total_slots += 1
+        # If day_index is set, expose D1, D2, ...; otherwise fall back to weekly day keys
+        if slot.day_index:
+            day_key = f"d{slot.day_index}"
+        else:
+            if slot.day == DaySlot.MONDAY:
+                day_key = "mon"
+            elif slot.day == DaySlot.TUESDAY:
+                day_key = "tue"
+            elif slot.day == DaySlot.WEDNESDAY:
+                day_key = "wed"
+            elif slot.day == DaySlot.THURSDAY:
+                day_key = "thu"
+            elif slot.day == DaySlot.FRIDAY:
+                day_key = "fri"
+            elif slot.day == DaySlot.SATURDAY:
+                day_key = "sat"
+            elif slot.day == DaySlot.SUNDAY:
+                day_key = "sun"
+            else:
+                continue
+
+        slots_by_day.setdefault(day_key, [])
+        slots_by_day[day_key].append({
+            "id": str(slot.id),
+            "code": slot.slot_code,
+            "slot_number": slot.slot_number,
+            "start_time": slot.start_time.strftime("%H:%M"),
+            "end_time": slot.end_time.strftime("%H:%M"),
+            "is_free_class": slot.is_free_class,
+            "day_index": slot.day_index,
+            "actual_date": str(slot.actual_date) if slot.actual_date else None,
+        })
+        total_slots += 1
     
     return Response(
         {
@@ -2020,48 +2056,57 @@ def get_all_batches_timetable(request, timetable_id: str):
             "teacher_name": fs.teacher.get_full_name() if fs.teacher else None,
         }
     
-    # Day mapping
-    day_key_map = {
-        DaySlot.MONDAY: "mon",
-        DaySlot.TUESDAY: "tue",
-        DaySlot.WEDNESDAY: "wed",
-        DaySlot.THURSDAY: "thu",
-        DaySlot.FRIDAY: "fri",
-        DaySlot.SATURDAY: "sat",
-        DaySlot.SUNDAY: "sun",
-    }
+    # Day mapping helper: supports both weekly (mon..sun) and date-based (d1..dN)
+    def _day_key_for_slot(slot: DaySlot) -> str:
+        if slot.day_index:
+            return f"d{slot.day_index}"
+        if slot.day == DaySlot.MONDAY:
+            return "mon"
+        if slot.day == DaySlot.TUESDAY:
+            return "tue"
+        if slot.day == DaySlot.WEDNESDAY:
+            return "wed"
+        if slot.day == DaySlot.THURSDAY:
+            return "thu"
+        if slot.day == DaySlot.FRIDAY:
+            return "fri"
+        if slot.day == DaySlot.SATURDAY:
+            return "sat"
+        if slot.day == DaySlot.SUNDAY:
+            return "sun"
+        return "unknown"
     
     # Organize by batch
     batches_data = []
     for batch in batches:
         batch_entries = [e for e in entries if e.batch_id == batch.id]
         
-        slots_by_day = {
-            "mon": [], "tue": [], "wed": [], "thu": [],
-            "fri": [], "sat": [], "sun": []
-        }
+        slots_by_day = {}
         
         for entry in batch_entries:
-            day_key = day_key_map.get(entry.day_slot.day)
-            if day_key:
-                slot_data = {
-                    "slot_id": str(entry.day_slot.id),
-                    "slot_code": entry.day_slot.slot_code,
-                    "slot_number": entry.day_slot.slot_number,
-                    "start_time": entry.day_slot.start_time.strftime("%H:%M"),
-                    "end_time": entry.day_slot.end_time.strftime("%H:%M"),
-                    "subject": entry.subject,
-                    "room_number": entry.room_number or "",
-                }
-                
-                # Add teacher info from fixed slot if available
-                key = (entry.day_slot_id, entry.batch_id)
-                if key in fixed_slot_map:
-                    slot_data["teacher"] = fixed_slot_map[key]
-                else:
-                    slot_data["teacher"] = None
-                
-                slots_by_day[day_key].append(slot_data)
+            day_key = _day_key_for_slot(entry.day_slot)
+            if day_key == "unknown":
+                continue
+            slot_data = {
+                "slot_id": str(entry.day_slot.id),
+                "slot_code": entry.day_slot.slot_code,
+                "slot_number": entry.day_slot.slot_number,
+                "start_time": entry.day_slot.start_time.strftime("%H:%M"),
+                "end_time": entry.day_slot.end_time.strftime("%H:%M"),
+                "subject": entry.subject,
+                "room_number": entry.room_number or "",
+                "day_index": entry.day_slot.day_index,
+                "actual_date": str(entry.day_slot.actual_date) if entry.day_slot.actual_date else None,
+            }
+            
+            # Add teacher info from fixed slot if available
+            key = (entry.day_slot_id, entry.batch_id)
+            if key in fixed_slot_map:
+                slot_data["teacher"] = fixed_slot_map[key]
+            else:
+                slot_data["teacher"] = None
+            
+            slots_by_day.setdefault(day_key, []).append(slot_data)
         
         batches_data.append({
             "batch_id": str(batch.id),
@@ -2158,48 +2203,57 @@ def get_batch_timetable(request, timetable_id: str, batch_id: str):
             "subject": fs.subject or "",
         }
     
-    # Day mapping
-    day_key_map = {
-        DaySlot.MONDAY: "mon",
-        DaySlot.TUESDAY: "tue",
-        DaySlot.WEDNESDAY: "wed",
-        DaySlot.THURSDAY: "thu",
-        DaySlot.FRIDAY: "fri",
-        DaySlot.SATURDAY: "sat",
-        DaySlot.SUNDAY: "sun",
-    }
+    # Day mapping helper: supports both weekly (mon..sun) and date-based (d1..dN)
+    def _day_key_for_slot(slot: DaySlot) -> str:
+        if slot.day_index:
+            return f"d{slot.day_index}"
+        if slot.day == DaySlot.MONDAY:
+            return "mon"
+        if slot.day == DaySlot.TUESDAY:
+            return "tue"
+        if slot.day == DaySlot.WEDNESDAY:
+            return "wed"
+        if slot.day == DaySlot.THURSDAY:
+            return "thu"
+        if slot.day == DaySlot.FRIDAY:
+            return "fri"
+        if slot.day == DaySlot.SATURDAY:
+            return "sat"
+        if slot.day == DaySlot.SUNDAY:
+            return "sun"
+        return "unknown"
     
-    slots_by_day = {
-        "mon": [], "tue": [], "wed": [], "thu": [],
-        "fri": [], "sat": [], "sun": []
-    }
+    slots_by_day = {}
     
     for entry in entries:
-        day_key = day_key_map.get(entry.day_slot.day)
-        if day_key:
-            slot_data = {
-                "slot_id": str(entry.day_slot.id),
-                "slot_code": entry.day_slot.slot_code,
-                "slot_number": entry.day_slot.slot_number,
-                "start_time": entry.day_slot.start_time.strftime("%H:%M"),
-                "end_time": entry.day_slot.end_time.strftime("%H:%M"),
-                "subject": entry.subject,
-                "room_number": entry.room_number or "",
+        day_key = _day_key_for_slot(entry.day_slot)
+        if day_key == "unknown":
+            continue
+        slot_data = {
+            "slot_id": str(entry.day_slot.id),
+            "slot_code": entry.day_slot.slot_code,
+            "slot_number": entry.day_slot.slot_number,
+            "start_time": entry.day_slot.start_time.strftime("%H:%M"),
+            "end_time": entry.day_slot.end_time.strftime("%H:%M"),
+            "subject": entry.subject,
+            "room_number": entry.room_number or "",
+            "day_index": entry.day_slot.day_index,
+            "actual_date": str(entry.day_slot.actual_date) if entry.day_slot.actual_date else None,
+        }
+        
+        # Add teacher info from fixed slot if available
+        if entry.day_slot_id in fixed_slot_map:
+            slot_data["teacher"] = {
+                "teacher_code": fixed_slot_map[entry.day_slot_id]["teacher_code"],
+                "teacher_name": fixed_slot_map[entry.day_slot_id]["teacher_name"],
             }
-            
-            # Add teacher info from fixed slot if available
-            if entry.day_slot_id in fixed_slot_map:
-                slot_data["teacher"] = {
-                    "teacher_code": fixed_slot_map[entry.day_slot_id]["teacher_code"],
-                    "teacher_name": fixed_slot_map[entry.day_slot_id]["teacher_name"],
-                }
-                # Override subject if fixed slot has it
-                if fixed_slot_map[entry.day_slot_id]["subject"]:
-                    slot_data["subject"] = fixed_slot_map[entry.day_slot_id]["subject"]
-            else:
-                slot_data["teacher"] = None
-            
-            slots_by_day[day_key].append(slot_data)
+            # Override subject if fixed slot has it
+            if fixed_slot_map[entry.day_slot_id]["subject"]:
+                slot_data["subject"] = fixed_slot_map[entry.day_slot_id]["subject"]
+        else:
+            slot_data["teacher"] = None
+        
+        slots_by_day.setdefault(day_key, []).append(slot_data)
     
     return Response(
         {
@@ -2339,49 +2393,58 @@ def get_teacher_timetable(request, timetable_id: str, teacher_id: str = None):
     # Create entry map: day_slot_id -> entry
     entry_map = {e.day_slot_id: e for e in entries}
     
-    # Day mapping
-    day_key_map = {
-        DaySlot.MONDAY: "mon",
-        DaySlot.TUESDAY: "tue",
-        DaySlot.WEDNESDAY: "wed",
-        DaySlot.THURSDAY: "thu",
-        DaySlot.FRIDAY: "fri",
-        DaySlot.SATURDAY: "sat",
-        DaySlot.SUNDAY: "sun",
-    }
+    # Day mapping helper: supports both weekly (mon..sun) and date-based (d1..dN)
+    def _day_key_for_slot(slot: DaySlot) -> str:
+        if slot.day_index:
+            return f"d{slot.day_index}"
+        if slot.day == DaySlot.MONDAY:
+            return "mon"
+        if slot.day == DaySlot.TUESDAY:
+            return "tue"
+        if slot.day == DaySlot.WEDNESDAY:
+            return "wed"
+        if slot.day == DaySlot.THURSDAY:
+            return "thu"
+        if slot.day == DaySlot.FRIDAY:
+            return "fri"
+        if slot.day == DaySlot.SATURDAY:
+            return "sat"
+        if slot.day == DaySlot.SUNDAY:
+            return "sun"
+        return "unknown"
     
     teachers_data = []
     for teacher in teachers:
         # Get fixed slots for this teacher
         teacher_fixed_slots = [fs for fs in fixed_slots if fs.teacher_id == teacher.id]
         
-        slots_by_day = {
-            "mon": [], "tue": [], "wed": [], "thu": [],
-            "fri": [], "sat": [], "sun": []
-        }
+        slots_by_day = {}
         
         batches_set = set()
         
         for fs in teacher_fixed_slots:
-            day_key = day_key_map.get(fs.day_slot.day)
-            if day_key:
-                # Get entry info if available
-                entry = entry_map.get(fs.day_slot_id)
-                
-                slot_data = {
-                    "slot_id": str(fs.day_slot.id),
-                    "slot_code": fs.day_slot.slot_code,
-                    "slot_number": fs.day_slot.slot_number,
-                    "start_time": fs.day_slot.start_time.strftime("%H:%M"),
-                    "end_time": fs.day_slot.end_time.strftime("%H:%M"),
-                    "batch_code": fs.batch.code,
-                    "batch_name": fs.batch.name,
-                    "subject": fs.subject or (entry.subject if entry else ""),
-                    "room_number": entry.room_number if entry else "",
-                }
-                
-                slots_by_day[day_key].append(slot_data)
-                batches_set.add(fs.batch.code)
+            day_key = _day_key_for_slot(fs.day_slot)
+            if day_key == "unknown":
+                continue
+            # Get entry info if available
+            entry = entry_map.get(fs.day_slot_id)
+            
+            slot_data = {
+                "slot_id": str(fs.day_slot.id),
+                "slot_code": fs.day_slot.slot_code,
+                "slot_number": fs.day_slot.slot_number,
+                "start_time": fs.day_slot.start_time.strftime("%H:%M"),
+                "end_time": fs.day_slot.end_time.strftime("%H:%M"),
+                "batch_code": fs.batch.code,
+                "batch_name": fs.batch.name,
+                "subject": fs.subject or (entry.subject if entry else ""),
+                "room_number": entry.room_number if entry else "",
+                "day_index": fs.day_slot.day_index,
+                "actual_date": str(fs.day_slot.actual_date) if fs.day_slot.actual_date else None,
+            }
+            
+            slots_by_day.setdefault(day_key, []).append(slot_data)
+            batches_set.add(fs.batch.code)
         
         # Also check BatchFacultyLoad to see which batches this teacher is assigned to
         faculty_loads = BatchFacultyLoad.objects.filter(
