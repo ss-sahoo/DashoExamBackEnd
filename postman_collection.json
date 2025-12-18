@@ -1056,6 +1056,41 @@
             },
             "description": "Admin adds existing student to a batch."
           }
+        },
+        {
+          "name": "Create Batch (Admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{timetable_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/admin/batches/create/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "timetable",
+                "admin",
+                "batches",
+                "create",
+                ""
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"program_id\": \"{{program_id}}\",\n  \"code\": \"BATCH-001\",\n  \"name\": \"JEE Batch 1\",\n  \"start_date\": \"2025-01-01\",\n  \"end_date\": \"2025-03-31\"\n}"
+            },
+            "description": "Admin creates a Batch under a Program in their center. Requires a valid program_id."
+          }
         }
       ]
     },
@@ -1131,6 +1166,47 @@
           }
         },
         {
+          "name": "List Center Programs",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{timetable_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/centers/{{center_id}}/programs/?search={{search}}&is_active={{is_active}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "timetable",
+                "centers",
+                "{{center_id}}",
+                "programs",
+                ""
+              ],
+              "query": [
+                {
+                  "key": "search",
+                  "value": "{{search}}",
+                  "description": "Search by program name",
+                  "disabled": true
+                },
+                {
+                  "key": "is_active",
+                  "value": "{{is_active}}",
+                  "description": "Filter by active status: true/false",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "List all programs in a center. Query params: search (search by name), is_active (filter by active status)."
+          }
+        },
+        {
           "name": "List Center Batches",
           "request": {
             "method": "GET",
@@ -1152,9 +1228,23 @@
                 "{{center_id}}",
                 "batches",
                 ""
+              ],
+              "query": [
+                {
+                  "key": "program_id",
+                  "value": "{{program_id}}",
+                  "description": "Filter batches by program ID",
+                  "disabled": true
+                },
+                {
+                  "key": "search",
+                  "value": "{{search}}",
+                  "description": "Search by batch code or name",
+                  "disabled": true
+                }
               ]
             },
-            "description": "List all batches in a center."
+            "description": "List all batches in a center. Query params: program_id (filter by program), search (search by batch code or name)."
           }
         },
         {
@@ -1224,6 +1314,41 @@
     {
       "name": "Timetable - Timetable Core",
       "item": [
+        {
+          "name": "Create Timetable with Slots (Admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{timetable_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/admin/timetables/create/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "timetable",
+                "admin",
+                "timetables",
+                "create",
+                ""
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"from_date\": \"2025-01-01\",\n  \"to_date\": \"2025-01-15\",\n  \"free_classes_count\": 0,\n  \"weekly_slots\": {\n    \"d1\": [\n      {\"code\": \"d1_s1\", \"start\": \"08:00\", \"end\": \"09:00\", \"is_free_class\": false}\n    ],\n    \"d2\": [\n      {\"code\": \"d2_s1\", \"start\": \"08:00\", \"end\": \"09:00\", \"is_free_class\": false}\n    ]\n  },\n  \"holidays\": []\n}"
+            },
+            "description": "Admin creates a timetable with date-based slots (D1..Dn) or weekly slots (mon..sun).\n\n- For date-based: keys d1..dN within from_date/to_date range.\n- For weekly: keys mon, tue, wed, thu, fri, sat, sun."
+          }
+        },
         {
           "name": "List Timetables",
           "request": {
@@ -1425,6 +1550,346 @@
               ]
             },
             "description": "Get the number of free classes for a timetable."
+          }
+        },
+        {
+          "name": "Set Teacher Slot Availability",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{timetable_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/admin/timetables/teacher-availability/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "timetable",
+                "admin",
+                "timetables",
+                "teacher-availability",
+                ""
+              ]
+            },
+            "description": "Admin sets weekly teacher slot availability for a timetable.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"timetable_id\": \"{{timetable_id}}\", \"day_slot_id\": \"{{day_slot_id}}\", \"teacher_code\": \"TCH-XXXX-001\", \"is_available\": true}"
+            }
+          }
+        },
+        {
+          "name": "Get Teacher Availability",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{timetable_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/timetables/{{timetable_id}}/teacher-availability/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "timetable",
+                "timetables",
+                "{{timetable_id}}",
+                "teacher-availability",
+                ""
+              ]
+            },
+            "description": "Get weekly teacher availability for a timetable."
+          }
+        },
+        {
+          "name": "Assign Batch to Timetable",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{timetable_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/admin/timetables/assign-batch/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "timetable",
+                "admin",
+                "timetables",
+                "assign-batch",
+                ""
+              ]
+            },
+            "description": "Admin assigns a batch to a timetable.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"timetable_id\": \"{{timetable_id}}\", \"batch_code\": \"BATCH-001\"}"
+            }
+          }
+        },
+        {
+          "name": "Assign Teacher to Batch",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{timetable_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/admin/timetables/assign-teacher/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "timetable",
+                "admin",
+                "timetables",
+                "assign-teacher",
+                ""
+              ]
+            },
+            "description": "Admin assigns teacher to batch with load configuration.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"timetable_id\": \"{{timetable_id}}\", \"batch_code\": \"BATCH-001\", \"teacher_code\": \"TCH-XXXX-001\", \"total_lectures\": 8, \"min_lectures_per_day\": 1, \"max_lectures_per_day\": 2}"
+            }
+          }
+        },
+        {
+          "name": "Get Timetable Batch Assignments",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{timetable_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/timetables/{{timetable_id}}/batch-assignments/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "timetable",
+                "timetables",
+                "{{timetable_id}}",
+                "batch-assignments",
+                ""
+              ]
+            },
+            "description": "Get all batch-teacher assignments for a timetable."
+          }
+        },
+        {
+          "name": "Assign Fixed Slot",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{timetable_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/admin/timetables/fixed-slots/assign/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "timetable",
+                "admin",
+                "timetables",
+                "fixed-slots",
+                "assign",
+                ""
+              ]
+            },
+            "description": "Admin fixes a batch+teacher+subject into a specific day_slot.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"timetable_id\": \"{{timetable_id}}\", \"day_slot_id\": \"{{day_slot_id}}\", \"batch_code\": \"BATCH-001\", \"teacher_code\": \"TCH-XXXX-001\", \"subject\": \"Physics\"}"
+            }
+          }
+        },
+        {
+          "name": "Get Fixed Slots",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{timetable_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/timetables/{{timetable_id}}/fixed-slots/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "timetable",
+                "timetables",
+                "{{timetable_id}}",
+                "fixed-slots",
+                ""
+              ]
+            },
+            "description": "Get all fixed (locked) slots for a timetable."
+          }
+        },
+        {
+          "name": "Get All Batches Timetable",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{timetable_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/timetables/{{timetable_id}}/batches/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "timetable",
+                "timetables",
+                "{{timetable_id}}",
+                "batches",
+                ""
+              ]
+            },
+            "description": "Get timetable for all batches (grouped by batch, day-wise d1..dN or mon..sun)."
+          }
+        },
+        {
+          "name": "Get Batch Timetable",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{timetable_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/timetables/{{timetable_id}}/batches/{{batch_id}}/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "timetable",
+                "timetables",
+                "{{timetable_id}}",
+                "batches",
+                "{{batch_id}}",
+                ""
+              ]
+            },
+            "description": "Get timetable for a single batch."
+          }
+        },
+        {
+          "name": "Get All Teachers Timetable",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{timetable_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/timetables/{{timetable_id}}/teachers/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "timetable",
+                "timetables",
+                "{{timetable_id}}",
+                "teachers",
+                ""
+              ]
+            },
+            "description": "Get timetables for all teachers in a timetable."
+          }
+        },
+        {
+          "name": "Get Teacher Timetable",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{timetable_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/timetables/{{timetable_id}}/teachers/{{teacher_id}}/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "timetable",
+                "timetables",
+                "{{timetable_id}}",
+                "teachers",
+                "{{teacher_id}}",
+                ""
+              ],
+              "query": [
+                {
+                  "key": "teacher_code",
+                  "value": "{{teacher_code}}",
+                  "description": "Alternative to teacher_id",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Get timetable for a specific teacher. Optional teacher_code query param."
           }
         }
       ]
