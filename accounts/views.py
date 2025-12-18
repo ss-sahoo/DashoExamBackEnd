@@ -44,18 +44,63 @@ def user_registration_view(request):
 @permission_classes([permissions.AllowAny])
 @csrf_exempt
 def user_login_view(request):
-    """User login with email and password"""
-    serializer = UserLoginSerializer(data=request.data)
-    serializer.is_valid(raise_exception=True)
+    """
+    Generic login endpoint - supports username, email, or teacher_code.
+    Same authentication style as timetable role-based logins.
+    Returns JWT tokens in the same format.
+    """
+    from django.db.models import Q
+    from rest_framework_simplejwt.tokens import RefreshToken
     
-    user = serializer.validated_data['user']
-    login(request, user)
-    tokens = get_tokens_for_user(user)
+    identifier = request.data.get('email') or request.data.get('username')
+    password = request.data.get('password')
+    
+    if not identifier or not password:
+        return Response({
+            'detail': 'Both username/email and password are required.'
+        }, status=status.HTTP_400_BAD_REQUEST)
+    
+    # Get user by username, email, or teacher_code (same as timetable)
+    try:
+        user = User.objects.get(
+            Q(username__iexact=identifier) 
+            | Q(email__iexact=identifier)
+            | Q(teacher_code__iexact=identifier)
+        )
+    except User.DoesNotExist:
+        return Response({
+            'detail': 'Invalid credentials.'
+        }, status=status.HTTP_401_UNAUTHORIZED)
+    
+    # Check password
+    if not user.check_password(password):
+        return Response({
+            'detail': 'Invalid credentials.'
+        }, status=status.HTTP_401_UNAUTHORIZED)
+    
+    # Check if user is active
+    if not user.is_active:
+        return Response({
+            'detail': 'User account is disabled.'
+        }, status=status.HTTP_403_FORBIDDEN)
+    
+    # Generate JWT tokens (same format as timetable)
+    refresh = RefreshToken.for_user(user)
+    tokens = {
+        "refresh": str(refresh),
+        "access": str(refresh.access_token),
+    }
     
     return Response({
-        'user': UserSerializer(user).data,
-        'access': tokens['access'],
-        'refresh': tokens['refresh'],
+        'tokens': tokens,
+        'user': {
+            'id': str(user.id),
+            'username': user.username,
+            'email': user.email,
+            'full_name': user.get_full_name(),
+            'role': user.role,
+            'center_id': user.center_id,
+        },
         'message': 'Login successful'
     })
 
