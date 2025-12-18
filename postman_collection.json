@@ -625,9 +625,9 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"institute_name\": \"Allen Coaching\",\n  \"name\": \"Allen - Jaipur Center\",\n  \"city\": \"Jaipur\",\n  \"address\": \"123 Main Street, Jaipur\"\n}"
+              "raw": "{\n  \"institute_id\": {{institute_id}},\n  \"name\": \"Allen - Jaipur Center\",\n  \"city\": \"Jaipur\",\n  \"address\": \"123 Main Street, Jaipur\"\n}"
             },
-            "description": "Creates a Center under an Institute. Auto-creates Institute if needed."
+            "description": "Creates a Center under an Institute.\n\n**Required fields:**\n- `institute_id` (integer): ID of the institute\n- `name` (string): Name of the center\n- `city` (string): City where center is located\n\n**Optional fields:**\n- `address` (string): Full address of the center\n\n**Note:** You must first create the institute using the Create Institute endpoint, then use its ID here."
           }
         },
         {
@@ -730,9 +730,9 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"center_name\": \"Allen - Jaipur Center\",\n  \"name\": \"Student Name\",\n  \"email\": \"student@example.com\",\n  \"phone_number\": \"9876543213\"\n}"
+              "raw": "{\n  \"center_id\": \"{{center_id}}\",\n  \"name\": \"Student Name\",\n  \"email\": \"student@example.com\",\n  \"phone_number\": \"9876543213\"\n}"
             },
-            "description": "Creates a Student with auto-generated username/password and enrollment."
+            "description": "Creates a Student with auto-generated username/password and enrollment.\n\n**Note:** This endpoint actually requires `batch_code` instead of `center_id`. The payload should be:\n```json\n{\n  \"batch_code\": \"BATCH-001\",\n  \"name\": \"Student Name\",\n  \"email\": \"student@example.com\",\n  \"phone_number\": \"9876543213\",\n  \"date_of_birth\": \"2010-05-15\"\n}\n```\n\nIf you need to create a student by center, you'll need to first get/create a batch for that center."
           }
         },
         {
