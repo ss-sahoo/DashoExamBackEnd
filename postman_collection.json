@@ -504,6 +504,95 @@
       ]
     },
     {
+      "name": "Timetable - Institute Management",
+      "item": [
+        {
+          "name": "Create Institute",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{timetable_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/auth/institutes/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "institutes",
+                ""
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Allen Coaching\",\n  \"domain\": \"allencoaching.edu\",\n  \"description\": \"Leading coaching institute\",\n  \"address\": \"123 Education Street\",\n  \"contact_email\": \"contact@allencoaching.com\",\n  \"contact_phone\": \"+91-1234567890\",\n  \"website\": \"https://www.allencoaching.com\"\n}"
+            },
+            "description": "Create a new Institute. Requires authentication. The creator becomes the institute admin.\n\n**Note:** Institute can also be auto-created when creating a Center (if institute_name doesn't exist)."
+          }
+        },
+        {
+          "name": "List Institutes",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{timetable_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/auth/institutes/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "institutes",
+                ""
+              ]
+            },
+            "description": "List all active institutes (public endpoint, no auth required for GET)."
+          }
+        },
+        {
+          "name": "Get Institute Details",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{timetable_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/auth/institutes/{{institute_id}}/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "institutes",
+                "{{institute_id}}",
+                ""
+              ]
+            },
+            "description": "Get institute details by ID."
+          }
+        }
+      ]
+    },
+    {
       "name": "Timetable - Super Admin Management",
       "item": [
         {

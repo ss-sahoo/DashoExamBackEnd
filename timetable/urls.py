@@ -27,6 +27,9 @@ from timetable.views import (
     run_timetable_optimization,
     set_free_classes_count,
     get_free_classes_count,
+    get_all_batches_timetable,
+    get_batch_timetable,
+    get_teacher_timetable,
 )
 
 # Import timetable auth and management views from accounts
@@ -149,5 +152,17 @@ urlpatterns = [
     # Optimization Algorithm API
     # ===========
     path("timetables/<uuid:timetable_id>/optimize/", run_timetable_optimization, name="run-timetable-optimization"),
+    
+    # ===========
+    # Batch-wise Timetable GET APIs
+    # ===========
+    path("timetables/<uuid:timetable_id>/batches/", get_all_batches_timetable, name="get-all-batches-timetable"),
+    path("timetables/<uuid:timetable_id>/batches/<uuid:batch_id>/", get_batch_timetable, name="get-batch-timetable"),
+    
+    # ===========
+    # Teacher-wise Timetable GET APIs
+    # ===========
+    path("timetables/<uuid:timetable_id>/teachers/", get_teacher_timetable, name="get-all-teachers-timetable"),
+    path("timetables/<uuid:timetable_id>/teachers/<uuid:teacher_id>/", get_teacher_timetable, name="get-teacher-timetable"),
 ]
 
