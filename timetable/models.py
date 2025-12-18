@@ -134,11 +134,13 @@ class DaySlot(TimeStampedModel):
     )
     
     day = models.CharField(
-        max_length=3,
-        choices=DAY_CHOICES,
+        max_length=10,
+        blank=True,
+        null=True,
         help_text=(
-            "Day of the week (Monday, Tuesday, etc.) for legacy weekly timetables. "
-            "For date-based timetables that use D1..Dn, this is derived from actual_date."
+            "Day of the week (MON, TUE, etc.) for legacy weekly timetables. "
+            "For date-based timetables, this is derived from actual_date. "
+            "Can be null for date-based timetables where day_index is used."
         ),
     )
 
@@ -199,13 +201,43 @@ class DaySlot(TimeStampedModel):
     )
 
     class Meta:
-        unique_together = ("timetable", "day", "slot_number")
-        ordering = ["timetable", "day", "slot_number"]
+        # For date-based timetables, use day_index; for weekly, use day
+        # We can't have both in unique_together, so we'll use slot_code as unique identifier
+        ordering = ["timetable", "day_index", "day", "slot_number"]
         verbose_name = "Day Slot"
         verbose_name_plural = "Day Slots"
+        # Add index for better query performance
+        indexes = [
+            models.Index(fields=["timetable", "day_index", "slot_number"]),
+            models.Index(fields=["timetable", "day", "slot_number"]),
+        ]
 
     def __str__(self) -> str:
-        return f"{self.get_day_display()} - Slot {self.slot_number} ({self.start_time} to {self.end_time})"
+        if self.day_index:
+            # Date-based timetable
+            day_label = f"D{self.day_index}"
+            if self.actual_date:
+                day_label += f" ({self.actual_date})"
+        elif self.day:
+            # Weekly timetable
+            day_label = self.get_day_display() if hasattr(self, 'get_day_display') else self.day
+        else:
+            day_label = "Unknown"
+        
+        return f"{day_label} - Slot {self.slot_number} ({self.start_time} to {self.end_time})"
+    
+    def get_day_display(self):
+        """Get human-readable day name for weekly timetables."""
+        day_map = {
+            self.MONDAY: "Monday",
+            self.TUESDAY: "Tuesday",
+            self.WEDNESDAY: "Wednesday",
+            self.THURSDAY: "Thursday",
+            self.FRIDAY: "Friday",
+            self.SATURDAY: "Saturday",
+            self.SUNDAY: "Sunday",
+        }
+        return day_map.get(self.day, self.day or "Unknown")
 
 
 class TimetableEntry(TimeStampedModel):

@@ -51,6 +51,7 @@ from accounts.timetable_views import (
 from accounts.center_views import (
     list_centers,
     get_center,
+    list_center_programs,
     list_center_batches,
     list_center_users,
     list_center_timetables,
@@ -83,6 +84,7 @@ urlpatterns = [
     # ===========
     path("centers/", list_centers, name="list-centers"),
     path("centers/<uuid:center_id>/", get_center, name="get-center"),
+    path("centers/<uuid:center_id>/programs/", list_center_programs, name="list-center-programs"),
     path("centers/<uuid:center_id>/batches/", list_center_batches, name="list-center-batches"),
     path("centers/<uuid:center_id>/users/", list_center_users, name="list-center-users"),
     path("centers/<uuid:center_id>/timetables/", list_center_timetables, name="list-center-timetables"),

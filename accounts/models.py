@@ -330,7 +330,9 @@ class Batch(TimeStampedModel):
         Program,
         on_delete=models.CASCADE,
         related_name="batches",
-        help_text="Program under which this batch runs.",
+        null=True,
+        blank=True,
+        help_text="Optional program under which this batch runs.",
     )
     code = models.CharField(
         max_length=50,
@@ -360,11 +362,12 @@ class Batch(TimeStampedModel):
     )
 
     class Meta:
-        unique_together = ("program", "name")
         ordering = ["program__name", "name"]
 
     def __str__(self) -> str:
-        return f"{self.name} ({self.program.name})"
+        if self.program:
+            return f"{self.name} ({self.program.name})"
+        return self.name
 
 
 class Enrollment(TimeStampedModel):

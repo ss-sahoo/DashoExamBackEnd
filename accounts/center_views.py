@@ -116,6 +116,71 @@ def get_center(request, center_id: str):
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
+def list_center_programs(request, center_id: str):
+    """
+    GET /api/timetable/centers/<center_id>/programs/
+    
+    List all programs in a center.
+    
+    Query params:
+    - search: Search by program name
+    - is_active: Filter by active status (true/false)
+    """
+    try:
+        center = Center.objects.get(id=center_id)
+    except Center.DoesNotExist:
+        return Response(
+            {"detail": "Center not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+    
+    # Check permissions - Admins can only access their center, Super Admins can access all
+    user = request.user
+    if user.role in [User.ROLE_ADMIN, 'institute_admin'] and user.center and user.center.id != center.id:
+        return Response(
+            {"detail": "You can only access your own center."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    
+    # Get programs in this center
+    programs = Program.objects.filter(center=center).select_related('center')
+    
+    # Query filters
+    search = request.query_params.get('search')
+    if search:
+        programs = programs.filter(name__icontains=search)
+    
+    is_active = request.query_params.get('is_active')
+    if is_active is not None:
+        is_active_bool = is_active.lower() == 'true'
+        programs = programs.filter(is_active=is_active_bool)
+    
+    # Serialize
+    programs_data = []
+    for program in programs:
+        programs_data.append({
+            "id": str(program.id),
+            "name": program.name,
+            "description": program.description,
+            "category": program.category,
+            "is_active": program.is_active,
+            "batches_count": program.batches.count(),
+            "created_at": program.created_at.isoformat() if hasattr(program, 'created_at') else None,
+        })
+    
+    return Response(
+        {
+            "center_id": str(center.id),
+            "center_name": center.name,
+            "count": len(programs_data),
+            "results": programs_data,
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
 def list_center_batches(request, center_id: str):
     """
     GET /api/timetable/centers/<center_id>/batches/

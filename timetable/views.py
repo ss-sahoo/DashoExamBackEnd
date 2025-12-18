@@ -197,10 +197,13 @@ def create_timetable_with_slots(request):
             day_index = None
             actual_date = None
         # Mode 2: date-based timetable using D1, D2, ... within [from_date, to_date]
-        elif key_lower.startswith("d") and key_lower[1:].isdigit():
+        elif key_lower.startswith("d") and len(key_lower) > 1 and key_lower[1:].isdigit():
             idx = int(key_lower[1:])
-            if idx < 1 or idx > total_days:
-                # Ignore invalid indices outside timetable range
+            if idx < 1:
+                # Skip invalid day indices (must be >= 1)
+                continue
+            if idx > total_days:
+                # Skip days outside timetable range
                 continue
             day_index = idx
             actual_date = from_date + timedelta(days=idx - 1)
@@ -1028,8 +1031,8 @@ def assign_batch_to_timetable(request):
             status=status.HTTP_404_NOT_FOUND,
         )
     
-    # Verify batch belongs to the same center as timetable
-    if batch.program.center != timetable.center:
+    # Verify batch belongs to the same center as timetable (if batch has a program)
+    if batch.program and batch.program.center != timetable.center:
         return Response(
             {"detail": f"Batch '{batch_code}' does not belong to the same center as the timetable."},
             status=status.HTTP_400_BAD_REQUEST,
@@ -1141,8 +1144,8 @@ def assign_teacher_to_batch(request):
             status=status.HTTP_404_NOT_FOUND,
         )
     
-    # Verify batch belongs to the same center as timetable
-    if batch.program.center != timetable.center:
+    # Verify batch belongs to the same center as timetable (if batch has a program)
+    if batch.program and batch.program.center != timetable.center:
         return Response(
             {"detail": f"Batch '{batch_code}' does not belong to the same center as the timetable."},
             status=status.HTTP_400_BAD_REQUEST,
@@ -1515,8 +1518,8 @@ def assign_fixed_slot(request):
             status=status.HTTP_404_NOT_FOUND,
         )
     
-    # Verify batch belongs to the same center as timetable
-    if batch.program.center != timetable.center:
+    # Verify batch belongs to the same center as timetable (if batch has a program)
+    if batch.program and batch.program.center != timetable.center:
         return Response(
             {"detail": f"Batch '{batch_code}' does not belong to the same center as the timetable."},
             status=status.HTTP_400_BAD_REQUEST,
