@@ -25,21 +25,20 @@ class Institute(models.Model):
     """
     Merged Institute model supporting both exam and timetable systems.
     """
-    # UUID primary key for timetable compatibility
-    id = models.UUIDField(
+    # Using BigAutoField to match database (was manually changed to bigint)
+    # Note: UUID conversion would require data migration
+    id = models.BigAutoField(
         primary_key=True,
-        default=uuid.uuid4,
-        editable=False,
     )
     
     # Basic fields from exam system
     name = models.CharField(max_length=255, unique=True)
     domain = models.CharField(max_length=100, unique=True, blank=True, null=True, help_text="Optional email domain (e.g., 'university.edu')")
-    description = models.TextField(blank=True, help_text="Brief description of the institute")
-    address = models.TextField(blank=True)
-    contact_email = models.EmailField(blank=True, default='')
-    contact_phone = models.CharField(max_length=20, blank=True)
-    website = models.URLField(blank=True)
+    description = models.TextField(blank=True, null=True, help_text="Brief description of the institute")
+    address = models.TextField(blank=True, null=True)
+    contact_email = models.EmailField(blank=True, default='', null=True)
+    contact_phone = models.CharField(max_length=20, blank=True, null=True)
+    website = models.URLField(blank=True, null=True)
     logo = models.ImageField(upload_to='institute_logos/', blank=True, null=True)
     is_active = models.BooleanField(default=True)
     is_verified = models.BooleanField(default=False, help_text="Whether the institute is verified by super admin")
@@ -49,6 +48,7 @@ class Institute(models.Model):
     head_office_location = models.CharField(
         max_length=255,
         blank=True,
+        null=True,
         help_text="City / address of the head office. Example: Delhi.",
     )
     
@@ -124,11 +124,13 @@ class User(AbstractUser):
     phone = models.CharField(
         max_length=20, 
         blank=True,
+        null=True,
         validators=[RegexValidator(regex=r'^\+?1?\d{9,15}$', message="Phone number must be entered in the format: '+999999999'. Up to 15 digits allowed.")]
     )
     phone_number = models.CharField(
         max_length=20,
         blank=True,
+        null=True,
         help_text="Primary contact phone number (timetable system).",
     )
     
@@ -152,16 +154,19 @@ class User(AbstractUser):
     teacher_code = models.CharField(
         max_length=50,
         blank=True,
+        null=True,
         help_text="Readable code for a teacher. Example: 'AK-CAP', 'BTDS', etc.",
     )
     teacher_employee_id = models.CharField(
         max_length=50,
         blank=True,
+        null=True,
         help_text="Official employee id of the teacher. Example: 'EMP-00123'.",
     )
     teacher_subjects = models.CharField(
         max_length=255,
         blank=True,
+        null=True,
         help_text="Subjects that the teacher handles. Example: 'Physics', or 'Physics, Chemistry'.",
     )
     default_available_slots = models.JSONField(
@@ -259,6 +264,7 @@ class Center(TimeStampedModel):
     )
     address = models.TextField(
         blank=True,
+        null=True,
         help_text="Optional full address of the center.",
     )
     
@@ -291,11 +297,13 @@ class Program(TimeStampedModel):
     )
     description = models.TextField(
         blank=True,
+        null=True,
         help_text="Optional detailed description of the program.",
     )
     category = models.CharField(
         max_length=100,
         blank=True,
+        null=True,
         help_text="Optional category for grouping programs.",
     )
     is_active = models.BooleanField(

@@ -6,6 +6,7 @@ from django.utils import timezone
 from django.db.models import Q, Count, Avg, Sum, Value
 from django.db.models.functions import Concat
 from django.contrib.auth import get_user_model
+from accounts.models import User as AccountsUser
 from django.conf import settings
 from django.shortcuts import get_object_or_404
 from django.http import HttpResponse, JsonResponse
@@ -2455,73 +2456,137 @@ def calculate_quartiles(scores):
 @permission_classes([permissions.IsAuthenticated])
 def admin_dashboard_data(request):
     """Get admin dashboard statistics and data"""
-    user = request.user
-    
-    # Check if user has admin privileges
-    if not user.can_manage_exams():
-        return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
-    
-    institute = user.institute
-    
-    # Calculate statistics
-    total_exams = Exam.objects.filter(institute=institute).count()
-    active_exams = Exam.objects.filter(institute=institute, status='active').count()
-    published_exams = Exam.objects.filter(institute=institute, status='published').count()
-    draft_exams = Exam.objects.filter(institute=institute, status='draft').count()
-    
-    # Get total students (users with student role)
-    total_students = User.objects.filter(institute=institute, role='student').count()
-    
-    # Get exam attempts statistics
-    total_attempts = ExamAttempt.objects.filter(exam__institute=institute).count()
-    completed_attempts = ExamAttempt.objects.filter(exam__institute=institute, status='submitted').count()
-    in_progress_attempts = ExamAttempt.objects.filter(exam__institute=institute, status='in_progress').count()
-    disqualified_attempts = ExamAttempt.objects.filter(exam__institute=institute, status='disqualified').count()
-    
-    # Get recent exams (last 5)
-    recent_exams = Exam.objects.filter(institute=institute).order_by('-created_at')[:5]
-    
-    # Get recent attempts (last 10)
-    recent_attempts = ExamAttempt.objects.filter(exam__institute=institute).order_by('-created_at')[:10]
-    
-    # Calculate average score
-    completed_attempts_with_scores = ExamAttempt.objects.filter(
-        exam__institute=institute, 
-        status='submitted',
-        score__isnull=False
-    )
-    average_score = completed_attempts_with_scores.aggregate(avg_score=Avg('score'))['avg_score'] or 0
-    
-    # Get violation statistics
-    total_violations = ExamViolation.objects.filter(attempt__exam__institute=institute).count()
-    
-    # Get questions statistics
-    total_questions = Question.objects.filter(institute=institute).count()
-    verified_questions = Question.objects.filter(institute=institute, is_verified=True).count()
-    
-    return Response({
-        'stats': {
-            'total_exams': total_exams,
-            'active_exams': active_exams,
-            'published_exams': published_exams,
-            'draft_exams': draft_exams,
-            'total_students': total_students,
-            'total_attempts': total_attempts,
-            'completed_attempts': completed_attempts,
-            'in_progress_attempts': in_progress_attempts,
-            'disqualified_attempts': disqualified_attempts,
-            'average_score': round(float(average_score), 2),
-            'total_violations': total_violations,
-            'total_questions': total_questions,
-            'verified_questions': verified_questions,
-        },
-        'recent_exams': ExamSerializer(recent_exams, many=True).data,
-        'recent_attempts': ExamAttemptSerializer(recent_attempts, many=True).data,
-        'institute': {
-            'id': institute.id,
-            'name': institute.name,
-        }
-    })
+    try:
+        user = request.user
+        
+        # Check if user has admin privileges
+        if not user.can_manage_exams():
+            return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
+        
+        # Safely get institute - handle cases where it might be None or cause type errors
+        try:
+            institute = user.institute
+        except Exception as e:
+            # If there's a type mismatch or other error accessing institute, treat as None
+            institute = None
+        
+        # Handle super admin or users without institute
+        if not institute:
+            # Super admin can see all data across all institutes
+            if user.role in ['super_admin', 'SUPER_ADMIN']:
+                # Return aggregated data for all institutes
+                total_exams = Exam.objects.all().count()
+                active_exams = Exam.objects.filter(status='active').count()
+                published_exams = Exam.objects.filter(status='published').count()
+                draft_exams = Exam.objects.filter(status='draft').count()
+                User = get_user_model()
+                total_students = User.objects.filter(role='student').count()
+                total_attempts = ExamAttempt.objects.all().count()
+                completed_attempts = ExamAttempt.objects.filter(status='submitted').count()
+                in_progress_attempts = ExamAttempt.objects.filter(status='in_progress').count()
+                disqualified_attempts = ExamAttempt.objects.filter(status='disqualified').count()
+                recent_exams = Exam.objects.all().order_by('-created_at')[:5]
+                recent_attempts = ExamAttempt.objects.all().order_by('-created_at')[:10]
+                completed_attempts_with_scores = ExamAttempt.objects.filter(
+                    status='submitted',
+                    score__isnull=False
+                )
+                average_score = completed_attempts_with_scores.aggregate(avg_score=Avg('score'))['avg_score'] or 0
+                total_violations = ExamViolation.objects.all().count()
+                total_questions = Question.objects.all().count()
+                verified_questions = Question.objects.filter(is_verified=True).count()
+                
+                return Response({
+                    'stats': {
+                        'total_exams': total_exams,
+                        'active_exams': active_exams,
+                        'published_exams': published_exams,
+                        'draft_exams': draft_exams,
+                        'total_students': total_students,
+                        'total_attempts': total_attempts,
+                        'completed_attempts': completed_attempts,
+                        'in_progress_attempts': in_progress_attempts,
+                        'disqualified_attempts': disqualified_attempts,
+                        'average_score': round(float(average_score), 2),
+                        'total_violations': total_violations,
+                        'total_questions': total_questions,
+                        'verified_questions': verified_questions,
+                    },
+                    'recent_exams': ExamSerializer(recent_exams, many=True).data,
+                    'recent_attempts': ExamAttemptSerializer(recent_attempts, many=True).data,
+                    'institute': None,
+                    'is_super_admin': True,
+                })
+            else:
+                return Response({'error': 'User must be associated with an institute'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Calculate statistics for users with institute
+        total_exams = Exam.objects.filter(institute=institute).count()
+        active_exams = Exam.objects.filter(institute=institute, status='active').count()
+        published_exams = Exam.objects.filter(institute=institute, status='published').count()
+        draft_exams = Exam.objects.filter(institute=institute, status='draft').count()
+        
+        # Get total students (users with student role)
+        User = get_user_model()
+        total_students = User.objects.filter(institute=institute, role='student').count()
+        
+        # Get exam attempts statistics
+        total_attempts = ExamAttempt.objects.filter(exam__institute=institute).count()
+        completed_attempts = ExamAttempt.objects.filter(exam__institute=institute, status='submitted').count()
+        in_progress_attempts = ExamAttempt.objects.filter(exam__institute=institute, status='in_progress').count()
+        disqualified_attempts = ExamAttempt.objects.filter(exam__institute=institute, status='disqualified').count()
+        
+        # Get recent exams (last 5)
+        recent_exams = Exam.objects.filter(institute=institute).order_by('-created_at')[:5]
+        
+        # Get recent attempts (last 10)
+        recent_attempts = ExamAttempt.objects.filter(exam__institute=institute).order_by('-created_at')[:10]
+        
+        # Calculate average score
+        completed_attempts_with_scores = ExamAttempt.objects.filter(
+            exam__institute=institute, 
+            status='submitted',
+            score__isnull=False
+        )
+        average_score = completed_attempts_with_scores.aggregate(avg_score=Avg('score'))['avg_score'] or 0
+        
+        # Get violation statistics
+        total_violations = ExamViolation.objects.filter(attempt__exam__institute=institute).count()
+        
+        # Get questions statistics
+        total_questions = Question.objects.filter(institute=institute).count()
+        verified_questions = Question.objects.filter(institute=institute, is_verified=True).count()
+        
+        return Response({
+            'stats': {
+                'total_exams': total_exams,
+                'active_exams': active_exams,
+                'published_exams': published_exams,
+                'draft_exams': draft_exams,
+                'total_students': total_students,
+                'total_attempts': total_attempts,
+                'completed_attempts': completed_attempts,
+                'in_progress_attempts': in_progress_attempts,
+                'disqualified_attempts': disqualified_attempts,
+                'average_score': round(float(average_score), 2),
+                'total_violations': total_violations,
+                'total_questions': total_questions,
+                'verified_questions': verified_questions,
+            },
+            'recent_exams': ExamSerializer(recent_exams, many=True).data,
+            'recent_attempts': ExamAttemptSerializer(recent_attempts, many=True).data,
+            'institute': {
+                'id': institute.id,
+                'name': institute.name,
+            }
+        })
+    except Exception as e:
+        import traceback
+        return Response({
+            'error': 'Failed to load dashboard data',
+            'detail': str(e),
+            'traceback': traceback.format_exc() if settings.DEBUG else None
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 @api_view(['GET'])
 @permission_classes([permissions.AllowAny])
