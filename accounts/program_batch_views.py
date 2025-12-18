@@ -14,6 +14,7 @@ from django.db import transaction
 from datetime import datetime
 from .models import Center, Program, Batch, Enrollment, User
 from .utils import generate_user_code, generate_password
+from .timetable_views import _get_center_by_name_or_id
 
 
 def _check_super_admin(request):
@@ -61,7 +62,7 @@ def create_program(request):
     
     Payload:
     {
-        "center_name": "Allen - Jaipur Center",
+        "center_name": "Allen - Jaipur Center",  # OR use "center_id": "uuid"
         "name": "Super 30",
         "description": "JEE preparation program",
         "category": "JEE Prep"
@@ -80,28 +81,27 @@ def create_program(request):
         return error_response
     
     center_name = request.data.get("center_name")
+    center_id = request.data.get("center_id")
     name = request.data.get("name")
     description = request.data.get("description", "")
     category = request.data.get("category", "")
     
-    if not center_name or not name:
+    if not name:
         return Response(
-            {"detail": "center_name and name are required."},
+            {"detail": "name is required."},
             status=status.HTTP_400_BAD_REQUEST,
         )
     
-    try:
-        center = Center.objects.get(name=center_name)
-    except Center.DoesNotExist:
+    if not center_name and not center_id:
         return Response(
-            {"detail": f"Center '{center_name}' not found."},
-            status=status.HTTP_404_NOT_FOUND,
-        )
-    except Center.MultipleObjectsReturned:
-        return Response(
-            {"detail": f"Multiple centers found with name '{center_name}'. Please use center_id instead."},
+            {"detail": "Either center_name or center_id is required."},
             status=status.HTTP_400_BAD_REQUEST,
         )
+    
+    # Find center by ID (preferred) or name
+    center, error_response = _get_center_by_name_or_id(center_name=center_name, center_id=center_id)
+    if error_response:
+        return error_response
     
     # Check if program already exists for this center
     if Program.objects.filter(center=center, name=name).exists():

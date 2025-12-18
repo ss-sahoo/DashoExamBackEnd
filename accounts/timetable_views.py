@@ -98,7 +98,7 @@ def create_admin(request):
     
     Payload:
     {
-        "center_name": "Allen - Jaipur Center",
+        "center_name": "Allen - Jaipur Center",  # OR use "center_id": "uuid"
         "name": "Admin Name",
         "email": "admin@example.com",
         "phone_number": "9876543210"
@@ -116,28 +116,21 @@ def create_admin(request):
         return error_response
     
     center_name = request.data.get("center_name")
+    center_id = request.data.get("center_id")
     name = request.data.get("name")
     email = request.data.get("email", "")
     phone_number = request.data.get("phone_number", "")
     
-    if not center_name or not name:
+    if not name:
         return Response(
-            {"detail": "center_name and name are required."},
+            {"detail": "name is required."},
             status=status.HTTP_400_BAD_REQUEST,
         )
     
-    try:
-        center = Center.objects.get(name=center_name)
-    except Center.DoesNotExist:
-        return Response(
-            {"detail": f"Center '{center_name}' not found. Please create the center first."},
-            status=status.HTTP_404_NOT_FOUND,
-        )
-    except Center.MultipleObjectsReturned:
-        return Response(
-            {"detail": f"Multiple centers found with name '{center_name}'. Please use center_id instead."},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
+    # Find center by ID (preferred) or name
+    center, error_response = _get_center_by_name_or_id(center_name=center_name, center_id=center_id)
+    if error_response:
+        return error_response
     
     # Generate code and password - use 'ADMIN' role for timetable system
     center_code = center.name[:4].replace(" ", "").replace("-", "")
@@ -182,6 +175,54 @@ def create_admin(request):
             {"detail": f"Error creating admin: {str(e)}"},
             status=status.HTTP_400_BAD_REQUEST,
         )
+
+
+def _get_center_by_name_or_id(center_name=None, center_id=None):
+    """
+    Helper function to find a center by name or ID.
+    Returns (center, error_response) tuple.
+    If center is found, returns (center, None).
+    If error, returns (None, error_response).
+    """
+    center = None
+    
+    if center_id:
+        try:
+            center = Center.objects.get(id=center_id)
+            return center, None
+        except Center.DoesNotExist:
+            return None, Response(
+                {"detail": f"Center with id '{center_id}' not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+    elif center_name:
+        centers = Center.objects.filter(name=center_name)
+        if centers.count() == 0:
+            return None, Response(
+                {"detail": f"Center '{center_name}' not found. Please create the center first."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        elif centers.count() > 1:
+            # Return list of matching centers so user can choose by ID
+            centers_list = [
+                {"id": str(c.id), "name": c.name, "city": c.city, "institute": c.institute.name}
+                for c in centers
+            ]
+            return None, Response(
+                {
+                    "detail": f"Multiple centers found with name '{center_name}'. Please use center_id to specify which one.",
+                    "matching_centers": centers_list
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        else:
+            center = centers.first()
+            return center, None
+    
+    return None, Response(
+        {"detail": "Either center_name or center_id is required."},
+        status=status.HTTP_400_BAD_REQUEST,
+    )
 
 
 def _check_admin_or_super(request):
@@ -244,6 +285,7 @@ def create_teacher(request):
     user = request.user
     
     center_name = request.data.get("center_name")
+    center_id = request.data.get("center_id")
     name = request.data.get("name")
     email = request.data.get("email", "")
     phone_number = request.data.get("phone_number", "")
@@ -258,24 +300,15 @@ def create_teacher(request):
     
     # Determine center
     if is_super:
-        # Super Admin must provide center_name
-        if not center_name:
+        # Super Admin must provide center_name or center_id
+        if not center_name and not center_id:
             return Response(
-                {"detail": "center_name is required for Super Admin."},
+                {"detail": "Either center_name or center_id is required for Super Admin."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        try:
-            center = Center.objects.get(name=center_name)
-        except Center.DoesNotExist:
-            return Response(
-                {"detail": f"Center '{center_name}' not found. Please create the center first."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-        except Center.MultipleObjectsReturned:
-            return Response(
-                {"detail": f"Multiple centers found with name '{center_name}'. Please use center_id instead."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        center, error_response = _get_center_by_name_or_id(center_name=center_name, center_id=center_id)
+        if error_response:
+            return error_response
     else:
         # Admin uses their own center
         if not user.center:
@@ -492,6 +525,7 @@ def create_staff(request):
     user = request.user
     
     center_name = request.data.get("center_name")
+    center_id = request.data.get("center_id")
     name = request.data.get("name")
     email = request.data.get("email", "")
     phone_number = request.data.get("phone_number", "")
@@ -504,24 +538,15 @@ def create_staff(request):
     
     # Determine center
     if is_super:
-        # Super Admin must provide center_name
-        if not center_name:
+        # Super Admin must provide center_name or center_id
+        if not center_name and not center_id:
             return Response(
-                {"detail": "center_name is required for Super Admin."},
+                {"detail": "Either center_name or center_id is required for Super Admin."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        try:
-            center = Center.objects.get(name=center_name)
-        except Center.DoesNotExist:
-            return Response(
-                {"detail": f"Center '{center_name}' not found. Please create the center first."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-        except Center.MultipleObjectsReturned:
-            return Response(
-                {"detail": f"Multiple centers found with name '{center_name}'. Please use center_id instead."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        center, error_response = _get_center_by_name_or_id(center_name=center_name, center_id=center_id)
+        if error_response:
+            return error_response
     else:
         # Admin uses their own center
         if not user.center:

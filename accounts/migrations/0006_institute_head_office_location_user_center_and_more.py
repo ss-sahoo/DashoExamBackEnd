@@ -10,95 +10,53 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.AddField(
-            model_name="institute",
-            name="head_office_location",
-            field=models.CharField(
-                blank=True,
-                help_text="City / address of the head office. Example: Delhi.",
-                max_length=255,
-                null=True,
-            ),
+        # All these fields were already added in migration 0005 using RunSQL with IF NOT EXISTS
+        # This migration just ensures they exist and handles the category field alteration
+        migrations.RunSQL(
+            sql="ALTER TABLE accounts_institute ADD COLUMN IF NOT EXISTS head_office_location VARCHAR(255)",
+            reverse_sql="ALTER TABLE accounts_institute DROP COLUMN IF EXISTS head_office_location",
         ),
-        migrations.AddField(
-            model_name="user",
-            name="center",
-            field=models.ForeignKey(
-                blank=True,
-                help_text="Center to which the user belongs (timetable system).",
-                null=True,
-                on_delete=django.db.models.deletion.SET_NULL,
-                related_name="users",
-                to="accounts.center",
-            ),
+        migrations.RunSQL(
+            sql="""
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns 
+                        WHERE table_name='accounts_user' AND column_name='center_id'
+                    ) THEN
+                        ALTER TABLE accounts_user 
+                        ADD COLUMN center_id UUID REFERENCES accounts_center(id) ON DELETE SET NULL;
+                    END IF;
+                END $$;
+            """,
+            reverse_sql="ALTER TABLE accounts_user DROP COLUMN IF EXISTS center_id",
         ),
-        migrations.AddField(
-            model_name="user",
-            name="default_available_slots",
-            field=models.JSONField(
-                blank=True,
-                help_text="Optional default weekly slot availability for this teacher.",
-                null=True,
-            ),
+        migrations.RunSQL(
+            sql="ALTER TABLE accounts_user ADD COLUMN IF NOT EXISTS default_available_slots JSONB",
+            reverse_sql="ALTER TABLE accounts_user DROP COLUMN IF EXISTS default_available_slots",
         ),
-        migrations.AddField(
-            model_name="user",
-            name="phone_number",
-            field=models.CharField(
-                blank=True,
-                help_text="Primary contact phone number (timetable system).",
-                max_length=20,
-                null=True,
-            ),
+        migrations.RunSQL(
+            sql="ALTER TABLE accounts_user ADD COLUMN IF NOT EXISTS phone_number VARCHAR(20)",
+            reverse_sql="ALTER TABLE accounts_user DROP COLUMN IF EXISTS phone_number",
         ),
-        migrations.AddField(
-            model_name="user",
-            name="profile_image",
-            field=models.ImageField(
-                blank=True,
-                help_text="Optional profile image (timetable system).",
-                null=True,
-                upload_to="profiles/",
-            ),
+        migrations.RunSQL(
+            sql="ALTER TABLE accounts_user ADD COLUMN IF NOT EXISTS profile_image VARCHAR(100)",
+            reverse_sql="ALTER TABLE accounts_user DROP COLUMN IF EXISTS profile_image",
         ),
-        migrations.AddField(
-            model_name="user",
-            name="teacher_code",
-            field=models.CharField(
-                blank=True,
-                help_text="Readable code for a teacher. Example: 'AK-CAP', 'BTDS', etc.",
-                max_length=50,
-                null=True,
-            ),
+        migrations.RunSQL(
+            sql="ALTER TABLE accounts_user ADD COLUMN IF NOT EXISTS teacher_code VARCHAR(50)",
+            reverse_sql="ALTER TABLE accounts_user DROP COLUMN IF EXISTS teacher_code",
         ),
-        migrations.AddField(
-            model_name="user",
-            name="teacher_employee_id",
-            field=models.CharField(
-                blank=True,
-                help_text="Official employee id of the teacher. Example: 'EMP-00123'.",
-                max_length=50,
-                null=True,
-            ),
+        migrations.RunSQL(
+            sql="ALTER TABLE accounts_user ADD COLUMN IF NOT EXISTS teacher_employee_id VARCHAR(50)",
+            reverse_sql="ALTER TABLE accounts_user DROP COLUMN IF EXISTS teacher_employee_id",
         ),
-        migrations.AddField(
-            model_name="user",
-            name="teacher_subjects",
-            field=models.CharField(
-                blank=True,
-                help_text="Subjects that the teacher handles. Example: 'Physics', or 'Physics, Chemistry'.",
-                max_length=255,
-                null=True,
-            ),
+        migrations.RunSQL(
+            sql="ALTER TABLE accounts_user ADD COLUMN IF NOT EXISTS teacher_subjects VARCHAR(255)",
+            reverse_sql="ALTER TABLE accounts_user DROP COLUMN IF EXISTS teacher_subjects",
         ),
-        migrations.AlterField(
-            model_name="program",
-            name="category",
-            field=models.CharField(
-                blank=True,
-                help_text="Optional category for grouping programs.",
-                max_length=100,
-                null=True,
-            ),
+        migrations.RunSQL(
+            sql="ALTER TABLE accounts_program ALTER COLUMN category DROP NOT NULL",
+            reverse_sql="-- Reversible if needed",
         ),
     ]

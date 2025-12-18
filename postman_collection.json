@@ -571,9 +571,9 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"center_name\": \"Allen - Jaipur Center\",\n  \"name\": \"Admin Name\",\n  \"email\": \"admin@example.com\",\n  \"phone_number\": \"9876543211\"\n}"
+              "raw": "{\n  \"center_id\": \"{{center_id}}\",\n  \"name\": \"Admin Name\",\n  \"email\": \"admin@example.com\",\n  \"phone_number\": \"9876543211\"\n}"
             },
-            "description": "Creates a Center Admin. Response includes auto-generated username and password."
+            "description": "Creates a Center Admin. Response includes auto-generated username and password.\n\n**Payload accepts either `center_name` OR `center_id`:**\n- Use `center_id` (recommended when duplicates exist): `{\"center_id\": \"uuid\", ...}`\n- Use `center_name`: `{\"center_name\": \"Allen - Jaipur Center\", ...}`\n\nIf multiple centers match the name, API returns list of matching centers with their IDs."
           }
         },
         {
@@ -606,9 +606,9 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"center_name\": \"Allen - Jaipur Center\",\n  \"name\": \"Teacher Name\",\n  \"email\": \"teacher@example.com\",\n  \"phone_number\": \"9876543212\",\n  \"employee_id\": \"EMP-001\",\n  \"subjects\": \"Physics, Chemistry\"\n}"
+              "raw": "{\n  \"center_id\": \"{{center_id}}\",\n  \"name\": \"Teacher Name\",\n  \"email\": \"teacher@example.com\",\n  \"phone_number\": \"9876543212\",\n  \"employee_id\": \"EMP-001\",\n  \"subjects\": \"Physics, Chemistry\"\n}"
             },
-            "description": "Creates a Teacher with auto-generated username/password and teacher_code."
+            "description": "Creates a Teacher with auto-generated username/password and teacher_code.\n\n**Payload accepts either `center_name` OR `center_id`:**\n- Use `center_id` (recommended when duplicates exist): `{\"center_id\": \"uuid\", ...}`\n- Use `center_name`: `{\"center_name\": \"Allen - Jaipur Center\", ...}`\n\nIf multiple centers match the name, API returns list of matching centers with their IDs."
           }
         },
         {
@@ -676,9 +676,9 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"center_name\": \"Allen - Jaipur Center\",\n  \"name\": \"Staff Name\",\n  \"email\": \"staff@example.com\",\n  \"phone_number\": \"9876543214\"\n}"
+              "raw": "{\n  \"center_id\": \"{{center_id}}\",\n  \"name\": \"Staff Name\",\n  \"email\": \"staff@example.com\",\n  \"phone_number\": \"9876543214\"\n}"
             },
-            "description": "Creates a Staff member with auto-generated username/password."
+            "description": "Creates a Staff member with auto-generated username/password.\n\n**Payload accepts either `center_name` OR `center_id`:**\n- Use `center_id` (recommended when duplicates exist): `{\"center_id\": \"uuid\", ...}`\n- Use `center_name`: `{\"center_name\": \"Allen - Jaipur Center\", ...}`\n\nIf multiple centers match the name, API returns list of matching centers with their IDs."
           }
         }
       ]
@@ -826,9 +826,9 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"center_name\": \"Allen - Jaipur Center\",\n  \"name\": \"JEE Main 2025\",\n  \"description\": \"One-year JEE program\"\n}"
+              "raw": "{\n  \"center_id\": \"{{center_id}}\",\n  \"name\": \"JEE Main 2025\",\n  \"description\": \"One-year JEE program\",\n  \"category\": \"Engineering\"\n}"
             },
-            "description": "Creates an academic Program under a Center."
+            "description": "Creates an academic Program under a Center.\n\n**Payload accepts either `center_name` OR `center_id`:**\n- Use `center_id` (recommended when duplicates exist): `{\"center_id\": \"uuid\", ...}`\n- Use `center_name`: `{\"center_name\": \"Allen - Jaipur Center\", ...}`\n\nIf multiple centers match the name, API returns list of matching centers with their IDs."
           }
         },
         {
