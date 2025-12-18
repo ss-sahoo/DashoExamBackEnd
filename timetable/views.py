@@ -393,6 +393,151 @@ def get_timetable_slots(request, timetable_id: str):
     )
 
 
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def set_free_classes_count(request, timetable_id: str):
+    """
+    Admin sets the number of free classes for a timetable.
+    
+    Payload:
+    {
+        "free_classes_count": 3
+    }
+    
+    Returns:
+    {
+        "message": "Free classes count updated successfully.",
+        "timetable_id": "uuid",
+        "free_classes_count": 3
+    }
+    """
+    user = request.user
+    if user.role not in (AccountUser.ROLE_ADMIN, AccountUser.ROLE_SUPER_ADMIN):
+        return Response(
+            {"detail": "Only Admin or Super Admin can set free classes count."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    
+    try:
+        timetable = Timetable.objects.select_related('center').get(id=timetable_id)
+    except Timetable.DoesNotExist:
+        return Response(
+            {"detail": f"Timetable with id '{timetable_id}' not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+    
+    # Check permissions: Admin can only update timetables in their center
+    if user.role == AccountUser.ROLE_ADMIN:
+        if not user.center:
+            return Response(
+                {"detail": "Admin user is not linked to any center."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if timetable.center != user.center:
+            return Response(
+                {"detail": f"You can only update timetables in your center '{user.center.name}'."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+    
+    free_classes_count = request.data.get("free_classes_count")
+    
+    if free_classes_count is None:
+        return Response(
+            {"detail": "free_classes_count is required."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    
+    try:
+        free_classes_count = int(free_classes_count)
+        if free_classes_count < 0:
+            return Response(
+                {"detail": "free_classes_count must be a non-negative integer."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+    except (ValueError, TypeError):
+        return Response(
+            {"detail": "free_classes_count must be a valid integer."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    
+    # Update free classes count
+    timetable.free_classes_count = free_classes_count
+    timetable.save()
+    
+    # Update all DaySlots to reflect the new free classes count
+    # Mark first N slots as free classes for each day
+    from django.db import transaction
+    with transaction.atomic():
+        # Get all unique days in this timetable
+        days = DaySlot.objects.filter(timetable=timetable).values_list('day', flat=True).distinct()
+        
+        for day in days:
+            # Get all slots for this day, ordered by slot_number
+            slots = DaySlot.objects.filter(timetable=timetable, day=day).order_by('slot_number')
+            
+            for idx, slot in enumerate(slots):
+                # Mark first free_classes_count slots as free
+                slot.is_free_class = (idx < free_classes_count)
+                slot.save()
+    
+    return Response(
+        {
+            "message": "Free classes count updated successfully.",
+            "timetable_id": str(timetable.id),
+            "free_classes_count": timetable.free_classes_count,
+            "center": timetable.center.name,
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def get_free_classes_count(request, timetable_id: str):
+    """
+    Get the number of free classes for a timetable.
+    
+    Returns:
+    {
+        "timetable_id": "uuid",
+        "free_classes_count": 3,
+        "center": "Allen - Jaipur Center"
+    }
+    """
+    try:
+        timetable = Timetable.objects.select_related('center').get(id=timetable_id)
+    except Timetable.DoesNotExist:
+        return Response(
+            {"detail": f"Timetable with id '{timetable_id}' not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+    
+    # Check permissions: Admin can only view timetables in their center
+    user = request.user
+    if user.role == AccountUser.ROLE_ADMIN:
+        if not user.center:
+            return Response(
+                {"detail": "Admin user is not linked to any center."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if timetable.center != user.center:
+            return Response(
+                {"detail": f"You can only view timetables in your center '{user.center.name}'."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+    
+    return Response(
+        {
+            "timetable_id": str(timetable.id),
+            "free_classes_count": timetable.free_classes_count,
+            "center": timetable.center.name,
+            "from_date": str(timetable.from_date),
+            "to_date": str(timetable.to_date),
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def list_timetables(request):

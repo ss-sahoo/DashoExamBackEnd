@@ -1274,6 +1274,69 @@
             },
             "description": "Run genetic algorithm optimization for timetable. Checks feasibility first, then generates optimized timetable."
           }
+        },
+        {
+          "name": "Set Free Classes Count (Admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{timetable_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/admin/timetables/{{timetable_id}}/free-classes/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "timetable",
+                "admin",
+                "timetables",
+                "{{timetable_id}}",
+                "free-classes",
+                ""
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"free_classes_count\": 3\n}"
+            },
+            "description": "Admin sets the number of free classes for a timetable. Updates all DaySlots to mark first N slots as free classes for each day."
+          }
+        },
+        {
+          "name": "Get Free Classes Count",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{timetable_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/timetables/{{timetable_id}}/free-classes/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "timetable",
+                "timetables",
+                "{{timetable_id}}",
+                "free-classes",
+                ""
+              ]
+            },
+            "description": "Get the number of free classes for a timetable."
+          }
         }
       ]
     },

@@ -25,6 +25,8 @@ from timetable.views import (
     assign_fixed_slot,
     get_fixed_slots,
     run_timetable_optimization,
+    set_free_classes_count,
+    get_free_classes_count,
 )
 
 # Import timetable auth and management views from accounts
@@ -116,6 +118,8 @@ urlpatterns = [
     path("timetables/", list_timetables, name="list-timetables"),
     path("timetables/<uuid:timetable_id>/", get_timetable, name="get-timetable"),
     path("timetables/<uuid:timetable_id>/slots/", get_timetable_slots, name="get-timetable-slots"),
+    path("admin/timetables/<uuid:timetable_id>/free-classes/", set_free_classes_count, name="set-free-classes-count"),
+    path("timetables/<uuid:timetable_id>/free-classes/", get_free_classes_count, name="get-free-classes-count"),
     
     # ===========
     # Teacher Availability APIs
