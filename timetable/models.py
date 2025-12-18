@@ -107,7 +107,7 @@ class DaySlot(TimeStampedModel):
     - For each day (Monday, Tuesday, etc.), admin adds multiple DaySlots
     - Each DaySlot has a slot_number (1, 2, 3...) and start_time/end_time
     """
-    # Days of the week choices
+    # Days of the week choices (kept for backwards compatibility with weekly mode)
     MONDAY = "MON"
     TUESDAY = "TUE"
     WEDNESDAY = "WED"
@@ -136,7 +136,29 @@ class DaySlot(TimeStampedModel):
     day = models.CharField(
         max_length=3,
         choices=DAY_CHOICES,
-        help_text="Day of the week (Monday, Tuesday, etc.).",
+        help_text=(
+            "Day of the week (Monday, Tuesday, etc.) for legacy weekly timetables. "
+            "For date-based timetables that use D1..Dn, this is derived from actual_date."
+        ),
+    )
+
+    # New fields to support date-based timetables (D1..Dn within timetable range)
+    day_index = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text=(
+            "Index of the calendar day within the timetable date range, starting at 1. "
+            "Example: D1 = from_date, D2 = from_date + 1 day, etc."
+        ),
+    )
+
+    actual_date = models.DateField(
+        null=True,
+        blank=True,
+        help_text=(
+            "Concrete calendar date for this slot. Used for date-based timetables. "
+            "For legacy weekly timetables this may be null."
+        ),
     )
 
     # Optional short code for this slot, used by optimisation code

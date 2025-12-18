@@ -78,6 +78,21 @@ DAY_MAP_SHORT = {
 }
 
 
+def get_day_key_for_slot(day_slot: DaySlot) -> str:
+    """
+    Compute the day key used in optimisation payloads.
+
+    - Legacy weekly mode: returns 'mon', 'tue', ... based on DaySlot.day
+    - Date-based mode: if day_index is set, returns 'd1', 'd2', ... based on day_index
+
+    The genetic algorithm only cares about the *ordering* of slot codes,
+    not the specific day key names, so both formats are supported.
+    """
+    if getattr(day_slot, "day_index", None):
+        return f"d{day_slot.day_index}"
+    return DAY_MAP_SHORT[day_slot.day]
+
+
 def build_available_slots(timetable: Timetable) -> Dict[str, Dict[str, str]]:
     """
     Build `available_slots` dict from DaySlot rows of a timetable.
@@ -88,17 +103,17 @@ def build_available_slots(timetable: Timetable) -> Dict[str, Dict[str, str]]:
     """
 
     slots_by_day: Dict[str, Dict[str, str]] = {}
-    qs = timetable.day_slots.all().order_by("day", "slot_number")
+    qs = timetable.day_slots.all().order_by("day_index", "day", "slot_number")
 
     for day_slot in qs:
-        day_key = DAY_MAP_SHORT[day_slot.day]
+        day_key = get_day_key_for_slot(day_slot)
         slots_by_day.setdefault(day_key, {})
 
         # If slot_code is empty, fall back to pattern like 'm1', 'tu2', etc.
         if day_slot.slot_code:
             code = day_slot.slot_code
         else:
-            # very simple pattern: use day_key + slot_number, e.g. 'mon1'
+            # very simple pattern: use day_key + slot_number, e.g. 'mon1' or 'd1_1'
             code = f"{day_key}{day_slot.slot_number}"
 
         time_str = f"{day_slot.start_time.strftime('%H:%M')}-{day_slot.end_time.strftime('%H:%M')}"
@@ -219,13 +234,13 @@ def build_fixed_slots_payload(
     fixed_qs = (
         FixedSlot.objects.filter(timetable=timetable, is_locked=True)
         .select_related("day_slot", "batch", "teacher")
-        .order_by("day_slot__day", "day_slot__slot_number", "batch__code")
+        .order_by("day_slot__day_index", "day_slot__day", "day_slot__slot_number", "batch__code")
     )
 
     result: Dict[str, Dict[str, Dict[str, Optional[Tuple[str, str]]]]] = {}
 
     for fs in fixed_qs:
-        day_key = DAY_MAP_SHORT[fs.day_slot.day]
+        day_key = get_day_key_for_slot(fs.day_slot)
         slot_code = fs.day_slot.slot_code or f"{day_key}{fs.day_slot.slot_number}"
         batch_code = fs.batch.code
 
