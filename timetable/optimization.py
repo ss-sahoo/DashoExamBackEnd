@@ -329,6 +329,11 @@ class TeacherDTO:
     subject: str
     available_slots: List[str] = field(default_factory=list)
 
+    @property
+    def avilable_slots(self) -> List[str]:
+        """Alias for available_slots (for backward compatibility with genetic algorithm)."""
+        return self.available_slots
+
     def update_available_slots(self, available_slots: List[str]) -> None:
         """Update in-memory available slots list."""
         self.available_slots = available_slots
