@@ -26,6 +26,7 @@ from timetable.views import (
     assign_fixed_slot,
     get_fixed_slots,
     update_fixed_slot,
+    check_timetable_feasibility,
     run_timetable_optimization,
     set_free_classes_count,
     get_free_classes_count,
@@ -159,6 +160,7 @@ urlpatterns = [
     # ===========
     # Optimization Algorithm API
     # ===========
+    path("timetables/<uuid:timetable_id>/check-feasibility/", check_timetable_feasibility, name="check-timetable-feasibility"),
     path("timetables/<uuid:timetable_id>/optimize/", run_timetable_optimization, name="run-timetable-optimization"),
     
     # ===========

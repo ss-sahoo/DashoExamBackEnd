@@ -2106,6 +2106,135 @@ def update_fixed_slot(request, fixed_slot_id: str):
 
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
+def check_timetable_feasibility(request, timetable_id: str):
+    """
+    Check if timetable generation is feasible before running the genetic algorithm.
+    
+    POST /api/timetable/timetables/<timetable_id>/check-feasibility/
+    
+    Body (optional):
+    {
+        "start_slot": "d1_s1"  # Default: first slot
+    }
+    
+    Returns:
+    {
+        "feasible": true/false,
+        "violations": {
+            "RULE_1": ["Slot d1_s1: Available Teachers=2, Total Batches=5"],
+            "RULE_2": ["d1-d1_s1: Teacher TCH-001 not available"],
+            "RULE_3": ["Batch BATCH-001: RemainingRequiredClasses=10, Total slots=8"],
+            "RULE_4": [...],
+            "RULE_5": [...],
+            "RULE_6": [...]
+        },
+        "summary": {
+            "total_batches": 5,
+            "total_teachers": 10,
+            "total_slots": 20,
+            "total_violations": 3
+        },
+        "rules_explanation": {
+            "RULE_1": "Each slot must have enough available teachers for all batches",
+            "RULE_2": "Fixed slot teachers must be available in that slot",
+            "RULE_3": "Batch must have enough slots to meet minimum class requirements",
+            "RULE_4": "Batch must not exceed maximum class limit",
+            "RULE_5": "Batch max classes must be >= min classes remaining",
+            "RULE_6": "Teacher must have enough available slots to meet their minimum load"
+        }
+    }
+    """
+    try:
+        timetable = Timetable.objects.get(id=timetable_id)
+    except Timetable.DoesNotExist:
+        return Response(
+            {"detail": "Timetable not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+    
+    # Check permissions
+    user = request.user
+    if user.role not in (AccountUser.ROLE_ADMIN, AccountUser.ROLE_SUPER_ADMIN):
+        return Response(
+            {"detail": "Only Admin or Super Admin can check feasibility."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    
+    # Get start_slot from request
+    data = request.data
+    start_slot = data.get("start_slot", None)
+    
+    try:
+        # Build payload from models
+        payload = build_full_payload(timetable_id)
+        
+        available_slots = payload["available_slots"]
+        teachers_list = payload["teachers"]
+        batches_dict = payload["batches"]
+        fixed_slots = payload["fixed_slots"]
+        
+        # Convert to algorithm format
+        teachers_dict = convert_teachers_to_algorithm_format(teachers_list)
+        batches_dict_algo = convert_batches_to_algorithm_format(batches_dict, teachers_dict)
+        
+        # Determine start_slot if not provided
+        if not start_slot:
+            first_day = list(available_slots.keys())[0] if available_slots else None
+            if first_day and available_slots[first_day]:
+                start_slot = list(available_slots[first_day].keys())[0]
+            else:
+                return Response(
+                    {"detail": "No slots available in timetable."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        
+        # Check feasibility
+        feasible, violations = check_timetable_feasibility_from_start(
+            available_slots=available_slots,
+            teachers=teachers_dict,
+            batches=batches_dict_algo,
+            new_fixed_slots=fixed_slots,
+            start_slot=start_slot
+        )
+        
+        # Calculate total slots
+        total_slots = sum(len(slots) for slots in available_slots.values())
+        
+        # Count total violations
+        total_violations = sum(len(v) for v in violations.values())
+        
+        return Response(
+            {
+                "feasible": feasible,
+                "violations": violations,
+                "summary": {
+                    "total_batches": len(batches_dict_algo),
+                    "total_teachers": len(teachers_dict),
+                    "total_slots": total_slots,
+                    "total_violations": total_violations,
+                    "start_slot": start_slot,
+                },
+                "rules_explanation": {
+                    "RULE_1": "Each slot must have enough available teachers for all batches",
+                    "RULE_2": "Fixed slot teachers must be available in that slot",
+                    "RULE_3": "Batch must have enough slots to meet minimum class requirements",
+                    "RULE_4": "Batch must not exceed maximum class limit",
+                    "RULE_5": "Batch max classes must be >= min classes remaining",
+                    "RULE_6": "Teacher must have enough available slots to meet their minimum load"
+                }
+            },
+            status=status.HTTP_200_OK if feasible else status.HTTP_400_BAD_REQUEST,
+        )
+        
+    except Exception as e:
+        return Response(
+            {"detail": f"Error checking feasibility: {str(e)}"},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
 def run_timetable_optimization(request, timetable_id: str):
     """
     Run the generic algorithm to generate timetable.
