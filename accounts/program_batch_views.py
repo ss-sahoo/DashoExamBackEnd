@@ -144,6 +144,7 @@ def create_batch(request):
     
     Payload:
     {
+        "program_id": "uuid",        # Optional - use either program_id or program_name
         "program_name": "Super 30",  # Optional - if not provided, batch created without program
         "code": "HDTN-1A-ZA1",       # Required
         "name": "Super 30 - Batch A (2025)",  # Optional - auto-generated from code if not provided
@@ -169,6 +170,7 @@ def create_batch(request):
     admin_user = request.user
     center = admin_user.center
     
+    program_id = request.data.get("program_id")
     program_name = request.data.get("program_name")
     code = request.data.get("code")
     name = request.data.get("name")
@@ -185,9 +187,17 @@ def create_batch(request):
     if not name:
         name = f"Batch {code}"
     
-    # Find program in admin's center (optional)
+    # Find program in admin's center (optional) - support both program_id and program_name
     program = None
-    if program_name:
+    if program_id:
+        try:
+            program = Program.objects.get(id=program_id, center=center)
+        except Program.DoesNotExist:
+            return Response(
+                {"detail": f"Program with id '{program_id}' not found in your center '{center.name}'."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+    elif program_name:
         try:
             program = Program.objects.get(center=center, name=program_name)
         except Program.DoesNotExist:
