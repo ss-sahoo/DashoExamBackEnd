@@ -965,10 +965,10 @@ def get_teacher_availability(request, timetable_id: str):
 @permission_classes([IsAuthenticated])
 def get_teacher_wise_availability(request, timetable_id: str):
     """
-    Get teacher availability organized by teacher instead of by slot.
+    Get teacher availability organized by teacher, then by day.
     
-    Returns availability organized by teacher, showing which slots
-    each teacher is available/unavailable for.
+    Returns availability organized by teacher, with slots grouped by day
+    (Friday slots, Saturday slots, etc.)
     
     Returns:
     {
@@ -982,24 +982,44 @@ def get_teacher_wise_availability(request, timetable_id: str):
                 "teacher_code": "TCH-CENT-230",
                 "teacher_name": "Trushank Lohar",
                 "teacher_id": "34",
-                "slots": [
+                "days": [
                     {
-                        "slot_id": "2dd8001f-0b71-44b3-a28a-d780bc0b643f",
-                        "slot_code": "d1_s1",
                         "day": "Friday",
-                        "start_time": "08:00:00",
-                        "end_time": "09:00:00",
-                        "is_free_class": false,
-                        "is_available": true
+                        "day_number": 1,
+                        "date": "2025-12-19",
+                        "slots": [
+                            {
+                                "slot_id": "2dd8001f-0b71-44b3-a28a-d780bc0b643f",
+                                "slot_code": "d1_s1",
+                                "start_time": "08:00:00",
+                                "end_time": "09:00:00",
+                                "is_free_class": false,
+                                "is_available": true
+                            },
+                            {
+                                "slot_id": "ef44b599-50e0-48ad-b19f-f405f01002ca",
+                                "slot_code": "d1_s2",
+                                "start_time": "09:00:00",
+                                "end_time": "10:00:00",
+                                "is_free_class": false,
+                                "is_available": true
+                            }
+                        ]
                     },
                     {
-                        "slot_id": "ef44b599-50e0-48ad-b19f-f405f01002ca",
-                        "slot_code": "d8_s1",
-                        "day": "Friday",
-                        "start_time": "08:00:00",
-                        "end_time": "09:00:00",
-                        "is_free_class": false,
-                        "is_available": false
+                        "day": "Saturday",
+                        "day_number": 2,
+                        "date": "2025-12-20",
+                        "slots": [
+                            {
+                                "slot_id": "abc123...",
+                                "slot_code": "d2_s1",
+                                "start_time": "08:00:00",
+                                "end_time": "09:00:00",
+                                "is_free_class": false,
+                                "is_available": false
+                            }
+                        ]
                     }
                 ]
             }
@@ -1069,30 +1089,46 @@ def get_teacher_wise_availability(request, timetable_id: str):
         DaySlot.SUNDAY: "Sunday",
     }
     
-    # Build response organized by teacher
+    # Build response organized by teacher, then by day
     teachers_data = []
     for teacher in teachers:
-        slots_data = []
+        # Group slots by day_index (or actual_date) to keep each date separate
+        days_data = {}
         for slot in day_slots:
             # Default is available (True) if not explicitly set
             key = (slot.id, teacher.id)
             is_available = availability_map.get(key, True)
             
-            slots_data.append({
+            day_name = day_display_map.get(slot.day, slot.day)
+            slot_data = {
                 "slot_id": str(slot.id),
                 "slot_code": slot.slot_code,
-                "day": day_display_map.get(slot.day, slot.day),
                 "start_time": str(slot.start_time),
                 "end_time": str(slot.end_time),
                 "is_free_class": slot.is_free_class,
                 "is_available": is_available,
-            })
+            }
+            
+            # Use day_index as key to keep each date separate
+            day_key = slot.day_index or (str(slot.actual_date) if slot.actual_date else day_name)
+            
+            if day_key not in days_data:
+                days_data[day_key] = {
+                    "day": day_name,
+                    "day_number": slot.day_index or (list(day_display_map.values()).index(day_name) + 1 if day_name in day_display_map.values() else 0),
+                    "date": str(slot.actual_date) if slot.actual_date else None,
+                    "slots": []
+                }
+            days_data[day_key]["slots"].append(slot_data)
+        
+        # Convert to sorted list by day_number
+        days_list = sorted(days_data.values(), key=lambda x: x["day_number"])
         
         teachers_data.append({
             "teacher_code": teacher.teacher_code or teacher.username,
             "teacher_name": f"{teacher.first_name} {teacher.last_name}".strip() or teacher.username,
             "teacher_id": str(teacher.id),
-            "slots": slots_data,
+            "days": days_list,
         })
     
     return Response(
