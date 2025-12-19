@@ -23,6 +23,7 @@ from timetable.views import (
     assign_batch_to_timetable,
     assign_teacher_to_batch,
     get_timetable_batch_assignments,
+    get_batch_wise_slots,
     assign_fixed_slot,
     get_fixed_slots,
     update_fixed_slot,
@@ -144,6 +145,8 @@ urlpatterns = [
     path("admin/timetables/assign-batch/", assign_batch_to_timetable, name="assign-batch-to-timetable"),
     path("admin/timetables/assign-teacher/", assign_teacher_to_batch, name="assign-teacher-to-batch"),
     path("timetables/<uuid:timetable_id>/batch-assignments/", get_timetable_batch_assignments, name="get-timetable-batch-assignments"),
+    path("timetables/<uuid:timetable_id>/batch-wise-slots/", get_batch_wise_slots, name="get-batch-wise-slots"),
+    path("timetables/<uuid:timetable_id>/batch-wise-slots/<uuid:batch_id>/", get_batch_wise_slots, name="get-single-batch-slots"),
     
     # ===========
     # Fixed Slot APIs
