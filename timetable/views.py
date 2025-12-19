@@ -1618,6 +1618,207 @@ def get_timetable_batch_assignments(request, timetable_id: str):
     )
 
 
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def get_batch_wise_slots(request, timetable_id: str, batch_id: str = None):
+    """
+    Get all slots organized by batch for a timetable.
+    Shows each assigned batch with all available slots and their status.
+    
+    GET /api/timetable/timetables/<timetable_id>/batch-wise-slots/
+    GET /api/timetable/timetables/<timetable_id>/batch-wise-slots/<batch_id>/
+    
+    Returns:
+    {
+        "timetable_id": "uuid",
+        "timetable": "Center Name - 2025-01-01 to 2025-03-31",
+        "center": "Center Name",
+        "from_date": "2025-12-19",
+        "to_date": "2025-12-29",
+        "batches": [
+            {
+                "batch_code": "BATCH-001",
+                "batch_name": "JEE Batch 1",
+                "batch_id": "uuid",
+                "days": [
+                    {
+                        "day": "Friday",
+                        "day_number": 1,
+                        "date": "2025-12-19",
+                        "slots": [
+                            {
+                                "slot_id": "uuid",
+                                "slot_code": "d1_s1",
+                                "start_time": "08:00:00",
+                                "end_time": "09:00:00",
+                                "is_free_class": false,
+                                "is_assigned": true,
+                                "subject": "Physics",
+                                "teacher_code": "TCH-001",
+                                "teacher_name": "Teacher Name",
+                                "is_fixed": false
+                            }
+                        ]
+                    }
+                ]
+            }
+        ]
+    }
+    """
+    user = request.user
+    
+    # Check if user is Admin or Super Admin
+    if user.role not in (AccountUser.ROLE_ADMIN, AccountUser.ROLE_SUPER_ADMIN):
+        return Response(
+            {"detail": "Only Admin and Super Admin can view batch-wise slots."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    
+    # Get timetable
+    try:
+        timetable = Timetable.objects.select_related("center").get(id=timetable_id)
+    except Timetable.DoesNotExist:
+        return Response(
+            {"detail": "Timetable not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+    
+    # Check permissions
+    if user.role == AccountUser.ROLE_ADMIN:
+        if not user.center:
+            return Response(
+                {"detail": "Admin user is not linked to any center."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if timetable.center != user.center:
+            return Response(
+                {"detail": "You can only view timetables in your center."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+    
+    # Get all day slots for this timetable
+    day_slots = DaySlot.objects.filter(timetable=timetable).order_by("day_index", "slot_number")
+    
+    # Get batches - filter by batch_id if provided
+    if batch_id:
+        timetable_batches = TimetableBatch.objects.filter(
+            timetable=timetable,
+            batch_id=batch_id
+        ).select_related("batch")
+        
+        if not timetable_batches.exists():
+            return Response(
+                {"detail": f"Batch not found or not assigned to this timetable."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+    else:
+        timetable_batches = TimetableBatch.objects.filter(
+            timetable=timetable
+        ).select_related("batch").order_by("batch__code")
+    
+    # Get all timetable entries (slot assignments)
+    entries = TimetableEntry.objects.filter(
+        day_slot__timetable=timetable
+    ).select_related("day_slot", "batch")
+    
+    # Get all fixed slots
+    fixed_slots = FixedSlot.objects.filter(
+        timetable=timetable
+    ).select_related("day_slot", "batch", "teacher")
+    
+    # Create entry map: (day_slot_id, batch_id) -> entry
+    entry_map = {}
+    for entry in entries:
+        key = (entry.day_slot_id, entry.batch_id)
+        entry_map[key] = entry
+    
+    # Create fixed slot map: (day_slot_id, batch_id) -> fixed_slot
+    fixed_map = {}
+    for fs in fixed_slots:
+        key = (fs.day_slot_id, fs.batch_id)
+        fixed_map[key] = fs
+    
+    # Map day constant to display name
+    day_display_map = {
+        DaySlot.MONDAY: "Monday",
+        DaySlot.TUESDAY: "Tuesday",
+        DaySlot.WEDNESDAY: "Wednesday",
+        DaySlot.THURSDAY: "Thursday",
+        DaySlot.FRIDAY: "Friday",
+        DaySlot.SATURDAY: "Saturday",
+        DaySlot.SUNDAY: "Sunday",
+    }
+    
+    # Build response organized by batch, then by day
+    batches_data = []
+    for tb in timetable_batches:
+        batch = tb.batch
+        
+        # Group slots by day
+        days_data = {}
+        for slot in day_slots:
+            day_name = day_display_map.get(slot.day, slot.day)
+            day_key = slot.day_index or day_name
+            
+            # Check if this slot has an entry for this batch
+            entry_key = (slot.id, batch.id)
+            entry = entry_map.get(entry_key)
+            fixed = fixed_map.get(entry_key)
+            
+            slot_data = {
+                "slot_id": str(slot.id),
+                "slot_code": slot.slot_code,
+                "start_time": str(slot.start_time),
+                "end_time": str(slot.end_time),
+                "is_free_class": slot.is_free_class,
+                "is_assigned": entry is not None or fixed is not None,
+                "subject": None,
+                "teacher_code": None,
+                "teacher_name": None,
+                "is_fixed": fixed is not None,
+            }
+            
+            # Add assignment details if exists
+            if fixed:
+                slot_data["subject"] = fixed.subject
+                slot_data["teacher_code"] = fixed.teacher.teacher_code or fixed.teacher.username
+                slot_data["teacher_name"] = f"{fixed.teacher.first_name} {fixed.teacher.last_name}".strip() or slot_data["teacher_code"]
+                slot_data["is_fixed"] = True
+            elif entry:
+                slot_data["subject"] = entry.subject
+            
+            if day_key not in days_data:
+                days_data[day_key] = {
+                    "day": day_name,
+                    "day_number": slot.day_index or (list(day_display_map.values()).index(day_name) + 1 if day_name in day_display_map.values() else 0),
+                    "date": str(slot.actual_date) if slot.actual_date else None,
+                    "slots": []
+                }
+            days_data[day_key]["slots"].append(slot_data)
+        
+        # Convert to sorted list by day_number
+        days_list = sorted(days_data.values(), key=lambda x: x["day_number"])
+        
+        batches_data.append({
+            "batch_code": batch.code,
+            "batch_name": batch.name,
+            "batch_id": str(batch.id),
+            "days": days_list,
+        })
+    
+    return Response(
+        {
+            "timetable_id": str(timetable.id),
+            "timetable": str(timetable),
+            "center": timetable.center.name,
+            "from_date": str(timetable.from_date),
+            "to_date": str(timetable.to_date),
+            "batches": batches_data,
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def assign_fixed_slot(request):
