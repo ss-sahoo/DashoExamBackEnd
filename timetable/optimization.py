@@ -126,33 +126,57 @@ def build_teachers_payload(timetable: Timetable) -> List[Dict[str, Any]]:
     """
     Build list of teacher dicts for optimisation.
 
-    - We read User objects with role=TEACHER
+    - We read User objects with role=TEACHER in the timetable's center
     - We read TeacherSlotAvailability for this timetable to know which
       slot codes are allowed for each teacher.
+    - If no availability record exists for a slot, teacher is considered AVAILABLE by default
     """
 
-    teachers_qs = User.objects.filter(role=User.ROLE_TEACHER).order_by("id")
+    # Get teachers in the same center as the timetable
+    teachers_qs = User.objects.filter(
+        role=User.ROLE_TEACHER,
+        center=timetable.center
+    ).order_by("id")
 
-    # teacher_id -> set(slot_code)
-    teacher_slots: Dict[int, List[str]] = {}
+    # Get all slots for this timetable
+    all_slots = list(
+        DaySlot.objects.filter(timetable=timetable)
+        .order_by("day_index", "slot_number")
+    )
+    
+    # Build all slot codes
+    all_slot_codes = []
+    for slot in all_slots:
+        day_key = DAY_MAP_SHORT.get(slot.day, f"d{slot.day_index}")
+        code = slot.slot_code or f"{day_key}{slot.slot_number}"
+        all_slot_codes.append(code)
 
+    # teacher_id -> set of UNAVAILABLE slot_codes
+    teacher_unavailable: Dict[int, set] = {}
+
+    # Get explicit availability records (both available and unavailable)
     avail_qs = (
         TeacherSlotAvailability.objects.filter(
             timetable=timetable,
-            is_available=True,
         )
         .select_related("teacher", "day_slot")
-        .order_by("teacher_id", "day_slot__day", "day_slot__slot_number")
     )
 
     for av in avail_qs:
-        day_key = DAY_MAP_SHORT[av.day_slot.day]
+        day_key = DAY_MAP_SHORT.get(av.day_slot.day, f"d{av.day_slot.day_index}")
         code = av.day_slot.slot_code or f"{day_key}{av.day_slot.slot_number}"
-        teacher_slots.setdefault(av.teacher_id, []).append(code)
+        
+        if not av.is_available:
+            # Track unavailable slots
+            teacher_unavailable.setdefault(av.teacher_id, set()).add(code)
 
     payload: List[Dict[str, Any]] = []
     for teacher in teachers_qs:
-        available_slots = teacher_slots.get(teacher.id, [])
+        # Default: all slots are available
+        # Remove slots that are explicitly marked as unavailable
+        unavailable = teacher_unavailable.get(teacher.id, set())
+        available_slots = [code for code in all_slot_codes if code not in unavailable]
+        
         payload.append(
             {
                 "Employ-id": teacher.teacher_employee_id or teacher.id,
