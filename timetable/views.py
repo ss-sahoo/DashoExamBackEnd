@@ -21,7 +21,7 @@ from django.conf import settings
 
 from accounts.models import Center, Batch, User as AccountUser
 from .optimization import build_full_payload, DAY_MAP_SHORT
-from .models import Timetable, DaySlot, TimetableHoliday, TeacherSlotAvailability, BatchFacultyLoad, FixedSlot, TimetableEntry
+from .models import Timetable, DaySlot, TimetableHoliday, TeacherSlotAvailability, BatchFacultyLoad, FixedSlot, TimetableEntry, TimetableBatch
 from django.db.models import Q
 from .genetic_algorithm import check_timetable_feasibility_from_start, generate_random_timetable
 from .algorithm_adapter import convert_teachers_to_algorithm_format, convert_batches_to_algorithm_format
@@ -1221,19 +1221,22 @@ def assign_batch_to_timetable(request):
             status=status.HTTP_400_BAD_REQUEST,
         )
     
-    # Check if batch is already assigned (by checking if any BatchFacultyLoad exists)
-    # This is just a check - we don't create BatchFacultyLoad here, only when teachers are assigned
-    # But we can return success if batch is already in use
+    # Create or get TimetableBatch assignment
+    timetable_batch, created = TimetableBatch.objects.get_or_create(
+        timetable=timetable,
+        batch=batch,
+    )
     
     return Response(
         {
-            "message": "Batch assigned to timetable successfully. You can now assign teachers to this batch.",
+            "message": "Batch assigned to timetable successfully." if created else "Batch was already assigned to this timetable.",
             "timetable_id": str(timetable.id),
             "batch_code": batch.code,
             "batch_name": batch.name,
             "batch_id": str(batch.id),
+            "already_assigned": not created,
         },
-        status=status.HTTP_200_OK,
+        status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
     )
 
 
@@ -1543,15 +1546,32 @@ def get_timetable_batch_assignments(request, timetable_id: str):
                 status=status.HTTP_403_FORBIDDEN,
             )
     
+    # Get all batches assigned to this timetable (from TimetableBatch)
+    timetable_batches = TimetableBatch.objects.filter(
+        timetable=timetable
+    ).select_related("batch").order_by("batch__code")
+    
     # Get all BatchFacultyLoad entries for this timetable
     faculty_loads = BatchFacultyLoad.objects.filter(
         timetable=timetable
     ).select_related("batch", "teacher").order_by("batch__code", "teacher__teacher_code", "teacher__username")
     
-    # Group by batch
+    # Initialize batches_dict with all assigned batches (even without teachers)
     batches_dict = {}
+    for tb in timetable_batches:
+        batch = tb.batch
+        batches_dict[batch.code] = {
+            "batch_code": batch.code,
+            "batch_name": batch.name,
+            "batch_id": str(batch.id),
+            "teachers": [],
+        }
+    
+    # Add teacher assignments
     for load in faculty_loads:
         batch_code = load.batch.code
+        
+        # If batch not in dict (assigned via old method without TimetableBatch), add it
         if batch_code not in batches_dict:
             batches_dict[batch_code] = {
                 "batch_code": batch_code,

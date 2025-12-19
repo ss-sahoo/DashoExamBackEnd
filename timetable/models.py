@@ -514,6 +514,34 @@ class TeacherSlotAvailability(TimeStampedModel):
             )
 
 
+class TimetableBatch(TimeStampedModel):
+    """
+    Tracks which batches are assigned to a timetable.
+    This is created when admin calls assign-batch API.
+    """
+    timetable = models.ForeignKey(
+        Timetable,
+        on_delete=models.CASCADE,
+        related_name="timetable_batches",
+        help_text="Timetable to which this batch is assigned.",
+    )
+    batch = models.ForeignKey(
+        Batch,
+        on_delete=models.CASCADE,
+        related_name="timetable_assignments",
+        help_text="Batch assigned to the timetable.",
+    )
+
+    class Meta:
+        unique_together = ("timetable", "batch")
+        ordering = ["batch__code"]
+        verbose_name = "Timetable Batch"
+        verbose_name_plural = "Timetable Batches"
+
+    def __str__(self) -> str:
+        return f"{self.timetable} - {self.batch.code}"
+
+
 class BatchFacultyLoad(TimeStampedModel):
     """
     Batch-wise faculty load configuration.
