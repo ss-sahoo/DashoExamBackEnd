@@ -961,6 +961,153 @@ def get_teacher_availability(request, timetable_id: str):
     )
 
 
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def get_teacher_wise_availability(request, timetable_id: str):
+    """
+    Get teacher availability organized by teacher instead of by slot.
+    
+    Returns availability organized by teacher, showing which slots
+    each teacher is available/unavailable for.
+    
+    Returns:
+    {
+        "timetable_id": "uuid",
+        "timetable": "Center Name - 2025-01-01 to 2025-03-31",
+        "center": "Center Name",
+        "from_date": "2025-12-19",
+        "to_date": "2025-12-29",
+        "teachers": [
+            {
+                "teacher_code": "TCH-CENT-230",
+                "teacher_name": "Trushank Lohar",
+                "teacher_id": "34",
+                "slots": [
+                    {
+                        "slot_id": "2dd8001f-0b71-44b3-a28a-d780bc0b643f",
+                        "slot_code": "d1_s1",
+                        "day": "Friday",
+                        "start_time": "08:00:00",
+                        "end_time": "09:00:00",
+                        "is_free_class": false,
+                        "is_available": true
+                    },
+                    {
+                        "slot_id": "ef44b599-50e0-48ad-b19f-f405f01002ca",
+                        "slot_code": "d8_s1",
+                        "day": "Friday",
+                        "start_time": "08:00:00",
+                        "end_time": "09:00:00",
+                        "is_free_class": false,
+                        "is_available": false
+                    }
+                ]
+            }
+        ]
+    }
+    """
+    user = request.user
+    
+    # Check if user is Admin or Super Admin
+    if user.role not in (AccountUser.ROLE_ADMIN, AccountUser.ROLE_SUPER_ADMIN):
+        return Response(
+            {"detail": "Only Admin and Super Admin can view teacher availability."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    
+    # Get timetable
+    try:
+        timetable = Timetable.objects.select_related("center").get(id=timetable_id)
+    except Timetable.DoesNotExist:
+        return Response(
+            {"detail": "Timetable not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+    
+    # Check permissions: Admin can only view their center's timetables
+    if user.role == AccountUser.ROLE_ADMIN:
+        if not user.center:
+            return Response(
+                {"detail": "Admin user is not linked to any center."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if timetable.center != user.center:
+            return Response(
+                {"detail": "You can only view timetables in your center."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+    
+    # Get all day slots for this timetable
+    day_slots = DaySlot.objects.filter(timetable=timetable).order_by("day", "slot_number")
+    
+    # Get all teachers in the center
+    center = timetable.center
+    teachers = AccountUser.objects.filter(
+        role=AccountUser.ROLE_TEACHER,
+        center=center
+    ).order_by("teacher_code", "username")
+    
+    # Get all teacher slot availabilities for this timetable
+    availabilities = TeacherSlotAvailability.objects.filter(
+        timetable=timetable
+    ).select_related("teacher", "day_slot")
+    
+    # Create a map: (day_slot_id, teacher_id) -> is_available
+    availability_map = {}
+    for av in availabilities:
+        key = (av.day_slot_id, av.teacher_id)
+        availability_map[key] = av.is_available
+    
+    # Map day constant to display name
+    day_display_map = {
+        DaySlot.MONDAY: "Monday",
+        DaySlot.TUESDAY: "Tuesday",
+        DaySlot.WEDNESDAY: "Wednesday",
+        DaySlot.THURSDAY: "Thursday",
+        DaySlot.FRIDAY: "Friday",
+        DaySlot.SATURDAY: "Saturday",
+        DaySlot.SUNDAY: "Sunday",
+    }
+    
+    # Build response organized by teacher
+    teachers_data = []
+    for teacher in teachers:
+        slots_data = []
+        for slot in day_slots:
+            # Default is available (True) if not explicitly set
+            key = (slot.id, teacher.id)
+            is_available = availability_map.get(key, True)
+            
+            slots_data.append({
+                "slot_id": str(slot.id),
+                "slot_code": slot.slot_code,
+                "day": day_display_map.get(slot.day, slot.day),
+                "start_time": str(slot.start_time),
+                "end_time": str(slot.end_time),
+                "is_free_class": slot.is_free_class,
+                "is_available": is_available,
+            })
+        
+        teachers_data.append({
+            "teacher_code": teacher.teacher_code or teacher.username,
+            "teacher_name": f"{teacher.first_name} {teacher.last_name}".strip() or teacher.username,
+            "teacher_id": str(teacher.id),
+            "slots": slots_data,
+        })
+    
+    return Response(
+        {
+            "timetable_id": str(timetable.id),
+            "timetable": str(timetable),
+            "center": timetable.center.name,
+            "from_date": str(timetable.from_date),
+            "to_date": str(timetable.to_date),
+            "teachers": teachers_data,
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def assign_batch_to_timetable(request):
@@ -1728,6 +1875,194 @@ def get_fixed_slots(request, timetable_id: str):
             "to_date": str(timetable.to_date),
             "fixed_slots": fixed_slots_data,
             "total": len(fixed_slots_data),
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
+@api_view(["PUT", "PATCH"])
+@permission_classes([IsAuthenticated])
+def update_fixed_slot(request, fixed_slot_id: str):
+    """
+    Update an existing fixed slot.
+    Admin can change teacher, subject, or lock status of a fixed slot.
+    
+    Payload:
+    {
+        "teacher_code": "NEW-TEACHER",  # Optional - change teacher
+        "subject": "New Subject",        # Optional - change subject
+        "is_locked": false               # Optional - unlock the slot
+    }
+    
+    Returns:
+    {
+        "message": "Fixed slot updated successfully.",
+        "id": "uuid",
+        "slot_code": "m1",
+        "day": "Monday",
+        "batch_code": "HDTN-1A-ZA1",
+        "teacher_code": "NEW-TEACHER",
+        "subject": "New Subject",
+        "is_locked": false
+    }
+    """
+    user = request.user
+    
+    # Check if user is Admin or Super Admin
+    if user.role not in (AccountUser.ROLE_ADMIN, AccountUser.ROLE_SUPER_ADMIN):
+        return Response(
+            {"detail": "Only Admin and Super Admin can update fixed slots."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    
+    # Get fixed slot
+    try:
+        fixed_slot = FixedSlot.objects.select_related(
+            "timetable", "timetable__center", "day_slot", "batch", "teacher"
+        ).get(id=fixed_slot_id)
+    except FixedSlot.DoesNotExist:
+        return Response(
+            {"detail": "Fixed slot not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+    
+    timetable = fixed_slot.timetable
+    
+    # Check permissions: Admin can only manage their center's timetables
+    if user.role == AccountUser.ROLE_ADMIN:
+        if not user.center:
+            return Response(
+                {"detail": "Admin user is not linked to any center."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if timetable.center != user.center:
+            return Response(
+                {"detail": "You can only manage fixed slots in your center."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+    
+    # Get update data
+    teacher_code = request.data.get("teacher_code")
+    subject = request.data.get("subject")
+    is_locked = request.data.get("is_locked")
+    
+    # Track what was updated
+    updated_fields = []
+    
+    # Update teacher if provided
+    if teacher_code is not None:
+        if teacher_code == "":
+            # Remove teacher (make it a free slot)
+            fixed_slot.teacher = None
+            updated_fields.append("teacher")
+        else:
+            # Handle FREE teacher (special case)
+            is_free_teacher = teacher_code.upper().startswith("FREE")
+            
+            if is_free_teacher:
+                free_code = teacher_code.upper()
+                try:
+                    teacher = AccountUser.objects.get(
+                        role=AccountUser.ROLE_TEACHER,
+                        center=timetable.center,
+                        teacher_code__iexact=free_code
+                    )
+                except AccountUser.DoesNotExist:
+                    # Create new FREE teacher
+                    teacher = AccountUser.objects.create_user(
+                        username=free_code,
+                        teacher_code=free_code,
+                        role=AccountUser.ROLE_TEACHER,
+                        center=timetable.center,
+                        first_name="FREE",
+                        last_name=free_code.replace("FREE", "").strip() or "",
+                        teacher_subjects="FREE",
+                        password="FREE_TEACHER_PLACEHOLDER",
+                    )
+            else:
+                try:
+                    from django.db.models import Q
+                    teacher = AccountUser.objects.get(
+                        Q(role=AccountUser.ROLE_TEACHER) &
+                        (Q(teacher_code__iexact=teacher_code) |
+                         Q(username__iexact=teacher_code) |
+                         Q(email__iexact=teacher_code))
+                    )
+                except AccountUser.DoesNotExist:
+                    return Response(
+                        {"detail": f"Teacher with code '{teacher_code}' not found."},
+                        status=status.HTTP_404_NOT_FOUND,
+                    )
+                
+                # Verify teacher belongs to the same center
+                if teacher.center != timetable.center:
+                    return Response(
+                        {"detail": f"Teacher '{teacher_code}' does not belong to the same center as the timetable."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+            
+            fixed_slot.teacher = teacher
+            updated_fields.append("teacher")
+            
+            # Auto-update subject from teacher if subject not explicitly provided
+            if subject is None and teacher:
+                if is_free_teacher:
+                    fixed_slot.subject = "FREE"
+                else:
+                    fixed_slot.subject = teacher.teacher_subjects or fixed_slot.subject
+                updated_fields.append("subject (auto)")
+    
+    # Update subject if provided
+    if subject is not None:
+        fixed_slot.subject = subject
+        if "subject (auto)" not in updated_fields:
+            updated_fields.append("subject")
+    
+    # Update is_locked if provided
+    if is_locked is not None:
+        fixed_slot.is_locked = bool(is_locked)
+        updated_fields.append("is_locked")
+    
+    # Save changes
+    if updated_fields:
+        try:
+            fixed_slot.save()
+        except Exception as e:
+            return Response(
+                {"detail": f"Error updating fixed slot: {str(e)}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+    else:
+        return Response(
+            {"detail": "No fields to update. Provide teacher_code, subject, or is_locked."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    
+    # Map day constant to display name
+    day_display_map = {
+        DaySlot.MONDAY: "Monday",
+        DaySlot.TUESDAY: "Tuesday",
+        DaySlot.WEDNESDAY: "Wednesday",
+        DaySlot.THURSDAY: "Thursday",
+        DaySlot.FRIDAY: "Friday",
+        DaySlot.SATURDAY: "Saturday",
+        DaySlot.SUNDAY: "Sunday",
+    }
+    
+    return Response(
+        {
+            "message": f"Fixed slot updated successfully. Updated: {', '.join(updated_fields)}",
+            "id": str(fixed_slot.id),
+            "slot_code": fixed_slot.day_slot.slot_code,
+            "day": day_display_map.get(fixed_slot.day_slot.day, fixed_slot.day_slot.day),
+            "start_time": str(fixed_slot.day_slot.start_time),
+            "end_time": str(fixed_slot.day_slot.end_time),
+            "batch_code": fixed_slot.batch.code,
+            "batch_name": fixed_slot.batch.name,
+            "teacher_code": fixed_slot.teacher.teacher_code if fixed_slot.teacher else None,
+            "teacher_name": f"{fixed_slot.teacher.first_name} {fixed_slot.teacher.last_name}".strip() if fixed_slot.teacher else None,
+            "subject": fixed_slot.subject or "Free / Exam",
+            "is_locked": fixed_slot.is_locked,
         },
         status=status.HTTP_200_OK,
     )

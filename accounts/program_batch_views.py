@@ -140,15 +140,15 @@ def create_program(request):
 @permission_classes([IsAuthenticated])
 def create_batch(request):
     """
-    Admin creates a new Batch under a program in their center.
+    Admin creates a new Batch (optionally under a program) in their center.
     
     Payload:
     {
-        "program_name": "Super 30",
-        "code": "HDTN-1A-ZA1",
-        "name": "Super 30 - Batch A (2025)",
-        "start_date": "2025-01-01",
-        "end_date": "2025-03-31"
+        "program_name": "Super 30",  # Optional - if not provided, batch created without program
+        "code": "HDTN-1A-ZA1",       # Required
+        "name": "Super 30 - Batch A (2025)",  # Optional - auto-generated from code if not provided
+        "start_date": "2025-01-01",  # Optional
+        "end_date": "2025-03-31"     # Optional
     }
     
     Returns:
@@ -156,7 +156,10 @@ def create_batch(request):
         "id": "uuid",
         "code": "HDTN-1A-ZA1",
         "name": "Super 30 - Batch A (2025)",
-        "program": "Super 30"
+        "program": "Super 30",
+        "program_id": "uuid",
+        "center": "Allen - Jaipur Center",
+        "center_id": "uuid"
     }
     """
     is_admin, error_response = _check_admin(request)
@@ -172,32 +175,46 @@ def create_batch(request):
     start_date_str = request.data.get("start_date", "")
     end_date_str = request.data.get("end_date", "")
     
-    if not program_name or not code or not name:
+    if not code:
         return Response(
-            {"detail": "program_name, code, and name are required."},
+            {"detail": "code is required."},
             status=status.HTTP_400_BAD_REQUEST,
         )
     
-    # Find program in admin's center
-    try:
-        program = Program.objects.get(center=center, name=program_name)
-    except Program.DoesNotExist:
-        return Response(
-            {"detail": f"Program '{program_name}' not found in your center '{center.name}'."},
-            status=status.HTTP_404_NOT_FOUND,
-        )
-    except Program.MultipleObjectsReturned:
-        return Response(
-            {"detail": f"Multiple programs found with name '{program_name}'. Please contact Super Admin."},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
+    # Auto-generate name from code if not provided
+    if not name:
+        name = f"Batch {code}"
     
-    # Check if batch code already exists in this program
-    if Batch.objects.filter(program=program, code=code).exists():
-        return Response(
-            {"detail": f"Batch with code '{code}' already exists in program '{program_name}'."},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
+    # Find program in admin's center (optional)
+    program = None
+    if program_name:
+        try:
+            program = Program.objects.get(center=center, name=program_name)
+        except Program.DoesNotExist:
+            return Response(
+                {"detail": f"Program '{program_name}' not found in your center '{center.name}'."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        except Program.MultipleObjectsReturned:
+            return Response(
+                {"detail": f"Multiple programs found with name '{program_name}'. Please contact Super Admin."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+    
+    # Check if batch code already exists
+    if program:
+        if Batch.objects.filter(program=program, code=code).exists():
+            return Response(
+                {"detail": f"Batch with code '{code}' already exists in program '{program_name}'."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+    else:
+        # Check if batch code exists without program in this center
+        if Batch.objects.filter(program__isnull=True, code=code).exists():
+            return Response(
+                {"detail": f"Batch with code '{code}' already exists."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
     
     # Parse dates
     start_date = None
@@ -232,8 +249,10 @@ def create_batch(request):
                 "id": str(batch.id),
                 "code": batch.code,
                 "name": batch.name,
-                "program": program.name,
+                "program": program.name if program else None,
+                "program_id": str(program.id) if program else None,
                 "center": center.name,
+                "center_id": str(center.id),
                 "start_date": str(batch.start_date) if batch.start_date else None,
                 "end_date": str(batch.end_date) if batch.end_date else None,
             },
@@ -573,3 +592,122 @@ def get_batch(request, batch_id: str):
     }
     return Response(data, status=status.HTTP_200_OK)
 
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def get_teachers_in_center(request):
+    """
+    Get all teachers in a center.
+    - Super Admin: can specify center_name or center_id to get teachers from any center
+    - Admin: gets teachers only from their own center
+    
+    Query Parameters:
+    - center_name (optional): Filter by center name (Super Admin only)
+    - center_id (optional): Filter by center ID (Super Admin only)
+    
+    Returns:
+    {
+        "teachers": [
+            {
+                "id": "uuid",
+                "username": "teacher@example.com",
+                "email": "teacher@example.com",
+                "first_name": "John",
+                "last_name": "Doe",
+                "full_name": "John Doe",
+                "teacher_code": "JD-PHY",
+                "teacher_employee_id": "EMP-001",
+                "teacher_subjects": "Physics, Mathematics",
+                "phone": "+1234567890",
+                "center": "Allen - Jaipur Center",
+                "center_id": "uuid",
+                "is_active": true,
+                "created_at": "2025-01-01T00:00:00Z"
+            }
+        ],
+        "total": 10,
+        "center": "Allen - Jaipur Center"
+    }
+    """
+    user = request.user
+    center_name = request.query_params.get("center_name", "")
+    center_id = request.query_params.get("center_id", "")
+    
+    # Determine which center to query
+    if user.role in [User.ROLE_SUPER_ADMIN, 'SUPER_ADMIN']:
+        # Super admin can query any center
+        if center_id:
+            try:
+                center = Center.objects.get(id=center_id)
+            except Center.DoesNotExist:
+                return Response(
+                    {"detail": f"Center with ID '{center_id}' not found."},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+        elif center_name:
+            try:
+                center = Center.objects.get(name__iexact=center_name)
+            except Center.DoesNotExist:
+                return Response(
+                    {"detail": f"Center '{center_name}' not found."},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+            except Center.MultipleObjectsReturned:
+                return Response(
+                    {"detail": f"Multiple centers found with name '{center_name}'. Please use center_id."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        else:
+            return Response(
+                {"detail": "Super Admin must provide center_name or center_id."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+    elif user.role in ['ADMIN', 'institute_admin']:
+        # Admin can only query their own center
+        if not user.center:
+            return Response(
+                {"detail": "Admin user is not linked to any center."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        center = user.center
+    else:
+        return Response(
+            {"detail": "Only Super Admin and Admin can view teachers."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    
+    # Get all teachers in the center
+    teachers = User.objects.filter(
+        center=center,
+        role__in=['teacher', 'TEACHER']
+    ).order_by('first_name', 'last_name')
+    
+    teachers_data = []
+    for teacher in teachers:
+        teachers_data.append({
+            "id": str(teacher.id),
+            "username": teacher.username,
+            "email": teacher.email,
+            "first_name": teacher.first_name,
+            "last_name": teacher.last_name,
+            "full_name": teacher.get_full_name(),
+            "teacher_code": teacher.teacher_code or "",
+            "teacher_employee_id": teacher.teacher_employee_id or "",
+            "teacher_subjects": teacher.teacher_subjects or "",
+            "phone": teacher.phone or teacher.phone_number or "",
+            "center": center.name,
+            "center_id": str(center.id),
+            "is_active": teacher.is_active,
+            "created_at": teacher.created_at.isoformat(),
+        })
+    
+    return Response(
+        {
+            "teachers": teachers_data,
+            "total": len(teachers_data),
+            "center": center.name,
+            "center_id": str(center.id),
+        },
+        status=status.HTTP_200_OK,
+    )

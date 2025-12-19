@@ -1615,6 +1615,33 @@
           }
         },
         {
+          "name": "Get Teacher-wise Availability",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{timetable_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/timetables/{{timetable_id}}/teacher-wise-availability/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "timetable",
+                "timetables",
+                "{{timetable_id}}",
+                "teacher-wise-availability",
+                ""
+              ]
+            },
+            "description": "Get teacher availability organized by teacher instead of by slot."
+          }
+        },
+        {
           "name": "Assign Batch to Timetable",
           "request": {
             "method": "POST",

@@ -19,11 +19,13 @@ from timetable.views import (
     list_timetables,
     set_teacher_slot_availability,
     get_teacher_availability,
+    get_teacher_wise_availability,
     assign_batch_to_timetable,
     assign_teacher_to_batch,
     get_timetable_batch_assignments,
     assign_fixed_slot,
     get_fixed_slots,
+    update_fixed_slot,
     run_timetable_optimization,
     set_free_classes_count,
     get_free_classes_count,
@@ -64,6 +66,7 @@ from accounts.program_batch_views import (
     get_program,
     list_batches,
     get_batch,
+    get_teachers_in_center,
 )
 
 app_name = "timetable"
@@ -115,6 +118,7 @@ urlpatterns = [
     path("batches/", list_batches, name="list-batches"),
     path("batches/<uuid:batch_id>/", get_batch, name="get-batch"),
     path("admin/batches/add-student/", add_student_to_batch, name="add-student-to-batch"),
+    path("teachers/", get_teachers_in_center, name="get-teachers-in-center"),
     
     # ===========
     # Timetable Management APIs
@@ -131,6 +135,7 @@ urlpatterns = [
     # ===========
     path("admin/timetables/teacher-availability/", set_teacher_slot_availability, name="set-teacher-slot-availability"),
     path("timetables/<uuid:timetable_id>/teacher-availability/", get_teacher_availability, name="get-teacher-availability"),
+    path("timetables/<uuid:timetable_id>/teacher-wise-availability/", get_teacher_wise_availability, name="get-teacher-wise-availability"),
     
     # ===========
     # Batch and Teacher Assignment APIs
@@ -144,6 +149,7 @@ urlpatterns = [
     # ===========
     path("admin/timetables/fixed-slots/assign/", assign_fixed_slot, name="assign-fixed-slot"),
     path("timetables/<uuid:timetable_id>/fixed-slots/", get_fixed_slots, name="get-fixed-slots"),
+    path("admin/timetables/fixed-slots/<uuid:fixed_slot_id>/update/", update_fixed_slot, name="update-fixed-slot"),
     
     # ===========
     # Optimization Payload API
