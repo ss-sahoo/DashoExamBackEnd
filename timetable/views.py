@@ -2586,15 +2586,20 @@ def run_timetable_optimization(request, timetable_id: str):
             )
         
         # Step 3: Save results to database
-        # Create reverse mapping: day_key -> DaySlot model constant
-        DAY_MAP_REVERSE = {v: k for k, v in DAY_MAP_SHORT.items()}
-        
         # Create mapping: slot_code -> DaySlot object
+        # Support both weekly (mon, tue) and date-based (d1, d2) timetables
         slot_code_to_dayslot = {}
         for day_slot in timetable.day_slots.all():
-            day_key = DAY_MAP_SHORT[day_slot.day]
+            # For date-based timetables, use day_index (d1, d2, etc.)
+            if day_slot.day_index:
+                day_key = f"d{day_slot.day_index}"
+            else:
+                # For weekly timetables, use day constant (mon, tue, etc.)
+                day_key = DAY_MAP_SHORT.get(day_slot.day, "")
+            
             code = day_slot.slot_code or f"{day_key}{day_slot.slot_number}"
-            slot_code_to_dayslot[(day_key, code)] = day_slot
+            # Store by slot_code directly for easier lookup
+            slot_code_to_dayslot[code] = day_slot
         
         # Create mapping: teacher_code -> User object
         teacher_code_to_user = {}
@@ -2623,12 +2628,9 @@ def run_timetable_optimization(request, timetable_id: str):
             
             # Save generated timetable
             for day_key, slots in generated_timetable.items():
-                day_constant = DAY_MAP_REVERSE.get(day_key)
-                if not day_constant:
-                    continue
-                
                 for slot_code, batch_assignments in slots.items():
-                    day_slot = slot_code_to_dayslot.get((day_key, slot_code))
+                    # Look up day_slot by slot_code directly
+                    day_slot = slot_code_to_dayslot.get(slot_code)
                     if not day_slot:
                         continue
                     
