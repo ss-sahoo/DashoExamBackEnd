@@ -3405,6 +3405,14 @@ def get_teacher_timetable(request, timetable_id: str, teacher_id: str = None):
             ).values_list('teacher_id', flat=True)
         )
         
+        # From TimetableEntry (optimization results)
+        teacher_ids.update(
+            TimetableEntry.objects.filter(
+                day_slot__timetable=timetable,
+                teacher__isnull=False
+            ).values_list('teacher_id', flat=True)
+        )
+        
         teachers = AccountUser.objects.filter(
             id__in=teacher_ids,
             role=AccountUser.ROLE_TEACHER
@@ -3416,13 +3424,10 @@ def get_teacher_timetable(request, timetable_id: str, teacher_id: str = None):
         teacher__in=teachers
     ).select_related('day_slot', 'batch', 'teacher')
     
-    # Get all timetable entries (for batch info)
+    # Get all timetable entries with teachers
     entries = TimetableEntry.objects.filter(
         day_slot__timetable=timetable
-    ).select_related('day_slot', 'batch')
-    
-    # Create entry map: day_slot_id -> entry
-    entry_map = {e.day_slot_id: e for e in entries}
+    ).select_related('day_slot', 'batch', 'teacher')
     
     # Day mapping helper: supports both weekly (mon..sun) and date-based (d1..dN)
     def _day_key_for_slot(slot: DaySlot) -> str:
@@ -3446,36 +3451,74 @@ def get_teacher_timetable(request, timetable_id: str, teacher_id: str = None):
     
     teachers_data = []
     for teacher in teachers:
-        # Get fixed slots for this teacher
-        teacher_fixed_slots = [fs for fs in fixed_slots if fs.teacher_id == teacher.id]
-        
         slots_by_day = {}
-        
         batches_set = set()
+        total_classes = 0
         
+        # Get slots from TimetableEntry (from optimization)
+        teacher_entries = [e for e in entries if e.teacher_id == teacher.id]
+        for entry in teacher_entries:
+            day_key = _day_key_for_slot(entry.day_slot)
+            if day_key == "unknown":
+                continue
+            
+            slot_data = {
+                "slot_id": str(entry.day_slot.id),
+                "slot_code": entry.day_slot.slot_code,
+                "slot_number": entry.day_slot.slot_number,
+                "start_time": entry.day_slot.start_time.strftime("%H:%M"),
+                "end_time": entry.day_slot.end_time.strftime("%H:%M"),
+                "batch_code": entry.batch.code,
+                "batch_name": entry.batch.name,
+                "subject": entry.subject,
+                "room_number": entry.room_number or "",
+                "day_index": entry.day_slot.day_index,
+                "actual_date": str(entry.day_slot.actual_date) if entry.day_slot.actual_date else None,
+                "is_fixed": False,
+            }
+            
+            slots_by_day.setdefault(day_key, []).append(slot_data)
+            batches_set.add(entry.batch.code)
+            total_classes += 1
+        
+        # Get slots from FixedSlot (override/add fixed assignments)
+        teacher_fixed_slots = [fs for fs in fixed_slots if fs.teacher_id == teacher.id]
         for fs in teacher_fixed_slots:
             day_key = _day_key_for_slot(fs.day_slot)
             if day_key == "unknown":
                 continue
-            # Get entry info if available
-            entry = entry_map.get(fs.day_slot_id)
             
-            slot_data = {
-                "slot_id": str(fs.day_slot.id),
-                "slot_code": fs.day_slot.slot_code,
-                "slot_number": fs.day_slot.slot_number,
-                "start_time": fs.day_slot.start_time.strftime("%H:%M"),
-                "end_time": fs.day_slot.end_time.strftime("%H:%M"),
-                "batch_code": fs.batch.code,
-                "batch_name": fs.batch.name,
-                "subject": fs.subject or (entry.subject if entry else ""),
-                "room_number": entry.room_number if entry else "",
-                "day_index": fs.day_slot.day_index,
-                "actual_date": str(fs.day_slot.actual_date) if fs.day_slot.actual_date else None,
-            }
+            # Check if this slot already exists from entries
+            existing_slot = None
+            if day_key in slots_by_day:
+                for s in slots_by_day[day_key]:
+                    if s["slot_id"] == str(fs.day_slot.id) and s["batch_code"] == fs.batch.code:
+                        existing_slot = s
+                        break
             
-            slots_by_day.setdefault(day_key, []).append(slot_data)
-            batches_set.add(fs.batch.code)
+            if existing_slot:
+                # Update existing slot to mark as fixed
+                existing_slot["is_fixed"] = True
+                existing_slot["subject"] = fs.subject or existing_slot["subject"]
+            else:
+                # Add new fixed slot
+                slot_data = {
+                    "slot_id": str(fs.day_slot.id),
+                    "slot_code": fs.day_slot.slot_code,
+                    "slot_number": fs.day_slot.slot_number,
+                    "start_time": fs.day_slot.start_time.strftime("%H:%M"),
+                    "end_time": fs.day_slot.end_time.strftime("%H:%M"),
+                    "batch_code": fs.batch.code,
+                    "batch_name": fs.batch.name,
+                    "subject": fs.subject or "",
+                    "room_number": "",
+                    "day_index": fs.day_slot.day_index,
+                    "actual_date": str(fs.day_slot.actual_date) if fs.day_slot.actual_date else None,
+                    "is_fixed": True,
+                }
+                slots_by_day.setdefault(day_key, []).append(slot_data)
+                batches_set.add(fs.batch.code)
+                total_classes += 1
         
         # Also check BatchFacultyLoad to see which batches this teacher is assigned to
         faculty_loads = BatchFacultyLoad.objects.filter(
@@ -3491,7 +3534,7 @@ def get_teacher_timetable(request, timetable_id: str, teacher_id: str = None):
             "teacher_code": teacher.teacher_code or teacher.username,
             "teacher_name": teacher.get_full_name(),
             "slots": slots_by_day,
-            "total_classes": len(teacher_fixed_slots),
+            "total_classes": total_classes,
             "batches": sorted(list(batches_set)),
         })
     
