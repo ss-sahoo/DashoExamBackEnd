@@ -1302,6 +1302,49 @@ def get_teacher_wise_availability(request, timetable_id: str):
         key = (av.day_slot_id, av.teacher_id)
         availability_map[key] = av.is_available
     
+    # Get all TimetableEntry for teachers in OTHER timetables to check if busy
+    # We need to find entries where teacher has class at same date and overlapping time
+    teacher_ids = [t.id for t in teachers]
+    
+    # Get all entries from OTHER timetables for these teachers
+    other_entries = TimetableEntry.objects.filter(
+        teacher_id__in=teacher_ids
+    ).exclude(
+        day_slot__timetable=timetable  # Exclude current timetable
+    ).select_related('day_slot', 'teacher', 'batch')
+    
+    # Create a list of busy slots: (teacher_id, date, start_time, end_time, info)
+    # We'll check for time overlap, not exact match
+    busy_slots = []
+    for entry in other_entries:
+        if entry.day_slot.actual_date:
+            busy_slots.append({
+                "teacher_id": entry.teacher_id,
+                "date": entry.day_slot.actual_date,
+                "start_time": entry.day_slot.start_time,
+                "end_time": entry.day_slot.end_time,
+                "info": {
+                    "timetable": str(entry.day_slot.timetable),
+                    "batch": entry.batch.code if entry.batch else None,
+                    "subject": entry.subject,
+                    "time": f"{entry.day_slot.start_time.strftime('%H:%M')}-{entry.day_slot.end_time.strftime('%H:%M')}",
+                }
+            })
+    
+    def check_time_overlap(start1, end1, start2, end2):
+        """Check if two time ranges overlap."""
+        # Times overlap if: start1 < end2 AND start2 < end1
+        return start1 < end2 and start2 < end1
+    
+    def find_busy_info(teacher_id, slot_date, slot_start, slot_end):
+        """Find if teacher is busy at given date/time (with overlap check)."""
+        for busy in busy_slots:
+            if (busy["teacher_id"] == teacher_id and 
+                busy["date"] == slot_date and
+                check_time_overlap(slot_start, slot_end, busy["start_time"], busy["end_time"])):
+                return busy["info"]
+        return None
+    
     # Map day constant to display name
     day_display_map = {
         DaySlot.MONDAY: "Monday",
@@ -1323,6 +1366,19 @@ def get_teacher_wise_availability(request, timetable_id: str):
             key = (slot.id, teacher.id)
             is_available = availability_map.get(key, True)
             
+            # Check if teacher is busy (has class in another timetable at overlapping time)
+            is_busy = False
+            busy_info = None
+            if slot.actual_date:
+                busy_info = find_busy_info(
+                    teacher.id,
+                    slot.actual_date,
+                    slot.start_time,
+                    slot.end_time
+                )
+                if busy_info:
+                    is_busy = True
+            
             day_name = day_display_map.get(slot.day, slot.day)
             slot_data = {
                 "slot_id": str(slot.id),
@@ -1331,7 +1387,11 @@ def get_teacher_wise_availability(request, timetable_id: str):
                 "end_time": str(slot.end_time),
                 "is_free_class": slot.is_free_class,
                 "is_available": is_available,
+                "is_busy": is_busy,
             }
+            
+            if busy_info:
+                slot_data["busy_in"] = busy_info
             
             # Use day_index as key to keep each date separate
             day_key = slot.day_index or (str(slot.actual_date) if slot.actual_date else day_name)
@@ -2264,12 +2324,17 @@ def get_fixed_slots(request, timetable_id: str):
     """
     Get all fixed slots for a timetable.
     
+    GET /api/timetable/timetables/<timetable_id>/fixed-slots/
+    GET /api/timetable/timetables/<timetable_id>/fixed-slots/?batch_code=BATCH-001
+    GET /api/timetable/timetables/<timetable_id>/fixed-slots/?batch_id=uuid
+    
     Returns:
     {
         "timetable_id": "uuid",
         "timetable": "Center Name - 2025-01-01 to 2025-03-31",
         "fixed_slots": [
             {
+                "id": "uuid",
                 "slot_code": "m1",
                 "day": "Monday",
                 "start_time": "08:00:00",
@@ -2315,10 +2380,22 @@ def get_fixed_slots(request, timetable_id: str):
                 status=status.HTTP_403_FORBIDDEN,
             )
     
+    # Get filter params
+    batch_code = request.query_params.get("batch_code")
+    batch_id = request.query_params.get("batch_id")
+    
     # Get all fixed slots for this timetable
-    fixed_slots = FixedSlot.objects.filter(
+    fixed_slots_qs = FixedSlot.objects.filter(
         timetable=timetable
-    ).select_related("day_slot", "batch", "teacher").order_by("day_slot__day", "day_slot__slot_number", "batch__code")
+    ).select_related("day_slot", "batch", "teacher")
+    
+    # Apply batch filter if provided
+    if batch_id:
+        fixed_slots_qs = fixed_slots_qs.filter(batch_id=batch_id)
+    elif batch_code:
+        fixed_slots_qs = fixed_slots_qs.filter(batch__code=batch_code)
+    
+    fixed_slots = fixed_slots_qs.order_by("day_slot__day_index", "day_slot__slot_number", "batch__code")
     
     # Map day constant to display name
     day_display_map = {
