@@ -2107,25 +2107,43 @@ def get_batch_wise_slots(request, timetable_id: str, batch_id: str = None):
 @permission_classes([IsAuthenticated])
 def assign_fixed_slot(request):
     """
-    Admin assigns a teacher to a specific slot for a batch (fixed slot).
+    Admin assigns a fixed slot for a batch. Can be a teacher class, exam, or free period.
     This locks the slot so optimization cannot change it.
     
     Payload:
     {
         "timetable_id": "uuid",
-        "slot_code": "m1",  # or day_slot_id
-        "batch_code": "HDTN-1A-ZA1",
-        "teacher_code": "AK-CAP",
-        "subject": "Physics"  # Optional, will use teacher's subject if not provided
+        "slot_code": "d1_s1",           # or use day_slot_id
+        "day_slot_id": "uuid",          # alternative to slot_code
+        "batch_code": "BATCH-001",
+        "teacher_code": "TCH-CENT-230", # Optional - omit for Exam/Free
+        "subject": "Physics"            # Required - can be "Exam", "Free Period", etc.
     }
+    
+    Examples:
+    1. Teacher class:
+       {"timetable_id": "...", "slot_code": "d1_s1", "batch_code": "BATCH-001", 
+        "teacher_code": "TCH-CENT-230", "subject": "Physics"}
+    
+    2. Exam (no teacher):
+       {"timetable_id": "...", "slot_code": "d1_s1", "batch_code": "BATCH-001", 
+        "subject": "Exam"}
+    
+    3. Free Period (no teacher):
+       {"timetable_id": "...", "slot_code": "d1_s1", "batch_code": "BATCH-001", 
+        "subject": "Free Period"}
+    
+    4. Free teacher (special):
+       {"timetable_id": "...", "slot_code": "d1_s1", "batch_code": "BATCH-001", 
+        "teacher_code": "FREE", "subject": "Free"}
     
     Returns:
     {
         "message": "Fixed slot assigned successfully.",
-        "slot_code": "m1",
-        "day": "Monday",
-        "batch_code": "HDTN-1A-ZA1",
-        "teacher_code": "AK-CAP",
+        "slot_code": "d1_s1",
+        "day": "Friday",
+        "batch_code": "BATCH-001",
+        "teacher_code": "TCH-CENT-230",  # null if no teacher
         "subject": "Physics",
         "is_locked": true
     }
