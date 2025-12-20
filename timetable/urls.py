@@ -20,6 +20,7 @@ from timetable.views import (
     list_timetables,
     set_teacher_slot_availability,
     get_teacher_availability,
+    get_available_teachers_for_slot,
     get_teacher_wise_availability,
     assign_batch_to_timetable,
     assign_teacher_to_batch,
@@ -31,6 +32,7 @@ from timetable.views import (
     delete_fixed_slot,
     check_timetable_feasibility,
     run_timetable_optimization,
+    regenerate_timetable_from_slot,
     set_free_classes_count,
     get_free_classes_count,
     get_all_batches_timetable,
@@ -141,6 +143,8 @@ urlpatterns = [
     path("admin/timetables/teacher-availability/", set_teacher_slot_availability, name="set-teacher-slot-availability"),
     path("timetables/<uuid:timetable_id>/teacher-availability/", get_teacher_availability, name="get-teacher-availability"),
     path("timetables/<uuid:timetable_id>/teacher-wise-availability/", get_teacher_wise_availability, name="get-teacher-wise-availability"),
+    path("timetables/<uuid:timetable_id>/slots/<uuid:slot_id>/available-teachers/", get_available_teachers_for_slot, name="get-available-teachers-for-slot"),
+    path("timetables/<uuid:timetable_id>/available-teachers/", get_available_teachers_for_slot, name="get-available-teachers-by-slot-code"),
     
     # ===========
     # Batch and Teacher Assignment APIs
@@ -169,6 +173,7 @@ urlpatterns = [
     # ===========
     path("timetables/<uuid:timetable_id>/check-feasibility/", check_timetable_feasibility, name="check-timetable-feasibility"),
     path("timetables/<uuid:timetable_id>/optimize/", run_timetable_optimization, name="run-timetable-optimization"),
+    path("timetables/<uuid:timetable_id>/regenerate-from-slot/", regenerate_timetable_from_slot, name="regenerate-timetable-from-slot"),
     
     # ===========
     # Batch-wise Timetable GET APIs

@@ -23,7 +23,7 @@ from accounts.models import Center, Batch, User as AccountUser
 from .optimization import build_full_payload, DAY_MAP_SHORT
 from .models import Timetable, DaySlot, TimetableHoliday, TeacherSlotAvailability, BatchFacultyLoad, FixedSlot, TimetableEntry, TimetableBatch
 from django.db.models import Q
-from .genetic_algorithm import check_timetable_feasibility_from_start, generate_random_timetable
+from .genetic_algorithm import check_timetable_feasibility_from_start, generate_random_timetable, generate_new_fixed_slots
 from .algorithm_adapter import convert_teachers_to_algorithm_format, convert_batches_to_algorithm_format
 from django.db import transaction
 
@@ -1187,6 +1187,240 @@ def get_teacher_availability(request, timetable_id: str):
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
+def get_available_teachers_for_slot(request, timetable_id: str, slot_id: str = None):
+    """
+    Get all teachers available for a specific slot.
+    Shows which teachers can be assigned to this slot.
+    
+    GET /api/timetable/timetables/<timetable_id>/slots/<slot_id>/available-teachers/
+    GET /api/timetable/timetables/<timetable_id>/available-teachers/?slot_code=d1_s1
+    
+    Returns:
+    {
+        "timetable_id": "uuid",
+        "slot": {
+            "slot_id": "uuid",
+            "slot_code": "d1_s1",
+            "day": "Friday",
+            "date": "2025-12-19",
+            "start_time": "08:00:00",
+            "end_time": "09:00:00"
+        },
+        "available_teachers": [
+            {
+                "teacher_id": "uuid",
+                "teacher_code": "TCH-CENT-230",
+                "teacher_name": "Trushank Lohar",
+                "subjects": "Physics, Chemistry",
+                "is_available": true,
+                "is_busy": false
+            }
+        ],
+        "unavailable_teachers": [
+            {
+                "teacher_id": "uuid",
+                "teacher_code": "TCH-CENT-501",
+                "teacher_name": "Radha Rath",
+                "subjects": "Biology",
+                "is_available": false,
+                "reason": "Marked unavailable by admin"
+            },
+            {
+                "teacher_id": "uuid",
+                "teacher_code": "TCH-CENT-802",
+                "teacher_name": "Teacher Name",
+                "subjects": "Physics",
+                "is_available": true,
+                "is_busy": true,
+                "reason": "Busy in another timetable",
+                "busy_in": {
+                    "timetable": "Other Timetable",
+                    "batch": "Batch30",
+                    "subject": "Physics",
+                    "time": "08:00-09:00"
+                }
+            }
+        ],
+        "total_available": 5,
+        "total_unavailable": 2
+    }
+    """
+    user = request.user
+    
+    # Check if user is Admin or Super Admin
+    if user.role not in (AccountUser.ROLE_ADMIN, AccountUser.ROLE_SUPER_ADMIN):
+        return Response(
+            {"detail": "Only Admin and Super Admin can view teacher availability."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    
+    # Get timetable
+    try:
+        timetable = Timetable.objects.select_related("center").get(id=timetable_id)
+    except Timetable.DoesNotExist:
+        return Response(
+            {"detail": "Timetable not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+    
+    # Check permissions
+    if user.role == AccountUser.ROLE_ADMIN:
+        if not user.center:
+            return Response(
+                {"detail": "Admin user is not linked to any center."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if timetable.center != user.center:
+            return Response(
+                {"detail": "You can only view timetables in your center."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+    
+    # Get slot_code from query params if slot_id not provided
+    slot_code = request.query_params.get("slot_code")
+    
+    # Get the specific slot
+    try:
+        if slot_id:
+            day_slot = DaySlot.objects.get(id=slot_id, timetable=timetable)
+        elif slot_code:
+            day_slot = DaySlot.objects.get(slot_code=slot_code, timetable=timetable)
+        else:
+            return Response(
+                {"detail": "Either slot_id in URL or slot_code query param is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+    except DaySlot.DoesNotExist:
+        return Response(
+            {"detail": "Slot not found in this timetable."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+    
+    # Get all teachers in the center (exclude FREE teachers)
+    center = timetable.center
+    teachers = AccountUser.objects.filter(
+        role=AccountUser.ROLE_TEACHER,
+        center=center
+    ).exclude(
+        teacher_code__istartswith="FREE"
+    ).order_by("teacher_code", "username")
+    
+    # Get availability records for this slot
+    availabilities = TeacherSlotAvailability.objects.filter(
+        timetable=timetable,
+        day_slot=day_slot
+    ).select_related("teacher")
+    
+    # Create availability map: teacher_id -> is_available
+    availability_map = {av.teacher_id: av.is_available for av in availabilities}
+    
+    # Get busy info from other timetables
+    teacher_ids = [t.id for t in teachers]
+    
+    other_entries = TimetableEntry.objects.filter(
+        teacher_id__in=teacher_ids
+    ).exclude(
+        day_slot__timetable=timetable
+    ).select_related('day_slot', 'teacher', 'batch')
+    
+    # Build busy slots list
+    busy_slots = []
+    for entry in other_entries:
+        if entry.day_slot.actual_date and entry.teacher_id:
+            busy_slots.append({
+                "teacher_id": entry.teacher_id,
+                "date": entry.day_slot.actual_date,
+                "start_time": entry.day_slot.start_time,
+                "end_time": entry.day_slot.end_time,
+                "info": {
+                    "timetable": str(entry.day_slot.timetable),
+                    "batch": entry.batch.code if entry.batch else None,
+                    "subject": entry.subject,
+                    "time": f"{entry.day_slot.start_time.strftime('%H:%M')}-{entry.day_slot.end_time.strftime('%H:%M')}",
+                }
+            })
+    
+    def check_time_overlap(start1, end1, start2, end2):
+        return start1 < end2 and start2 < end1
+    
+    def find_busy_info(teacher_id, slot_date, slot_start, slot_end):
+        if not slot_date:
+            return None
+        for busy in busy_slots:
+            if (busy["teacher_id"] == teacher_id and 
+                busy["date"] == slot_date and
+                check_time_overlap(slot_start, slot_end, busy["start_time"], busy["end_time"])):
+                return busy["info"]
+        return None
+    
+    # Day display map
+    day_display_map = {
+        DaySlot.MONDAY: "Monday",
+        DaySlot.TUESDAY: "Tuesday",
+        DaySlot.WEDNESDAY: "Wednesday",
+        DaySlot.THURSDAY: "Thursday",
+        DaySlot.FRIDAY: "Friday",
+        DaySlot.SATURDAY: "Saturday",
+        DaySlot.SUNDAY: "Sunday",
+    }
+    
+    available_teachers = []
+    unavailable_teachers = []
+    
+    for teacher in teachers:
+        # Check admin availability setting (default True if not set)
+        is_available = availability_map.get(teacher.id, True)
+        
+        # Check if busy in another timetable
+        busy_info = find_busy_info(
+            teacher.id,
+            day_slot.actual_date,
+            day_slot.start_time,
+            day_slot.end_time
+        )
+        is_busy = busy_info is not None
+        
+        teacher_data = {
+            "teacher_id": str(teacher.id),
+            "teacher_code": teacher.teacher_code or teacher.username,
+            "teacher_name": f"{teacher.first_name} {teacher.last_name}".strip() or teacher.username,
+            "subjects": teacher.teacher_subjects or "",
+            "is_available": is_available,
+            "is_busy": is_busy,
+        }
+        
+        if is_available and not is_busy:
+            available_teachers.append(teacher_data)
+        else:
+            if not is_available:
+                teacher_data["reason"] = "Marked unavailable by admin"
+            elif is_busy:
+                teacher_data["reason"] = "Busy in another timetable"
+                teacher_data["busy_in"] = busy_info
+            unavailable_teachers.append(teacher_data)
+    
+    return Response(
+        {
+            "timetable_id": str(timetable.id),
+            "slot": {
+                "slot_id": str(day_slot.id),
+                "slot_code": day_slot.slot_code,
+                "day": day_display_map.get(day_slot.day, day_slot.day),
+                "date": str(day_slot.actual_date) if day_slot.actual_date else None,
+                "start_time": str(day_slot.start_time),
+                "end_time": str(day_slot.end_time),
+            },
+            "available_teachers": available_teachers,
+            "unavailable_teachers": unavailable_teachers,
+            "total_available": len(available_teachers),
+            "total_unavailable": len(unavailable_teachers),
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
 def get_teacher_wise_availability(request, timetable_id: str):
     """
     Get teacher availability organized by teacher, then by day.
@@ -1284,11 +1518,13 @@ def get_teacher_wise_availability(request, timetable_id: str):
     # Get all day slots for this timetable
     day_slots = DaySlot.objects.filter(timetable=timetable).order_by("day", "slot_number")
     
-    # Get all teachers in the center
+    # Get all teachers in the center (exclude FREE teachers)
     center = timetable.center
     teachers = AccountUser.objects.filter(
         role=AccountUser.ROLE_TEACHER,
         center=center
+    ).exclude(
+        teacher_code__istartswith="FREE"  # Exclude FREE1, FREE2, etc.
     ).order_by("teacher_code", "username")
     
     # Get all teacher slot availabilities for this timetable
@@ -1851,7 +2087,7 @@ def get_timetable_batch_assignments(request, timetable_id: str):
             "teachers": [],
         }
     
-    # Add teacher assignments
+    # Add teacher assignments (include FREE teachers in batch view)
     for load in faculty_loads:
         batch_code = load.batch.code
         
@@ -3074,6 +3310,309 @@ def run_timetable_optimization(request, timetable_id: str):
         )
 
 
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def regenerate_timetable_from_slot(request, timetable_id: str):
+    """
+    Regenerate timetable from a specific slot, keeping all assignments before that slot fixed.
+    
+    This is useful when you want to keep the timetable up to a certain point and regenerate
+    the rest. The function takes the current timetable, creates new fixed slots from the
+    beginning up to the stop_slot, and then regenerates the timetable from that point.
+    
+    POST /api/timetable/timetables/<timetable_id>/regenerate-from-slot/
+    
+    Body:
+    {
+        "stop_slot": "w3",  # Required: slot code to stop at (e.g., 'm1', 'tu3', 'w3', 'd1_3')
+        "max_retries": 1000,  # Optional
+        "max_try_for_slot_assign": 100,  # Optional
+        "weight_power_fector": 3,  # Optional
+        "max_one_subject_repetation_per_day": 2,  # Optional
+        "max_one_subject_repetation_per_day_penalty_fector": 0,  # Optional
+        "weight_penalty_consu_sub_repetation": [0.01, 0, 0, 0, 0]  # Optional
+    }
+    
+    Returns:
+    {
+        "success": true/false,
+        "feasible": true/false,
+        "violations": {...},
+        "timetable_generated": true/false,
+        "entries_created": 0,
+        "stop_slot": "w3",
+        "fixed_slots_count": 15,
+        "message": "..."
+    }
+    """
+    try:
+        timetable = Timetable.objects.get(id=timetable_id)
+    except Timetable.DoesNotExist:
+        return Response(
+            {"detail": "Timetable not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+    
+    # Check permissions
+    user = request.user
+    if user.role not in (AccountUser.ROLE_ADMIN, AccountUser.ROLE_SUPER_ADMIN):
+        return Response(
+            {"detail": "Only Admin or Super Admin can regenerate timetable."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    
+    data = request.data
+    stop_slot = data.get("stop_slot")
+    
+    if not stop_slot:
+        return Response(
+            {"detail": "stop_slot is required. Example: 'm1', 'tu3', 'w3', 'd1_3'"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    
+    # Get algorithm parameters
+    max_retries = data.get("max_retries", 1000)
+    max_try_for_slot_assign = data.get("max_try_for_slot_assign", 100)
+    weight_power_fector = data.get("weight_power_fector", 3)
+    max_one_subject_repetation_per_day = data.get("max_one_subject_repetation_per_day", 2)
+    max_one_subject_repetation_per_day_penalty_fector = data.get("max_one_subject_repetation_per_day_penalty_fector", 0)
+    weight_penalty_consu_sub_repetation = data.get("weight_penalty_consu_sub_repetation", [0.01, 0, 0, 0, 0])
+    
+    try:
+        # Build payload from models
+        payload = build_full_payload(timetable_id)
+        
+        available_slots = payload["available_slots"]
+        teachers_list = payload["teachers"]
+        batches_dict = payload["batches"]
+        original_fixed_slots = payload["fixed_slots"]
+        
+        # Validate stop_slot exists in available_slots
+        slot_found = False
+        for day, slots in available_slots.items():
+            if stop_slot in slots:
+                slot_found = True
+                break
+        
+        if not slot_found:
+            return Response(
+                {"detail": f"stop_slot '{stop_slot}' not found in available slots."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        
+        # Convert to algorithm format
+        teachers_dict = convert_teachers_to_algorithm_format(teachers_list)
+        batches_dict_algo = convert_batches_to_algorithm_format(batches_dict, teachers_dict)
+        
+        # Get current timetable from database
+        current_timetable = {}
+        entries = TimetableEntry.objects.filter(
+            day_slot__timetable=timetable
+        ).select_related('day_slot', 'batch', 'teacher')
+        
+        for entry in entries:
+            day_slot = entry.day_slot
+            # Determine day key
+            if day_slot.day_index:
+                day_key = f"d{day_slot.day_index}"
+            else:
+                day_key = DAY_MAP_SHORT.get(day_slot.day, "")
+            
+            slot_code = day_slot.slot_code or f"{day_key}{day_slot.slot_number}"
+            batch_code = entry.batch.code
+            subject = entry.subject or ""
+            teacher_code = entry.teacher.teacher_code if entry.teacher else ""
+            
+            if day_key not in current_timetable:
+                current_timetable[day_key] = {}
+            if slot_code not in current_timetable[day_key]:
+                current_timetable[day_key][slot_code] = {}
+            
+            current_timetable[day_key][slot_code][batch_code] = (subject, teacher_code)
+        
+        # Generate new fixed slots from current timetable up to stop_slot
+        new_fixed_slots = generate_new_fixed_slots(
+            timetable=current_timetable,
+            original_fixed_slots=original_fixed_slots,
+            available_slots=available_slots,
+            stop_slot=stop_slot
+        )
+        
+        # Count fixed slots
+        fixed_slots_count = sum(
+            len(batches) 
+            for slots in new_fixed_slots.values() 
+            for batches in slots.values()
+        )
+        
+        # Determine start_slot (first slot after stop_slot)
+        start_slot = None
+        found_stop = False
+        for day in available_slots:
+            for slot in available_slots[day]:
+                if found_stop:
+                    start_slot = slot
+                    break
+                if slot == stop_slot:
+                    found_stop = True
+            if start_slot:
+                break
+        
+        if not start_slot:
+            # stop_slot is the last slot, nothing to regenerate
+            return Response(
+                {
+                    "success": True,
+                    "feasible": True,
+                    "violations": {},
+                    "timetable_generated": False,
+                    "entries_created": 0,
+                    "stop_slot": stop_slot,
+                    "fixed_slots_count": fixed_slots_count,
+                    "message": "stop_slot is the last slot. No regeneration needed."
+                },
+                status=status.HTTP_200_OK,
+            )
+        
+        # Check feasibility from start_slot
+        feasible, violations = check_timetable_feasibility_from_start(
+            available_slots=available_slots,
+            teachers=teachers_dict,
+            batches=batches_dict_algo,
+            new_fixed_slots=new_fixed_slots,
+            start_slot=start_slot
+        )
+        
+        if not feasible:
+            return Response(
+                {
+                    "success": False,
+                    "feasible": False,
+                    "violations": violations,
+                    "timetable_generated": False,
+                    "entries_created": 0,
+                    "stop_slot": stop_slot,
+                    "fixed_slots_count": fixed_slots_count,
+                    "message": "Timetable regeneration is not feasible from this slot. Check violations."
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        
+        # Generate new timetable with new fixed slots
+        try:
+            generated_timetable = generate_random_timetable(
+                batches=batches_dict_algo,
+                teachers=teachers_dict,
+                avilable_slots=available_slots,
+                fixed_slots=new_fixed_slots,
+                MAX_RETRIES=max_retries,
+                max_try_for_slot_assign=max_try_for_slot_assign,
+                weight_power_fector=weight_power_fector,
+                max_one_subject_repetation_per_day=max_one_subject_repetation_per_day,
+                max_one_subject_repetation_per_day_penalty_fector=max_one_subject_repetation_per_day_penalty_fector,
+                weight_penalty_consu_sub_repetation=weight_penalty_consu_sub_repetation
+            )
+        except Exception as e:
+            return Response(
+                {
+                    "success": False,
+                    "feasible": True,
+                    "violations": {},
+                    "timetable_generated": False,
+                    "entries_created": 0,
+                    "stop_slot": stop_slot,
+                    "fixed_slots_count": fixed_slots_count,
+                    "message": f"Failed to regenerate timetable: {str(e)}"
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+        
+        # Save results to database
+        slot_code_to_dayslot = {}
+        for day_slot in timetable.day_slots.all():
+            if day_slot.day_index:
+                day_key = f"d{day_slot.day_index}"
+            else:
+                day_key = DAY_MAP_SHORT.get(day_slot.day, "")
+            code = day_slot.slot_code or f"{day_key}{day_slot.slot_number}"
+            slot_code_to_dayslot[code] = day_slot
+        
+        teacher_code_to_user = {}
+        for teacher_code, teacher_dto in teachers_dict.items():
+            user_obj = AccountUser.objects.filter(
+                teacher_code=teacher_code
+            ).first() or AccountUser.objects.filter(
+                username=teacher_code
+            ).first()
+            if user_obj:
+                teacher_code_to_user[teacher_code] = user_obj
+        
+        batch_code_to_batch = {}
+        for batch_code in batches_dict_algo.keys():
+            batch = Batch.objects.filter(code=batch_code).first()
+            if batch:
+                batch_code_to_batch[batch_code] = batch
+        
+        entries_created = 0
+        
+        with transaction.atomic():
+            # Clear existing entries (we'll recreate all)
+            TimetableEntry.objects.filter(day_slot__timetable=timetable).delete()
+            
+            # Save generated timetable
+            for day_key, slots in generated_timetable.items():
+                for slot_code, batch_assignments in slots.items():
+                    day_slot = slot_code_to_dayslot.get(slot_code)
+                    if not day_slot:
+                        continue
+                    
+                    for batch_code, (subject, teacher_code) in batch_assignments.items():
+                        batch = batch_code_to_batch.get(batch_code)
+                        if not batch:
+                            continue
+                        
+                        teacher = teacher_code_to_user.get(teacher_code)
+                        
+                        TimetableEntry.objects.create(
+                            day_slot=day_slot,
+                            batch=batch,
+                            subject=subject,
+                            teacher=teacher,
+                        )
+                        entries_created += 1
+        
+        return Response(
+            {
+                "success": True,
+                "feasible": True,
+                "violations": {},
+                "timetable_generated": True,
+                "entries_created": entries_created,
+                "stop_slot": stop_slot,
+                "fixed_slots_count": fixed_slots_count,
+                "message": f"Timetable regenerated successfully from slot '{stop_slot}'. Created {entries_created} entries."
+            },
+            status=status.HTTP_200_OK,
+        )
+        
+    except Exception as e:
+        import traceback
+        return Response(
+            {
+                "success": False,
+                "feasible": None,
+                "violations": {},
+                "timetable_generated": False,
+                "entries_created": 0,
+                "stop_slot": stop_slot,
+                "fixed_slots_count": 0,
+                "message": f"Error during regeneration: {str(e)}",
+                "traceback": traceback.format_exc() if settings.DEBUG else None
+            },
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
+
+
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def get_all_batches_timetable(request, timetable_id: str):
@@ -3484,7 +4023,7 @@ def get_teacher_timetable(request, timetable_id: str, teacher_id: str = None):
                 status=status.HTTP_404_NOT_FOUND,
             )
     else:
-        # Get all teachers assigned to this timetable
+        # Get all teachers assigned to this timetable (exclude FREE teachers)
         teacher_ids = set()
         
         # From BatchFacultyLoad
@@ -3511,6 +4050,8 @@ def get_teacher_timetable(request, timetable_id: str, teacher_id: str = None):
         teachers = AccountUser.objects.filter(
             id__in=teacher_ids,
             role=AccountUser.ROLE_TEACHER
+        ).exclude(
+            teacher_code__istartswith="FREE"  # Exclude FREE1, FREE2, etc.
         ).order_by('teacher_code', 'username')
     
     # Get all fixed slots for these teachers
