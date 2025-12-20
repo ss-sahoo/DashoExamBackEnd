@@ -14,6 +14,7 @@ from django.urls import path
 from timetable.views import (
     timetable_payload,
     create_timetable_with_slots,
+    update_timetable,
     get_timetable,
     get_timetable_slots,
     list_timetables,
@@ -27,6 +28,7 @@ from timetable.views import (
     assign_fixed_slot,
     get_fixed_slots,
     update_fixed_slot,
+    delete_fixed_slot,
     check_timetable_feasibility,
     run_timetable_optimization,
     set_free_classes_count,
@@ -126,6 +128,7 @@ urlpatterns = [
     # Timetable Management APIs
     # ===========
     path("admin/timetables/create/", create_timetable_with_slots, name="create-timetable-with-slots"),
+    path("admin/timetables/<uuid:timetable_id>/update/", update_timetable, name="update-timetable"),
     path("timetables/", list_timetables, name="list-timetables"),
     path("timetables/<uuid:timetable_id>/", get_timetable, name="get-timetable"),
     path("timetables/<uuid:timetable_id>/slots/", get_timetable_slots, name="get-timetable-slots"),
@@ -154,6 +157,7 @@ urlpatterns = [
     path("admin/timetables/fixed-slots/assign/", assign_fixed_slot, name="assign-fixed-slot"),
     path("timetables/<uuid:timetable_id>/fixed-slots/", get_fixed_slots, name="get-fixed-slots"),
     path("admin/timetables/fixed-slots/<uuid:fixed_slot_id>/update/", update_fixed_slot, name="update-fixed-slot"),
+    path("admin/timetables/fixed-slots/<uuid:fixed_slot_id>/delete/", delete_fixed_slot, name="delete-fixed-slot"),
     
     # ===========
     # Optimization Payload API
