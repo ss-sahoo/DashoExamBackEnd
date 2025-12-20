@@ -3064,9 +3064,9 @@ def get_all_batches_timetable(request, timetable_id: str):
     # Get all timetable entries
     entries = TimetableEntry.objects.filter(
         day_slot__timetable=timetable
-    ).select_related('day_slot', 'batch').order_by('day_slot__day', 'day_slot__slot_number')
+    ).select_related('day_slot', 'batch', 'teacher').order_by('day_slot__day', 'day_slot__slot_number')
     
-    # Get all fixed slots (for teacher info)
+    # Get all fixed slots (for teacher info override)
     fixed_slots = FixedSlot.objects.filter(
         timetable=timetable
     ).select_related('day_slot', 'batch', 'teacher')
@@ -3123,10 +3123,17 @@ def get_all_batches_timetable(request, timetable_id: str):
                 "actual_date": str(entry.day_slot.actual_date) if entry.day_slot.actual_date else None,
             }
             
-            # Add teacher info from fixed slot if available
+            # Add teacher info - first from entry, then from fixed slot as override
             key = (entry.day_slot_id, entry.batch_id)
             if key in fixed_slot_map:
+                # Fixed slot overrides entry teacher
                 slot_data["teacher"] = fixed_slot_map[key]
+            elif entry.teacher:
+                # Use teacher from TimetableEntry (from optimization)
+                slot_data["teacher"] = {
+                    "teacher_code": entry.teacher.teacher_code or entry.teacher.username,
+                    "teacher_name": entry.teacher.get_full_name() or entry.teacher.username,
+                }
             else:
                 slot_data["teacher"] = None
             
