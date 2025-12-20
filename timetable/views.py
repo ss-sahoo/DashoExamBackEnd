@@ -1187,6 +1187,240 @@ def get_teacher_availability(request, timetable_id: str):
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
+def get_available_teachers_for_slot(request, timetable_id: str, slot_id: str = None):
+    """
+    Get all teachers available for a specific slot.
+    Shows which teachers can be assigned to this slot.
+    
+    GET /api/timetable/timetables/<timetable_id>/slots/<slot_id>/available-teachers/
+    GET /api/timetable/timetables/<timetable_id>/available-teachers/?slot_code=d1_s1
+    
+    Returns:
+    {
+        "timetable_id": "uuid",
+        "slot": {
+            "slot_id": "uuid",
+            "slot_code": "d1_s1",
+            "day": "Friday",
+            "date": "2025-12-19",
+            "start_time": "08:00:00",
+            "end_time": "09:00:00"
+        },
+        "available_teachers": [
+            {
+                "teacher_id": "uuid",
+                "teacher_code": "TCH-CENT-230",
+                "teacher_name": "Trushank Lohar",
+                "subjects": "Physics, Chemistry",
+                "is_available": true,
+                "is_busy": false
+            }
+        ],
+        "unavailable_teachers": [
+            {
+                "teacher_id": "uuid",
+                "teacher_code": "TCH-CENT-501",
+                "teacher_name": "Radha Rath",
+                "subjects": "Biology",
+                "is_available": false,
+                "reason": "Marked unavailable by admin"
+            },
+            {
+                "teacher_id": "uuid",
+                "teacher_code": "TCH-CENT-802",
+                "teacher_name": "Teacher Name",
+                "subjects": "Physics",
+                "is_available": true,
+                "is_busy": true,
+                "reason": "Busy in another timetable",
+                "busy_in": {
+                    "timetable": "Other Timetable",
+                    "batch": "Batch30",
+                    "subject": "Physics",
+                    "time": "08:00-09:00"
+                }
+            }
+        ],
+        "total_available": 5,
+        "total_unavailable": 2
+    }
+    """
+    user = request.user
+    
+    # Check if user is Admin or Super Admin
+    if user.role not in (AccountUser.ROLE_ADMIN, AccountUser.ROLE_SUPER_ADMIN):
+        return Response(
+            {"detail": "Only Admin and Super Admin can view teacher availability."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    
+    # Get timetable
+    try:
+        timetable = Timetable.objects.select_related("center").get(id=timetable_id)
+    except Timetable.DoesNotExist:
+        return Response(
+            {"detail": "Timetable not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+    
+    # Check permissions
+    if user.role == AccountUser.ROLE_ADMIN:
+        if not user.center:
+            return Response(
+                {"detail": "Admin user is not linked to any center."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if timetable.center != user.center:
+            return Response(
+                {"detail": "You can only view timetables in your center."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+    
+    # Get slot_code from query params if slot_id not provided
+    slot_code = request.query_params.get("slot_code")
+    
+    # Get the specific slot
+    try:
+        if slot_id:
+            day_slot = DaySlot.objects.get(id=slot_id, timetable=timetable)
+        elif slot_code:
+            day_slot = DaySlot.objects.get(slot_code=slot_code, timetable=timetable)
+        else:
+            return Response(
+                {"detail": "Either slot_id in URL or slot_code query param is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+    except DaySlot.DoesNotExist:
+        return Response(
+            {"detail": "Slot not found in this timetable."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+    
+    # Get all teachers in the center (exclude FREE teachers)
+    center = timetable.center
+    teachers = AccountUser.objects.filter(
+        role=AccountUser.ROLE_TEACHER,
+        center=center
+    ).exclude(
+        teacher_code__istartswith="FREE"
+    ).order_by("teacher_code", "username")
+    
+    # Get availability records for this slot
+    availabilities = TeacherSlotAvailability.objects.filter(
+        timetable=timetable,
+        day_slot=day_slot
+    ).select_related("teacher")
+    
+    # Create availability map: teacher_id -> is_available
+    availability_map = {av.teacher_id: av.is_available for av in availabilities}
+    
+    # Get busy info from other timetables
+    teacher_ids = [t.id for t in teachers]
+    
+    other_entries = TimetableEntry.objects.filter(
+        teacher_id__in=teacher_ids
+    ).exclude(
+        day_slot__timetable=timetable
+    ).select_related('day_slot', 'teacher', 'batch')
+    
+    # Build busy slots list
+    busy_slots = []
+    for entry in other_entries:
+        if entry.day_slot.actual_date and entry.teacher_id:
+            busy_slots.append({
+                "teacher_id": entry.teacher_id,
+                "date": entry.day_slot.actual_date,
+                "start_time": entry.day_slot.start_time,
+                "end_time": entry.day_slot.end_time,
+                "info": {
+                    "timetable": str(entry.day_slot.timetable),
+                    "batch": entry.batch.code if entry.batch else None,
+                    "subject": entry.subject,
+                    "time": f"{entry.day_slot.start_time.strftime('%H:%M')}-{entry.day_slot.end_time.strftime('%H:%M')}",
+                }
+            })
+    
+    def check_time_overlap(start1, end1, start2, end2):
+        return start1 < end2 and start2 < end1
+    
+    def find_busy_info(teacher_id, slot_date, slot_start, slot_end):
+        if not slot_date:
+            return None
+        for busy in busy_slots:
+            if (busy["teacher_id"] == teacher_id and 
+                busy["date"] == slot_date and
+                check_time_overlap(slot_start, slot_end, busy["start_time"], busy["end_time"])):
+                return busy["info"]
+        return None
+    
+    # Day display map
+    day_display_map = {
+        DaySlot.MONDAY: "Monday",
+        DaySlot.TUESDAY: "Tuesday",
+        DaySlot.WEDNESDAY: "Wednesday",
+        DaySlot.THURSDAY: "Thursday",
+        DaySlot.FRIDAY: "Friday",
+        DaySlot.SATURDAY: "Saturday",
+        DaySlot.SUNDAY: "Sunday",
+    }
+    
+    available_teachers = []
+    unavailable_teachers = []
+    
+    for teacher in teachers:
+        # Check admin availability setting (default True if not set)
+        is_available = availability_map.get(teacher.id, True)
+        
+        # Check if busy in another timetable
+        busy_info = find_busy_info(
+            teacher.id,
+            day_slot.actual_date,
+            day_slot.start_time,
+            day_slot.end_time
+        )
+        is_busy = busy_info is not None
+        
+        teacher_data = {
+            "teacher_id": str(teacher.id),
+            "teacher_code": teacher.teacher_code or teacher.username,
+            "teacher_name": f"{teacher.first_name} {teacher.last_name}".strip() or teacher.username,
+            "subjects": teacher.teacher_subjects or "",
+            "is_available": is_available,
+            "is_busy": is_busy,
+        }
+        
+        if is_available and not is_busy:
+            available_teachers.append(teacher_data)
+        else:
+            if not is_available:
+                teacher_data["reason"] = "Marked unavailable by admin"
+            elif is_busy:
+                teacher_data["reason"] = "Busy in another timetable"
+                teacher_data["busy_in"] = busy_info
+            unavailable_teachers.append(teacher_data)
+    
+    return Response(
+        {
+            "timetable_id": str(timetable.id),
+            "slot": {
+                "slot_id": str(day_slot.id),
+                "slot_code": day_slot.slot_code,
+                "day": day_display_map.get(day_slot.day, day_slot.day),
+                "date": str(day_slot.actual_date) if day_slot.actual_date else None,
+                "start_time": str(day_slot.start_time),
+                "end_time": str(day_slot.end_time),
+            },
+            "available_teachers": available_teachers,
+            "unavailable_teachers": unavailable_teachers,
+            "total_available": len(available_teachers),
+            "total_unavailable": len(unavailable_teachers),
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
 def get_teacher_wise_availability(request, timetable_id: str):
     """
     Get teacher availability organized by teacher, then by day.
@@ -1284,11 +1518,13 @@ def get_teacher_wise_availability(request, timetable_id: str):
     # Get all day slots for this timetable
     day_slots = DaySlot.objects.filter(timetable=timetable).order_by("day", "slot_number")
     
-    # Get all teachers in the center
+    # Get all teachers in the center (exclude FREE teachers)
     center = timetable.center
     teachers = AccountUser.objects.filter(
         role=AccountUser.ROLE_TEACHER,
         center=center
+    ).exclude(
+        teacher_code__istartswith="FREE"  # Exclude FREE1, FREE2, etc.
     ).order_by("teacher_code", "username")
     
     # Get all teacher slot availabilities for this timetable
@@ -1851,7 +2087,7 @@ def get_timetable_batch_assignments(request, timetable_id: str):
             "teachers": [],
         }
     
-    # Add teacher assignments
+    # Add teacher assignments (include FREE teachers in batch view)
     for load in faculty_loads:
         batch_code = load.batch.code
         
@@ -3484,7 +3720,7 @@ def get_teacher_timetable(request, timetable_id: str, teacher_id: str = None):
                 status=status.HTTP_404_NOT_FOUND,
             )
     else:
-        # Get all teachers assigned to this timetable
+        # Get all teachers assigned to this timetable (exclude FREE teachers)
         teacher_ids = set()
         
         # From BatchFacultyLoad
@@ -3511,6 +3747,8 @@ def get_teacher_timetable(request, timetable_id: str, teacher_id: str = None):
         teachers = AccountUser.objects.filter(
             id__in=teacher_ids,
             role=AccountUser.ROLE_TEACHER
+        ).exclude(
+            teacher_code__istartswith="FREE"  # Exclude FREE1, FREE2, etc.
         ).order_by('teacher_code', 'username')
     
     # Get all fixed slots for these teachers

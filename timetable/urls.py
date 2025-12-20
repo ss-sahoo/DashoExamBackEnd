@@ -20,6 +20,7 @@ from timetable.views import (
     list_timetables,
     set_teacher_slot_availability,
     get_teacher_availability,
+    get_available_teachers_for_slot,
     get_teacher_wise_availability,
     assign_batch_to_timetable,
     assign_teacher_to_batch,
@@ -141,6 +142,8 @@ urlpatterns = [
     path("admin/timetables/teacher-availability/", set_teacher_slot_availability, name="set-teacher-slot-availability"),
     path("timetables/<uuid:timetable_id>/teacher-availability/", get_teacher_availability, name="get-teacher-availability"),
     path("timetables/<uuid:timetable_id>/teacher-wise-availability/", get_teacher_wise_availability, name="get-teacher-wise-availability"),
+    path("timetables/<uuid:timetable_id>/slots/<uuid:slot_id>/available-teachers/", get_available_teachers_for_slot, name="get-available-teachers-for-slot"),
+    path("timetables/<uuid:timetable_id>/available-teachers/", get_available_teachers_for_slot, name="get-available-teachers-by-slot-code"),
     
     # ===========
     # Batch and Teacher Assignment APIs
