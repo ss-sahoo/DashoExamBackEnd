@@ -276,6 +276,218 @@ def create_timetable_with_slots(request):
     )
 
 
+@api_view(["PUT", "PATCH"])
+@permission_classes([IsAuthenticated])
+def update_timetable(request, timetable_id: str):
+    """
+    Update an existing Timetable.
+    
+    PUT/PATCH /api/timetable/admin/timetables/<timetable_id>/update/
+
+    Allowed roles:
+    - ADMIN (center admins): can only update their center's timetables
+    - SUPER_ADMIN: can update any timetable
+
+    Example payload:
+    {
+      "from_date": "2025-01-01",        # Optional
+      "to_date": "2025-03-31",          # Optional
+      "free_classes_count": 3,          # Optional
+      "description": "Updated desc",    # Optional
+      "is_active": true,                # Optional
+      "weekly_slots": {...},            # Optional - replaces all slots if provided
+      "holidays": [...]                 # Optional - replaces all holidays if provided
+    }
+    """
+    user = request.user
+    if user.role not in (AccountUser.ROLE_ADMIN, AccountUser.ROLE_SUPER_ADMIN):
+        return Response(
+            {"detail": "Only Admin or Super Admin can update timetables."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    # Get timetable
+    try:
+        timetable = Timetable.objects.select_related("center").get(id=timetable_id)
+    except Timetable.DoesNotExist:
+        return Response(
+            {"detail": "Timetable not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    # Check permissions: Admin can only update their center's timetables
+    if user.role == AccountUser.ROLE_ADMIN:
+        if not user.center:
+            return Response(
+                {"detail": "Admin user is not linked to any center."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if timetable.center != user.center:
+            return Response(
+                {"detail": "You can only update timetables in your center."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+    data = request.data
+
+    # Update basic fields if provided
+    if "from_date" in data:
+        try:
+            timetable.from_date = datetime.strptime(data["from_date"], "%Y-%m-%d").date()
+        except ValueError:
+            return Response(
+                {"detail": "from_date must be in YYYY-MM-DD format."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+    if "to_date" in data:
+        try:
+            timetable.to_date = datetime.strptime(data["to_date"], "%Y-%m-%d").date()
+        except ValueError:
+            return Response(
+                {"detail": "to_date must be in YYYY-MM-DD format."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+    if timetable.from_date > timetable.to_date:
+        return Response(
+            {"detail": "from_date cannot be after to_date."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if "free_classes_count" in data:
+        timetable.free_classes_count = data["free_classes_count"]
+
+    if "description" in data:
+        timetable.description = data["description"]
+
+    if "is_active" in data:
+        timetable.is_active = data["is_active"]
+
+    timetable.save()
+
+    # Update slots if provided
+    slots_updated = 0
+    if "weekly_slots" in data:
+        weekly_slots = data["weekly_slots"]
+        
+        # Delete existing slots
+        DaySlot.objects.filter(timetable=timetable).delete()
+
+        # Map legacy weekly day keys to DaySlot constants
+        day_map = {
+            "mon": DaySlot.MONDAY,
+            "tue": DaySlot.TUESDAY,
+            "wed": DaySlot.WEDNESDAY,
+            "thu": DaySlot.THURSDAY,
+            "fri": DaySlot.FRIDAY,
+            "sat": DaySlot.SATURDAY,
+            "sun": DaySlot.SUNDAY,
+        }
+
+        weekday_constants = [
+            DaySlot.MONDAY,
+            DaySlot.TUESDAY,
+            DaySlot.WEDNESDAY,
+            DaySlot.THURSDAY,
+            DaySlot.FRIDAY,
+            DaySlot.SATURDAY,
+            DaySlot.SUNDAY,
+        ]
+
+        total_days = (timetable.to_date - timetable.from_date).days + 1
+
+        for day_key, slots in weekly_slots.items():
+            key_lower = str(day_key).lower()
+
+            if key_lower in day_map:
+                day_const = day_map[key_lower]
+                day_index = None
+                actual_date = None
+            elif key_lower.startswith("d") and len(key_lower) > 1 and key_lower[1:].isdigit():
+                idx = int(key_lower[1:])
+                if idx < 1 or idx > total_days:
+                    continue
+                day_index = idx
+                actual_date = timetable.from_date + timedelta(days=idx - 1)
+                weekday_idx = actual_date.weekday()
+                day_const = weekday_constants[weekday_idx]
+            else:
+                continue
+
+            slot_number = 0
+            for slot in slots:
+                slot_number += 1
+                code = slot.get("code") or f"{day_key}{slot_number}"
+                start_str = slot.get("start")
+                end_str = slot.get("end")
+                is_free = bool(slot.get("is_free_class", False))
+
+                if not start_str or not end_str:
+                    continue
+
+                try:
+                    start_time = datetime.strptime(start_str, "%H:%M").time()
+                    end_time = datetime.strptime(end_str, "%H:%M").time()
+                except ValueError:
+                    continue
+
+                DaySlot.objects.create(
+                    timetable=timetable,
+                    day=day_const,
+                    day_index=day_index,
+                    actual_date=actual_date,
+                    slot_code=code,
+                    slot_number=slot_number,
+                    start_time=start_time,
+                    end_time=end_time,
+                    is_free_class=is_free,
+                )
+                slots_updated += 1
+
+    # Update holidays if provided
+    holidays_updated = 0
+    if "holidays" in data:
+        holidays = data["holidays"]
+        
+        # Delete existing holidays
+        TimetableHoliday.objects.filter(timetable=timetable).delete()
+
+        for h in holidays:
+            date_str = h.get("date")
+            description = h.get("description", "")
+            if not date_str:
+                continue
+            try:
+                h_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+            except ValueError:
+                continue
+            TimetableHoliday.objects.create(
+                timetable=timetable,
+                date=h_date,
+                description=description,
+                is_full_day=True,
+            )
+            holidays_updated += 1
+
+    response_data = {
+        "message": "Timetable updated successfully.",
+        "timetable_id": str(timetable.id),
+        "center": timetable.center.name,
+        "from_date": str(timetable.from_date),
+        "to_date": str(timetable.to_date),
+        "free_classes_count": timetable.free_classes_count,
+        "is_active": timetable.is_active,
+    }
+
+    if "weekly_slots" in data:
+        response_data["slots_updated"] = slots_updated
+    if "holidays" in data:
+        response_data["holidays_updated"] = holidays_updated
+
+    return Response(response_data, status=status.HTTP_200_OK)
+
+
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def get_timetable(request, timetable_id: str):
@@ -2320,6 +2532,75 @@ def update_fixed_slot(request, fixed_slot_id: str):
             "teacher_name": f"{fixed_slot.teacher.first_name} {fixed_slot.teacher.last_name}".strip() if fixed_slot.teacher else None,
             "subject": fixed_slot.subject or "Free / Exam",
             "is_locked": fixed_slot.is_locked,
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
+@api_view(["DELETE"])
+@permission_classes([IsAuthenticated])
+def delete_fixed_slot(request, fixed_slot_id: str):
+    """
+    Delete/remove a fixed slot assignment.
+    
+    DELETE /api/timetable/admin/timetables/fixed-slots/<fixed_slot_id>/delete/
+    
+    Returns:
+    {
+        "message": "Fixed slot removed successfully.",
+        "slot_code": "d1_s1",
+        "batch_code": "BATCH-001"
+    }
+    """
+    user = request.user
+    
+    # Check if user is Admin or Super Admin
+    if user.role not in (AccountUser.ROLE_ADMIN, AccountUser.ROLE_SUPER_ADMIN):
+        return Response(
+            {"detail": "Only Admin and Super Admin can delete fixed slots."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    
+    # Get fixed slot
+    try:
+        fixed_slot = FixedSlot.objects.select_related(
+            "timetable", "timetable__center", "day_slot", "batch"
+        ).get(id=fixed_slot_id)
+    except FixedSlot.DoesNotExist:
+        return Response(
+            {"detail": "Fixed slot not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+    
+    timetable = fixed_slot.timetable
+    
+    # Check permissions: Admin can only manage their center's timetables
+    if user.role == AccountUser.ROLE_ADMIN:
+        if not user.center:
+            return Response(
+                {"detail": "Admin user is not linked to any center."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if timetable.center != user.center:
+            return Response(
+                {"detail": "You can only manage fixed slots in your center."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+    
+    # Store info for response before deleting
+    slot_code = fixed_slot.day_slot.slot_code
+    batch_code = fixed_slot.batch.code
+    batch_name = fixed_slot.batch.name
+    
+    # Delete the fixed slot
+    fixed_slot.delete()
+    
+    return Response(
+        {
+            "message": "Fixed slot removed successfully.",
+            "slot_code": slot_code,
+            "batch_code": batch_code,
+            "batch_name": batch_name,
         },
         status=status.HTTP_200_OK,
     )
