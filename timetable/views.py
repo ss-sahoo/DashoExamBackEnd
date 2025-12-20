@@ -23,7 +23,7 @@ from accounts.models import Center, Batch, User as AccountUser
 from .optimization import build_full_payload, DAY_MAP_SHORT
 from .models import Timetable, DaySlot, TimetableHoliday, TeacherSlotAvailability, BatchFacultyLoad, FixedSlot, TimetableEntry, TimetableBatch
 from django.db.models import Q
-from .genetic_algorithm import check_timetable_feasibility_from_start, generate_random_timetable
+from .genetic_algorithm import check_timetable_feasibility_from_start, generate_random_timetable, generate_new_fixed_slots
 from .algorithm_adapter import convert_teachers_to_algorithm_format, convert_batches_to_algorithm_format
 from django.db import transaction
 
@@ -3304,6 +3304,309 @@ def run_timetable_optimization(request, timetable_id: str):
                 "timetable_generated": False,
                 "entries_created": 0,
                 "message": f"Error during optimization: {str(e)}",
+                "traceback": traceback.format_exc() if settings.DEBUG else None
+            },
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def regenerate_timetable_from_slot(request, timetable_id: str):
+    """
+    Regenerate timetable from a specific slot, keeping all assignments before that slot fixed.
+    
+    This is useful when you want to keep the timetable up to a certain point and regenerate
+    the rest. The function takes the current timetable, creates new fixed slots from the
+    beginning up to the stop_slot, and then regenerates the timetable from that point.
+    
+    POST /api/timetable/timetables/<timetable_id>/regenerate-from-slot/
+    
+    Body:
+    {
+        "stop_slot": "w3",  # Required: slot code to stop at (e.g., 'm1', 'tu3', 'w3', 'd1_3')
+        "max_retries": 1000,  # Optional
+        "max_try_for_slot_assign": 100,  # Optional
+        "weight_power_fector": 3,  # Optional
+        "max_one_subject_repetation_per_day": 2,  # Optional
+        "max_one_subject_repetation_per_day_penalty_fector": 0,  # Optional
+        "weight_penalty_consu_sub_repetation": [0.01, 0, 0, 0, 0]  # Optional
+    }
+    
+    Returns:
+    {
+        "success": true/false,
+        "feasible": true/false,
+        "violations": {...},
+        "timetable_generated": true/false,
+        "entries_created": 0,
+        "stop_slot": "w3",
+        "fixed_slots_count": 15,
+        "message": "..."
+    }
+    """
+    try:
+        timetable = Timetable.objects.get(id=timetable_id)
+    except Timetable.DoesNotExist:
+        return Response(
+            {"detail": "Timetable not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+    
+    # Check permissions
+    user = request.user
+    if user.role not in (AccountUser.ROLE_ADMIN, AccountUser.ROLE_SUPER_ADMIN):
+        return Response(
+            {"detail": "Only Admin or Super Admin can regenerate timetable."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    
+    data = request.data
+    stop_slot = data.get("stop_slot")
+    
+    if not stop_slot:
+        return Response(
+            {"detail": "stop_slot is required. Example: 'm1', 'tu3', 'w3', 'd1_3'"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    
+    # Get algorithm parameters
+    max_retries = data.get("max_retries", 1000)
+    max_try_for_slot_assign = data.get("max_try_for_slot_assign", 100)
+    weight_power_fector = data.get("weight_power_fector", 3)
+    max_one_subject_repetation_per_day = data.get("max_one_subject_repetation_per_day", 2)
+    max_one_subject_repetation_per_day_penalty_fector = data.get("max_one_subject_repetation_per_day_penalty_fector", 0)
+    weight_penalty_consu_sub_repetation = data.get("weight_penalty_consu_sub_repetation", [0.01, 0, 0, 0, 0])
+    
+    try:
+        # Build payload from models
+        payload = build_full_payload(timetable_id)
+        
+        available_slots = payload["available_slots"]
+        teachers_list = payload["teachers"]
+        batches_dict = payload["batches"]
+        original_fixed_slots = payload["fixed_slots"]
+        
+        # Validate stop_slot exists in available_slots
+        slot_found = False
+        for day, slots in available_slots.items():
+            if stop_slot in slots:
+                slot_found = True
+                break
+        
+        if not slot_found:
+            return Response(
+                {"detail": f"stop_slot '{stop_slot}' not found in available slots."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        
+        # Convert to algorithm format
+        teachers_dict = convert_teachers_to_algorithm_format(teachers_list)
+        batches_dict_algo = convert_batches_to_algorithm_format(batches_dict, teachers_dict)
+        
+        # Get current timetable from database
+        current_timetable = {}
+        entries = TimetableEntry.objects.filter(
+            day_slot__timetable=timetable
+        ).select_related('day_slot', 'batch', 'teacher')
+        
+        for entry in entries:
+            day_slot = entry.day_slot
+            # Determine day key
+            if day_slot.day_index:
+                day_key = f"d{day_slot.day_index}"
+            else:
+                day_key = DAY_MAP_SHORT.get(day_slot.day, "")
+            
+            slot_code = day_slot.slot_code or f"{day_key}{day_slot.slot_number}"
+            batch_code = entry.batch.code
+            subject = entry.subject or ""
+            teacher_code = entry.teacher.teacher_code if entry.teacher else ""
+            
+            if day_key not in current_timetable:
+                current_timetable[day_key] = {}
+            if slot_code not in current_timetable[day_key]:
+                current_timetable[day_key][slot_code] = {}
+            
+            current_timetable[day_key][slot_code][batch_code] = (subject, teacher_code)
+        
+        # Generate new fixed slots from current timetable up to stop_slot
+        new_fixed_slots = generate_new_fixed_slots(
+            timetable=current_timetable,
+            original_fixed_slots=original_fixed_slots,
+            available_slots=available_slots,
+            stop_slot=stop_slot
+        )
+        
+        # Count fixed slots
+        fixed_slots_count = sum(
+            len(batches) 
+            for slots in new_fixed_slots.values() 
+            for batches in slots.values()
+        )
+        
+        # Determine start_slot (first slot after stop_slot)
+        start_slot = None
+        found_stop = False
+        for day in available_slots:
+            for slot in available_slots[day]:
+                if found_stop:
+                    start_slot = slot
+                    break
+                if slot == stop_slot:
+                    found_stop = True
+            if start_slot:
+                break
+        
+        if not start_slot:
+            # stop_slot is the last slot, nothing to regenerate
+            return Response(
+                {
+                    "success": True,
+                    "feasible": True,
+                    "violations": {},
+                    "timetable_generated": False,
+                    "entries_created": 0,
+                    "stop_slot": stop_slot,
+                    "fixed_slots_count": fixed_slots_count,
+                    "message": "stop_slot is the last slot. No regeneration needed."
+                },
+                status=status.HTTP_200_OK,
+            )
+        
+        # Check feasibility from start_slot
+        feasible, violations = check_timetable_feasibility_from_start(
+            available_slots=available_slots,
+            teachers=teachers_dict,
+            batches=batches_dict_algo,
+            new_fixed_slots=new_fixed_slots,
+            start_slot=start_slot
+        )
+        
+        if not feasible:
+            return Response(
+                {
+                    "success": False,
+                    "feasible": False,
+                    "violations": violations,
+                    "timetable_generated": False,
+                    "entries_created": 0,
+                    "stop_slot": stop_slot,
+                    "fixed_slots_count": fixed_slots_count,
+                    "message": "Timetable regeneration is not feasible from this slot. Check violations."
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        
+        # Generate new timetable with new fixed slots
+        try:
+            generated_timetable = generate_random_timetable(
+                batches=batches_dict_algo,
+                teachers=teachers_dict,
+                avilable_slots=available_slots,
+                fixed_slots=new_fixed_slots,
+                MAX_RETRIES=max_retries,
+                max_try_for_slot_assign=max_try_for_slot_assign,
+                weight_power_fector=weight_power_fector,
+                max_one_subject_repetation_per_day=max_one_subject_repetation_per_day,
+                max_one_subject_repetation_per_day_penalty_fector=max_one_subject_repetation_per_day_penalty_fector,
+                weight_penalty_consu_sub_repetation=weight_penalty_consu_sub_repetation
+            )
+        except Exception as e:
+            return Response(
+                {
+                    "success": False,
+                    "feasible": True,
+                    "violations": {},
+                    "timetable_generated": False,
+                    "entries_created": 0,
+                    "stop_slot": stop_slot,
+                    "fixed_slots_count": fixed_slots_count,
+                    "message": f"Failed to regenerate timetable: {str(e)}"
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+        
+        # Save results to database
+        slot_code_to_dayslot = {}
+        for day_slot in timetable.day_slots.all():
+            if day_slot.day_index:
+                day_key = f"d{day_slot.day_index}"
+            else:
+                day_key = DAY_MAP_SHORT.get(day_slot.day, "")
+            code = day_slot.slot_code or f"{day_key}{day_slot.slot_number}"
+            slot_code_to_dayslot[code] = day_slot
+        
+        teacher_code_to_user = {}
+        for teacher_code, teacher_dto in teachers_dict.items():
+            user_obj = AccountUser.objects.filter(
+                teacher_code=teacher_code
+            ).first() or AccountUser.objects.filter(
+                username=teacher_code
+            ).first()
+            if user_obj:
+                teacher_code_to_user[teacher_code] = user_obj
+        
+        batch_code_to_batch = {}
+        for batch_code in batches_dict_algo.keys():
+            batch = Batch.objects.filter(code=batch_code).first()
+            if batch:
+                batch_code_to_batch[batch_code] = batch
+        
+        entries_created = 0
+        
+        with transaction.atomic():
+            # Clear existing entries (we'll recreate all)
+            TimetableEntry.objects.filter(day_slot__timetable=timetable).delete()
+            
+            # Save generated timetable
+            for day_key, slots in generated_timetable.items():
+                for slot_code, batch_assignments in slots.items():
+                    day_slot = slot_code_to_dayslot.get(slot_code)
+                    if not day_slot:
+                        continue
+                    
+                    for batch_code, (subject, teacher_code) in batch_assignments.items():
+                        batch = batch_code_to_batch.get(batch_code)
+                        if not batch:
+                            continue
+                        
+                        teacher = teacher_code_to_user.get(teacher_code)
+                        
+                        TimetableEntry.objects.create(
+                            day_slot=day_slot,
+                            batch=batch,
+                            subject=subject,
+                            teacher=teacher,
+                        )
+                        entries_created += 1
+        
+        return Response(
+            {
+                "success": True,
+                "feasible": True,
+                "violations": {},
+                "timetable_generated": True,
+                "entries_created": entries_created,
+                "stop_slot": stop_slot,
+                "fixed_slots_count": fixed_slots_count,
+                "message": f"Timetable regenerated successfully from slot '{stop_slot}'. Created {entries_created} entries."
+            },
+            status=status.HTTP_200_OK,
+        )
+        
+    except Exception as e:
+        import traceback
+        return Response(
+            {
+                "success": False,
+                "feasible": None,
+                "violations": {},
+                "timetable_generated": False,
+                "entries_created": 0,
+                "stop_slot": stop_slot,
+                "fixed_slots_count": 0,
+                "message": f"Error during regeneration: {str(e)}",
                 "traceback": traceback.format_exc() if settings.DEBUG else None
             },
             status=status.HTTP_500_INTERNAL_SERVER_ERROR,

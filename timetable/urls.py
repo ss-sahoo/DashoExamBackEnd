@@ -32,6 +32,7 @@ from timetable.views import (
     delete_fixed_slot,
     check_timetable_feasibility,
     run_timetable_optimization,
+    regenerate_timetable_from_slot,
     set_free_classes_count,
     get_free_classes_count,
     get_all_batches_timetable,
@@ -172,6 +173,7 @@ urlpatterns = [
     # ===========
     path("timetables/<uuid:timetable_id>/check-feasibility/", check_timetable_feasibility, name="check-timetable-feasibility"),
     path("timetables/<uuid:timetable_id>/optimize/", run_timetable_optimization, name="run-timetable-optimization"),
+    path("timetables/<uuid:timetable_id>/regenerate-from-slot/", regenerate_timetable_from_slot, name="regenerate-timetable-from-slot"),
     
     # ===========
     # Batch-wise Timetable GET APIs

@@ -220,6 +220,122 @@ def check_timetable_feasibility_from_start(
     return feasible, dict(violations)
 
 
+def get_day_from_slot(slot_code: str) -> str:
+    """
+    Extract day key from slot code.
+    
+    Examples:
+        'm1' -> 'mon' (m = monday)
+        'tu3' -> 'tue' (tu = tuesday)
+        'w2' -> 'wed' (w = wednesday)
+        'th4' -> 'thu' (th = thursday)
+        'f1' -> 'fri' (f = friday)
+        'sa2' -> 'sat' (sa = saturday)
+        'su1' -> 'sun' (su = sunday)
+        'd1_1' -> 'd1' (date-based)
+    """
+    slot_lower = slot_code.lower()
+    
+    # Date-based slots (d1, d2, d1_1, d2_3, etc.)
+    if slot_lower.startswith('d') and len(slot_lower) > 1:
+        # Extract d1, d2, etc. from d1_1, d2_3, etc.
+        if '_' in slot_lower:
+            return slot_lower.split('_')[0]
+        # Extract d1, d2 from d11, d23 (day + slot number)
+        for i, char in enumerate(slot_lower[1:], 1):
+            if not char.isdigit():
+                break
+        else:
+            # All digits after 'd', find where day ends
+            # Assume single digit day index for simplicity
+            return slot_lower[:2] if len(slot_lower) > 2 else slot_lower
+        return slot_lower[:i]
+    
+    # Weekly slots
+    prefix_map = {
+        'm': 'mon',
+        'tu': 'tue',
+        'w': 'wed',
+        'th': 'thu',
+        'f': 'fri',
+        'sa': 'sat',
+        'su': 'sun',
+    }
+    
+    # Check two-character prefixes first
+    if len(slot_lower) >= 2:
+        two_char = slot_lower[:2]
+        if two_char in prefix_map:
+            return prefix_map[two_char]
+    
+    # Check single-character prefixes
+    if slot_lower[0] in prefix_map:
+        return prefix_map[slot_lower[0]]
+    
+    # Fallback: return the slot code itself
+    return slot_code
+
+
+def generate_new_fixed_slots(
+    timetable: Dict[str, Dict[str, Dict[str, Tuple[str, str]]]],
+    original_fixed_slots: Dict[str, Dict[str, Dict[str, Optional[Tuple[str, str]]]]],
+    available_slots: Dict[str, Dict[str, str]],
+    stop_slot: str
+) -> Dict[str, Dict[str, Dict[str, Optional[Tuple[str, str]]]]]:
+    """
+    Generate new fixed slots by taking values from the generated timetable
+    up to (and including) the stop_slot, then merging with original fixed slots.
+    
+    This allows regenerating the timetable from a specific point while keeping
+    the assignments before that point fixed.
+    
+    Args:
+        timetable: The generated timetable {day: {slot: {batch: (subject, teacher)}}}
+        original_fixed_slots: Original fixed slots from admin
+        available_slots: Available slots structure {day: {slot: time_range}}
+        stop_slot: The slot code to stop at (e.g., 'w3', 'm2', 'd1_3')
+    
+    Returns:
+        New fixed slots dict that includes timetable values up to stop_slot
+    """
+    stop_day = get_day_from_slot(stop_slot)
+    new_fixed = defaultdict(lambda: defaultdict(dict))
+    stop_reached = False
+    
+    # Iterate through available_slots in order
+    for day in available_slots:
+        if stop_reached:
+            break
+            
+        for slot in available_slots[day]:
+            if stop_reached:
+                break
+            
+            # Take timetable values for this slot
+            if day in timetable and slot in timetable[day]:
+                for cls, value in timetable[day][slot].items():
+                    new_fixed[day][slot][cls] = value
+            
+            # Check stop condition
+            if day == stop_day and slot == stop_slot:
+                stop_reached = True
+    
+    # Merge original fixed slots (they take precedence for None values)
+    for day, slots in original_fixed_slots.items():
+        for slot, classes in slots.items():
+            for cls, value in classes.items():
+                if cls in new_fixed[day][slot]:
+                    # If new_fixed has None, use original value
+                    if new_fixed[day][slot][cls] is None:
+                        new_fixed[day][slot][cls] = value
+                else:
+                    # Add original fixed slot
+                    new_fixed[day][slot][cls] = value
+    
+    # Convert defaultdict to regular dict
+    return {day: dict(slots) for day, slots in new_fixed.items()}
+
+
 def generate_random_timetable(
     batches: Dict[str, Any],
     teachers: Dict[str, Any],
