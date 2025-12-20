@@ -244,9 +244,7 @@ class TimetableEntry(TimeStampedModel):
     """
 
     - TimetableEntry answers: "This batch has a class in this slot."
-    - It does NOT permanently fix which teacher will teach that slot.
-      Teacher assignment for each slot is normally decided by your
-      optimisation logic using BatchFacultyLoad + TeacherConstraint.
+    - Now also stores the assigned teacher from optimization.
 
     If you want to hard-lock a specific teacher+subject in a slot,
     that is stored separately in the FixedSlot model.
@@ -263,6 +261,15 @@ class TimetableEntry(TimeStampedModel):
         on_delete=models.CASCADE,
         related_name="timetable_entries",
         help_text="Batch that will have class in this slot.",
+    )
+    
+    teacher = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="timetable_entries",
+        help_text="Teacher assigned to this slot (from optimization).",
     )
     
     subject = models.CharField(
