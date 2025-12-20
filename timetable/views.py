@@ -797,6 +797,7 @@ def list_timetables(request):
     List all timetables (filtered by center for Admin).
     
     GET /api/timetables/
+    GET /api/timetables/?center_id=uuid  (for Super Admin)
     GET /api/timetables/?center_name=Allen - Jaipur Center  (for Super Admin)
     
     Returns:
@@ -827,9 +828,20 @@ def list_timetables(request):
             )
         timetables = Timetable.objects.filter(center=user.center)
     elif user.role == AccountUser.ROLE_SUPER_ADMIN:
-        # Super Admin can filter by center_name or see all
+        # Super Admin can filter by center_id, center_name, or see all
+        center_id = request.query_params.get("center_id")
         center_name = request.query_params.get("center_name")
-        if center_name:
+        
+        if center_id:
+            try:
+                center = Center.objects.get(id=center_id)
+                timetables = Timetable.objects.filter(center=center)
+            except Center.DoesNotExist:
+                return Response(
+                    {"detail": f"Center with id '{center_id}' not found."},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+        elif center_name:
             try:
                 center = Center.objects.get(name=center_name)
                 timetables = Timetable.objects.filter(center=center)
@@ -2920,16 +2932,21 @@ def run_timetable_optimization(request, timetable_id: str):
                         if not batch:
                             continue
                         
+                        # Get teacher object
+                        teacher = teacher_code_to_user.get(teacher_code)
+                        
                         # Create or update TimetableEntry
                         entry, created = TimetableEntry.objects.get_or_create(
                             day_slot=day_slot,
                             batch=batch,
                             defaults={
                                 "subject": subject,
+                                "teacher": teacher,
                             }
                         )
                         if not created:
                             entry.subject = subject
+                            entry.teacher = teacher
                             entry.save()
                         
                         entries_created += 1
