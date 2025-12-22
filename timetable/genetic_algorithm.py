@@ -128,6 +128,11 @@ def check_timetable_feasibility_from_start(
                     continue
                 
                 _, teacher_code = entry
+                
+                # Skip validation for slots without teacher (e.g., "Exam", "Free Period")
+                if not teacher_code:
+                    continue
+                
                 teacher = teacher_by_code.get(teacher_code)
                 
                 if not teacher:
@@ -210,10 +215,11 @@ def check_timetable_feasibility_from_start(
             )
     
     # Result
+    # RULE_4 is a warning (max classes < slots), not a blocker
+    # Only RULE_1, RULE_2, RULE_5 are hard failures
     feasible = (
         len(violations['RULE_1']) + 
         len(violations['RULE_2']) + 
-        len(violations['RULE_4']) + 
         len(violations['RULE_5']) == 0
     )
     
@@ -372,9 +378,19 @@ def generate_random_timetable(
                     if fixed_slots and day in fixed_slots and slot in fixed_slots[day]:
                         for fixed_batch_code, fixed_value in fixed_slots[day][slot].items():
                             if fixed_value is None:
-                                continue  # Free slot
+                                continue  # Blocked slot - skip this batch for this slot
                             
                             subject, teacher_code = fixed_value
+                            
+                            # Handle slots without teacher (e.g., "Exam", "Free Period")
+                            if not teacher_code:
+                                # Just mark the slot as occupied for this batch, no teacher needed
+                                timetable[day][slot][fixed_batch_code] = (subject, "")
+                                batch_subject_count[fixed_batch_code][subject] += 1
+                                batch_day_subject_count[fixed_batch_code][subject] += 1
+                                continue
+                            
+                            # Normal fixed slot with teacher
                             teacher_obj = next((t for t in teachers.values() if t.code == teacher_code), None)
                             if not teacher_obj:
                                 raise Exception(f"Teacher {teacher_code} not found.")
