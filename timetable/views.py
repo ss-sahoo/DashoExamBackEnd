@@ -1814,6 +1814,7 @@ def assign_teacher_to_batch(request):
     timetable_id = request.data.get("timetable_id")
     batch_code = request.data.get("batch_code")
     teacher_code = request.data.get("teacher_code")
+    subject_name = request.data.get("subject_name")  # For FREE periods without teacher
     
     # Get values from request, default to 0 if not provided
     min_lectures_per_day = request.data.get("min_lectures_per_day", 0)
@@ -1821,9 +1822,16 @@ def assign_teacher_to_batch(request):
     max_lectures_per_week = request.data.get("max_lectures_per_week", 0)
     total_lectures = request.data.get("total_lectures", 0)  # Default to 0
     
-    if not timetable_id or not batch_code or not teacher_code:
+    if not timetable_id or not batch_code:
         return Response(
-            {"detail": "timetable_id, batch_code, and teacher_code are required."},
+            {"detail": "timetable_id and batch_code are required."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    
+    # Either teacher_code or subject_name must be provided
+    if not teacher_code and not subject_name:
+        return Response(
+            {"detail": "Either teacher_code or subject_name is required."},
             status=status.HTTP_400_BAD_REQUEST,
         )
     
@@ -1865,8 +1873,21 @@ def assign_teacher_to_batch(request):
             status=status.HTTP_400_BAD_REQUEST,
         )
     
-    # Handle FREE (special case - no teacher, just a subject like "Exam")
-    is_free_period = teacher_code.upper().startswith("FREE")
+    # Handle FREE period (special case - no teacher, just a subject like "Exam")
+    # Can be triggered by:
+    # 1. teacher_code starting with "FREE" (e.g., "FREE1", "FREE2")
+    # 2. teacher_code is null/empty and subject_name is provided
+    is_free_period = False
+    free_code = None
+    
+    if teacher_code and str(teacher_code).upper().startswith("FREE"):
+        is_free_period = True
+        free_code = str(teacher_code).upper()
+    elif not teacher_code and subject_name:
+        # No teacher_code but subject_name provided - treat as FREE period
+        is_free_period = True
+        free_code = str(subject_name).upper()
+    
     teacher = None
     
     if is_free_period:
