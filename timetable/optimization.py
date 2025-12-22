@@ -389,12 +389,42 @@ def build_full_payload(timetable_id: str) -> Dict[str, Any]:
     """
 
     timetable = Timetable.objects.get(id=timetable_id)
-
+    
+    available_slots = build_available_slots(timetable)
+    teachers = build_teachers_payload(timetable)
+    batches = build_batches_payload(timetable)
+    fixed_slots = build_fixed_slots_payload(timetable)
+    
+    # Get all slot codes for FREE teachers
+    all_slot_codes = []
+    for day_slots in available_slots.values():
+        all_slot_codes.extend(day_slots.keys())
+    
+    # Find FREE entries in batches that need virtual teachers
+    existing_teacher_codes = {t["Code"] for t in teachers}
+    
+    for batch_code, batch_data in batches.items():
+        for sub_teacher in batch_data.get("sub_teachers", []):
+            teacher_code = sub_teacher.get("teacher", "")
+            is_free = sub_teacher.get("is_free", False)
+            
+            # If it's a FREE entry and not in teachers list, add virtual teacher
+            if is_free and teacher_code and teacher_code not in existing_teacher_codes:
+                teachers.append({
+                    "Employ-id": f"FREE_{teacher_code}",
+                    "Name": teacher_code,
+                    "Code": teacher_code,
+                    "subjects": "FREE",
+                    "avilable_slots": all_slot_codes.copy(),  # Available in all slots
+                    "is_free": True,
+                })
+                existing_teacher_codes.add(teacher_code)
+    
     return {
-        "available_slots": build_available_slots(timetable),
-        "teachers": build_teachers_payload(timetable),
-        "batches": build_batches_payload(timetable),
-        "fixed_slots": build_fixed_slots_payload(timetable),
+        "available_slots": available_slots,
+        "teachers": teachers,
+        "batches": batches,
+        "fixed_slots": fixed_slots,
     }
 
 """
