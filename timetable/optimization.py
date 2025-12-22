@@ -317,6 +317,11 @@ def build_fixed_slots_payload(
 
     Shape:
       fixed_slots[day_key][slot_code][batch_code] = (subject, teacher_code) or None
+      
+    Note: 
+      - If subject exists but no teacher (e.g., "Exam", "Free Period"), 
+        we use (subject, "") to indicate a blocked slot with no teacher
+      - None means the slot is completely blocked (no class can be scheduled)
     """
 
     fixed_qs = (
@@ -335,12 +340,14 @@ def build_fixed_slots_payload(
         result.setdefault(day_key, {})
         result[day_key].setdefault(slot_code, {})
 
-        if fs.subject and fs.teacher:
-            value: Optional[Tuple[str, str]] = (
-                fs.subject,
-                fs.teacher.teacher_code or fs.teacher.username,
-            )
+        if fs.subject:
+            # Has subject - could be with or without teacher
+            teacher_code = ""
+            if fs.teacher:
+                teacher_code = fs.teacher.teacher_code or fs.teacher.username
+            value: Optional[Tuple[str, str]] = (fs.subject, teacher_code)
         else:
+            # No subject - slot is blocked (None means skip this slot for this batch)
             value = None
 
         result[day_key][slot_code][batch_code] = value
