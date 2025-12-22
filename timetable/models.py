@@ -570,6 +570,9 @@ class BatchFacultyLoad(TimeStampedModel):
 
     The model is reusable for ANY optimisation logic and not tied
     to a specific algorithm implementation.
+    
+    Note: teacher can be null for special entries like "FREE", "Exam", etc.
+    In such cases, subject_name stores the type (e.g., "FREE", "Exam").
     """
 
     timetable = models.ForeignKey(
@@ -582,9 +585,18 @@ class BatchFacultyLoad(TimeStampedModel):
     teacher = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
+        null=True,
+        blank=True,
         limit_choices_to={"role": User.ROLE_TEACHER},
         related_name="batch_faculty_loads",
-        help_text="Faculty / teacher.",
+        help_text="Faculty / teacher. Null for special entries like FREE, Exam.",
+    )
+    
+    subject_name = models.CharField(
+        max_length=100,
+        blank=True,
+        default="",
+        help_text="Subject name. Used for FREE, Exam, or when teacher is null.",
     )
 
     batch = models.ForeignKey(
