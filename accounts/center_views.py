@@ -285,6 +285,10 @@ def list_center_users(request, center_id: str):
     role = request.query_params.get('role')
     if role:
         users = users.filter(role=role)
+        # Exclude FREE virtual teachers from teacher list
+        if role.lower() == 'teacher':
+            users = users.exclude(teacher_code__istartswith='FREE')
+            users = users.exclude(teacher_subjects__iexact='FREE')
     
     search = request.query_params.get('search')
     if search:
