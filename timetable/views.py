@@ -2025,6 +2025,260 @@ def assign_teacher_to_batch(request):
         )
 
 
+@api_view(["POST", "DELETE"])
+@permission_classes([IsAuthenticated])
+def remove_batch_from_timetable(request):
+    """
+    Admin removes a batch from a timetable.
+    This also removes all teacher assignments (BatchFacultyLoad) for this batch in this timetable.
+    
+    Payload:
+    {
+        "timetable_id": "uuid",
+        "batch_code": "HDTN-1A-ZA1"
+    }
+    
+    Returns:
+    {
+        "message": "Batch removed from timetable successfully.",
+        "timetable_id": "uuid",
+        "batch_code": "HDTN-1A-ZA1",
+        "teachers_removed": 3
+    }
+    """
+    user = request.user
+    
+    # Check if user is Admin or Super Admin
+    if user.role not in (AccountUser.ROLE_ADMIN, AccountUser.ROLE_SUPER_ADMIN):
+        return Response(
+            {"detail": "Only Admin and Super Admin can remove batches from timetables."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    
+    timetable_id = request.data.get("timetable_id")
+    batch_code = request.data.get("batch_code")
+    
+    if not timetable_id or not batch_code:
+        return Response(
+            {"detail": "timetable_id and batch_code are required."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    
+    # Get timetable
+    try:
+        timetable = Timetable.objects.select_related("center").get(id=timetable_id)
+    except Timetable.DoesNotExist:
+        return Response(
+            {"detail": "Timetable not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+    
+    # Check permissions: Admin can only manage their center's timetables
+    if user.role == AccountUser.ROLE_ADMIN:
+        if not user.center:
+            return Response(
+                {"detail": "Admin user is not linked to any center."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if timetable.center != user.center:
+            return Response(
+                {"detail": "You can only manage timetables in your center."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+    
+    # Get batch
+    try:
+        batch = Batch.objects.get(code=batch_code)
+    except Batch.DoesNotExist:
+        return Response(
+            {"detail": f"Batch with code '{batch_code}' not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+    
+    # Check if batch is assigned to this timetable
+    try:
+        timetable_batch = TimetableBatch.objects.get(timetable=timetable, batch=batch)
+    except TimetableBatch.DoesNotExist:
+        return Response(
+            {"detail": f"Batch '{batch_code}' is not assigned to this timetable."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+    
+    # Remove all teacher assignments for this batch in this timetable
+    teachers_removed = BatchFacultyLoad.objects.filter(
+        timetable=timetable,
+        batch=batch
+    ).delete()[0]
+    
+    # Remove all timetable entries for this batch
+    entries_removed = TimetableEntry.objects.filter(
+        day_slot__timetable=timetable,
+        batch=batch
+    ).delete()[0]
+    
+    # Remove all fixed slots for this batch
+    fixed_slots_removed = FixedSlot.objects.filter(
+        timetable=timetable,
+        batch=batch
+    ).delete()[0]
+    
+    # Remove the batch assignment
+    timetable_batch.delete()
+    
+    return Response(
+        {
+            "message": "Batch removed from timetable successfully.",
+            "timetable_id": str(timetable.id),
+            "batch_code": batch.code,
+            "batch_name": batch.name,
+            "teachers_removed": teachers_removed,
+            "entries_removed": entries_removed,
+            "fixed_slots_removed": fixed_slots_removed,
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
+@api_view(["POST", "DELETE"])
+@permission_classes([IsAuthenticated])
+def remove_teacher_from_batch(request):
+    """
+    Admin removes a teacher assignment from a batch in a timetable.
+    
+    Payload:
+    {
+        "timetable_id": "uuid",
+        "batch_code": "HDTN-1A-ZA1",
+        "teacher_code": "AK-CAP"
+    }
+    
+    Returns:
+    {
+        "message": "Teacher removed from batch successfully.",
+        "timetable_id": "uuid",
+        "batch_code": "HDTN-1A-ZA1",
+        "teacher_code": "AK-CAP"
+    }
+    """
+    user = request.user
+    
+    # Check if user is Admin or Super Admin
+    if user.role not in (AccountUser.ROLE_ADMIN, AccountUser.ROLE_SUPER_ADMIN):
+        return Response(
+            {"detail": "Only Admin and Super Admin can remove teachers from batches."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    
+    timetable_id = request.data.get("timetable_id")
+    batch_code = request.data.get("batch_code")
+    teacher_code = request.data.get("teacher_code")
+    
+    if not timetable_id or not batch_code or not teacher_code:
+        return Response(
+            {"detail": "timetable_id, batch_code, and teacher_code are required."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    
+    # Get timetable
+    try:
+        timetable = Timetable.objects.select_related("center").get(id=timetable_id)
+    except Timetable.DoesNotExist:
+        return Response(
+            {"detail": "Timetable not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+    
+    # Check permissions: Admin can only manage their center's timetables
+    if user.role == AccountUser.ROLE_ADMIN:
+        if not user.center:
+            return Response(
+                {"detail": "Admin user is not linked to any center."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if timetable.center != user.center:
+            return Response(
+                {"detail": "You can only manage timetables in your center."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+    
+    # Get batch
+    try:
+        batch = Batch.objects.get(code=batch_code)
+    except Batch.DoesNotExist:
+        return Response(
+            {"detail": f"Batch with code '{batch_code}' not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+    
+    # Get teacher
+    try:
+        teacher = AccountUser.objects.get(
+            Q(teacher_code__iexact=teacher_code) |
+            Q(username__iexact=teacher_code)
+        )
+    except AccountUser.DoesNotExist:
+        return Response(
+            {"detail": f"Teacher with code '{teacher_code}' not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+    except AccountUser.MultipleObjectsReturned:
+        # If multiple found, try to get the one in the same center
+        teacher = AccountUser.objects.filter(
+            Q(teacher_code__iexact=teacher_code) |
+            Q(username__iexact=teacher_code),
+            center=timetable.center
+        ).first()
+        if not teacher:
+            return Response(
+                {"detail": f"Multiple teachers found with code '{teacher_code}'. Please use unique teacher_code."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+    
+    # Check if teacher is assigned to this batch in this timetable
+    try:
+        faculty_load = BatchFacultyLoad.objects.get(
+            timetable=timetable,
+            batch=batch,
+            teacher=teacher
+        )
+    except BatchFacultyLoad.DoesNotExist:
+        return Response(
+            {"detail": f"Teacher '{teacher_code}' is not assigned to batch '{batch_code}' in this timetable."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+    
+    # Remove timetable entries for this teacher in this batch
+    entries_removed = TimetableEntry.objects.filter(
+        day_slot__timetable=timetable,
+        batch=batch,
+        teacher=teacher
+    ).delete()[0]
+    
+    # Remove fixed slots for this teacher in this batch
+    fixed_slots_removed = FixedSlot.objects.filter(
+        timetable=timetable,
+        batch=batch,
+        teacher=teacher
+    ).delete()[0]
+    
+    # Remove the faculty load assignment
+    faculty_load.delete()
+    
+    return Response(
+        {
+            "message": "Teacher removed from batch successfully.",
+            "timetable_id": str(timetable.id),
+            "batch_code": batch.code,
+            "batch_name": batch.name,
+            "teacher_code": teacher.teacher_code or teacher.username,
+            "teacher_name": f"{teacher.first_name} {teacher.last_name}".strip(),
+            "entries_removed": entries_removed,
+            "fixed_slots_removed": fixed_slots_removed,
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def get_timetable_batch_assignments(request, timetable_id: str):
