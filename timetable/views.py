@@ -2239,7 +2239,7 @@ def get_batch_wise_slots(request, timetable_id: str, batch_id: str = None):
     # Get all timetable entries (slot assignments)
     entries = TimetableEntry.objects.filter(
         day_slot__timetable=timetable
-    ).select_related("day_slot", "batch")
+    ).select_related("day_slot", "batch", "teacher")
     
     # Get all fixed slots
     fixed_slots = FixedSlot.objects.filter(
@@ -2301,11 +2301,15 @@ def get_batch_wise_slots(request, timetable_id: str, batch_id: str = None):
             # Add assignment details if exists
             if fixed:
                 slot_data["subject"] = fixed.subject
-                slot_data["teacher_code"] = fixed.teacher.teacher_code or fixed.teacher.username
-                slot_data["teacher_name"] = f"{fixed.teacher.first_name} {fixed.teacher.last_name}".strip() or slot_data["teacher_code"]
+                if fixed.teacher:
+                    slot_data["teacher_code"] = fixed.teacher.teacher_code or fixed.teacher.username
+                    slot_data["teacher_name"] = f"{fixed.teacher.first_name} {fixed.teacher.last_name}".strip() or slot_data["teacher_code"]
                 slot_data["is_fixed"] = True
             elif entry:
                 slot_data["subject"] = entry.subject
+                if entry.teacher:
+                    slot_data["teacher_code"] = entry.teacher.teacher_code or entry.teacher.username
+                    slot_data["teacher_name"] = f"{entry.teacher.first_name} {entry.teacher.last_name}".strip() or slot_data["teacher_code"]
             
             if day_key not in days_data:
                 days_data[day_key] = {
