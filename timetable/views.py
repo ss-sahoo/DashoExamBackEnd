@@ -1865,87 +1865,120 @@ def assign_teacher_to_batch(request):
             status=status.HTTP_400_BAD_REQUEST,
         )
     
-    # Handle FREE teacher (special case - virtual teacher for free periods)
-    is_free_teacher = teacher_code.upper().startswith("FREE")
+    # Handle FREE (special case - no teacher, just a subject like "Exam")
+    is_free_period = teacher_code.upper().startswith("FREE")
     teacher = None
     
-    if is_free_teacher:
-        # FREE, FREE1, FREE2, etc. are virtual teachers for free periods
-        # They are stored as actual users but treated specially in the algorithm
+    if is_free_period:
+        # FREE, FREE1, FREE2, etc. are treated like "Exam" - no teacher, just a subject
         free_code = teacher_code.upper()  # Normalize to uppercase
         
-        try:
-            # Try to find existing FREE teacher in this center by teacher_code
-            teacher = AccountUser.objects.filter(
-                teacher_code__iexact=free_code,
-                center=timetable.center
-            ).first()
-            
-            if not teacher:
-                # Create new FREE teacher
-                # Use center ID in username to ensure uniqueness across centers
-                center_short = str(timetable.center.id)[:8]
-                username = f"{free_code}_{center_short}"
-                
-                # Check if username already exists, if so append a number
-                base_username = username
-                counter = 1
-                while AccountUser.objects.filter(username=username).exists():
-                    username = f"{base_username}_{counter}"
-                    counter += 1
-                
-                teacher = AccountUser(
-                    username=username,
-                    teacher_code=free_code,
-                    role=AccountUser.ROLE_TEACHER,
-                    center=timetable.center,
-                    first_name="FREE",
-                    last_name=free_code.replace("FREE", "").strip() or "Period",
-                    teacher_subjects="FREE",
-                    is_active=True,
-                )
-                teacher.set_unusable_password()  # FREE teachers can't login
-                teacher.save()
-                
-        except Exception as e:
-            import traceback
+        # Validate lecture constraints
+        if min_lectures_per_day < 0:
             return Response(
-                {
-                    "detail": f"Error handling FREE teacher '{free_code}': {str(e)}",
-                    "traceback": traceback.format_exc()
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                {"detail": "min_lectures_per_day must be >= 0."},
+                status=status.HTTP_400_BAD_REQUEST,
             )
-    else:
-        # Get regular teacher
-        try:
-            from django.db.models import Q
-            teacher = AccountUser.objects.get(
-                Q(role=AccountUser.ROLE_TEACHER) &
-                (Q(teacher_code__iexact=teacher_code) |
-                 Q(username__iexact=teacher_code) |
-                 Q(email__iexact=teacher_code))
-            )
-        except AccountUser.DoesNotExist:
+        if max_lectures_per_day < 0:
             return Response(
-                {"detail": f"Teacher with code '{teacher_code}' not found."},
-                status=status.HTTP_404_NOT_FOUND,
+                {"detail": "max_lectures_per_day must be >= 0."},
+                status=status.HTTP_400_BAD_REQUEST,
             )
-        except AccountUser.MultipleObjectsReturned:
+        if max_lectures_per_week < 0:
             return Response(
-                {"detail": f"Multiple teachers found with code '{teacher_code}'. Please use unique teacher_code."},
+                {"detail": "max_lectures_per_week must be >= 0."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if total_lectures < 0:
+            return Response(
+                {"detail": "total_lectures must be >= 0."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
         
-        # Verify teacher belongs to the same center
-        if teacher.center != timetable.center:
+        # Create or update BatchFacultyLoad with teacher=None
+        try:
+            with transaction.atomic():
+                # Check if FREE entry already exists for this batch
+                faculty_load = BatchFacultyLoad.objects.filter(
+                    timetable=timetable,
+                    batch=batch,
+                    teacher__isnull=True,
+                    subject_name__iexact=free_code
+                ).first()
+                
+                if faculty_load:
+                    # Update existing
+                    faculty_load.min_lectures_per_day = min_lectures_per_day
+                    faculty_load.max_lectures_per_day = max_lectures_per_day
+                    faculty_load.max_lectures_per_week = max_lectures_per_week
+                    faculty_load.total_lectures = total_lectures
+                    faculty_load.save()
+                    created = False
+                else:
+                    # Create new
+                    faculty_load = BatchFacultyLoad.objects.create(
+                        timetable=timetable,
+                        batch=batch,
+                        teacher=None,
+                        subject_name=free_code,
+                        min_lectures_per_day=min_lectures_per_day,
+                        max_lectures_per_day=max_lectures_per_day,
+                        max_lectures_per_week=max_lectures_per_week,
+                        total_lectures=total_lectures,
+                    )
+                    created = True
+                
+                action = "created" if created else "updated"
+                
+                return Response(
+                    {
+                        "message": f"FREE period assigned to batch successfully ({action}).",
+                        "teacher_code": None,
+                        "teacher_name": None,
+                        "teacher_id": None,
+                        "subject": free_code,
+                        "is_free": True,
+                        "batch_code": batch.code,
+                        "batch_name": batch.name,
+                        "min_lectures_per_day": faculty_load.min_lectures_per_day,
+                        "max_lectures_per_day": faculty_load.max_lectures_per_day,
+                        "max_lectures_per_week": faculty_load.max_lectures_per_week,
+                        "total_lectures": faculty_load.total_lectures,
+                    },
+                    status=status.HTTP_200_OK,
+                )
+        except Exception as e:
             return Response(
-                {"detail": f"Teacher '{teacher_code}' does not belong to the same center as the timetable."},
+                {"detail": f"Error assigning FREE period to batch: {str(e)}"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
     
-    # Values are batch-specific - each batch-teacher combination has its own values
-    # No need to copy from other batches or timetables
+    # Regular teacher handling
+    try:
+        from django.db.models import Q
+        teacher = AccountUser.objects.get(
+            Q(role=AccountUser.ROLE_TEACHER) &
+            (Q(teacher_code__iexact=teacher_code) |
+             Q(username__iexact=teacher_code) |
+             Q(email__iexact=teacher_code))
+        )
+    except AccountUser.DoesNotExist:
+        return Response(
+            {"detail": f"Teacher with code '{teacher_code}' not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+    except AccountUser.MultipleObjectsReturned:
+        return Response(
+            {"detail": f"Multiple teachers found with code '{teacher_code}'. Please use unique teacher_code."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    
+    # Verify teacher belongs to the same center
+    if teacher.center != timetable.center:
+        return Response(
+            {"detail": f"Teacher '{teacher_code}' does not belong to the same center as the timetable."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
     
     # Validate lecture constraints
     if min_lectures_per_day < 0:
@@ -1974,15 +2007,15 @@ def assign_teacher_to_batch(request):
             status=status.HTTP_400_BAD_REQUEST,
         )
     
-    # Create or update BatchFacultyLoad
+    # Create or update BatchFacultyLoad for regular teacher
     try:
-        from django.db import transaction
         with transaction.atomic():
             faculty_load, created = BatchFacultyLoad.objects.update_or_create(
                 timetable=timetable,
                 teacher=teacher,
                 batch=batch,
                 defaults={
+                    "subject_name": teacher.teacher_subjects or "",
                     "min_lectures_per_day": min_lectures_per_day,
                     "max_lectures_per_day": max_lectures_per_day,
                     "max_lectures_per_week": max_lectures_per_week,
@@ -1990,25 +2023,18 @@ def assign_teacher_to_batch(request):
                 }
             )
             
-            # Get teacher's subject
-            if is_free_teacher:
-                subject = "FREE"
-            else:
-                subject = teacher.teacher_subjects or "Not specified"
-            
+            subject = teacher.teacher_subjects or "Not specified"
             action = "created" if created else "updated"
             teacher_display_name = teacher.teacher_code or teacher.username
-            if is_free_teacher:
-                teacher_display_name = teacher.teacher_code  # FREE, FREE1, FREE2, etc.
             
             return Response(
                 {
-                    "message": f"{'FREE teacher' if is_free_teacher else 'Teacher'} assigned to batch successfully ({action}).",
+                    "message": f"Teacher assigned to batch successfully ({action}).",
                     "teacher_code": teacher_display_name,
                     "teacher_name": f"{teacher.first_name} {teacher.last_name}".strip() or teacher_display_name,
                     "teacher_id": str(teacher.id),
                     "subject": subject,
-                    "is_free": is_free_teacher,
+                    "is_free": False,
                     "batch_code": batch.code,
                     "batch_name": batch.name,
                     "min_lectures_per_day": faculty_load.min_lectures_per_day,
