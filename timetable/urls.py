@@ -23,7 +23,9 @@ from timetable.views import (
     get_available_teachers_for_slot,
     get_teacher_wise_availability,
     assign_batch_to_timetable,
+    remove_batch_from_timetable,
     assign_teacher_to_batch,
+    remove_teacher_from_batch,
     get_timetable_batch_assignments,
     get_batch_wise_slots,
     assign_fixed_slot,
@@ -150,7 +152,9 @@ urlpatterns = [
     # Batch and Teacher Assignment APIs
     # ===========
     path("admin/timetables/assign-batch/", assign_batch_to_timetable, name="assign-batch-to-timetable"),
+    path("admin/timetables/remove-batch/", remove_batch_from_timetable, name="remove-batch-from-timetable"),
     path("admin/timetables/assign-teacher/", assign_teacher_to_batch, name="assign-teacher-to-batch"),
+    path("admin/timetables/remove-teacher/", remove_teacher_from_batch, name="remove-teacher-from-batch"),
     path("timetables/<uuid:timetable_id>/batch-assignments/", get_timetable_batch_assignments, name="get-timetable-batch-assignments"),
     path("timetables/<uuid:timetable_id>/batch-wise-slots/", get_batch_wise_slots, name="get-batch-wise-slots"),
     path("timetables/<uuid:timetable_id>/batch-wise-slots/<uuid:batch_id>/", get_batch_wise_slots, name="get-single-batch-slots"),
