@@ -687,10 +687,14 @@ def get_teachers_in_center(request):
             status=status.HTTP_403_FORBIDDEN,
         )
     
-    # Get all teachers in the center
+    # Get all teachers in the center (exclude FREE virtual teachers)
     teachers = User.objects.filter(
         center=center,
         role__in=['teacher', 'TEACHER']
+    ).exclude(
+        teacher_code__istartswith='FREE'  # Exclude FREE, FREE1, FREE2, etc.
+    ).exclude(
+        teacher_subjects__iexact='FREE'  # Also exclude by subject
     ).order_by('first_name', 'last_name')
     
     teachers_data = []

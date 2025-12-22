@@ -66,6 +66,7 @@ def create_timetable_with_slots(request):
     Example payload:
     {
       "center_name": "Allen - Jaipur Center",  # required only for SUPER_ADMIN
+      "name": "JEE Main 2025 Schedule",  # optional timetable name
       "from_date": "2025-01-01",
       "to_date": "2025-03-31",
       "free_classes_count": 3,
@@ -157,6 +158,7 @@ def create_timetable_with_slots(request):
     # Create timetable
     timetable = Timetable.objects.create(
         center=center,
+        name=data.get("name", ""),
         from_date=from_date,
         to_date=to_date,
         free_classes_count=free_classes_count,
@@ -266,6 +268,7 @@ def create_timetable_with_slots(request):
         {
             "message": "Timetable created successfully.",
             "timetable_id": str(timetable.id),
+            "name": timetable.name,
             "center": center.name,
             "from_date": str(from_date),
             "to_date": str(to_date),
@@ -357,6 +360,9 @@ def update_timetable(request, timetable_id: str):
 
     if "free_classes_count" in data:
         timetable.free_classes_count = data["free_classes_count"]
+
+    if "name" in data:
+        timetable.name = data["name"]
 
     if "description" in data:
         timetable.description = data["description"]
@@ -529,6 +535,7 @@ def get_timetable(request, timetable_id: str):
     return Response(
         {
             "id": str(timetable.id),
+            "name": timetable.name,
             "center": timetable.center.name,
             "center_id": str(timetable.center.id),
             "from_date": str(timetable.from_date),
@@ -869,6 +876,7 @@ def list_timetables(request):
         
         timetable_list.append({
             "id": str(tt.id),
+            "name": tt.name,
             "center": tt.center.name,
             "from_date": str(tt.from_date),
             "to_date": str(tt.to_date),
@@ -1857,47 +1865,57 @@ def assign_teacher_to_batch(request):
             status=status.HTTP_400_BAD_REQUEST,
         )
     
-    # Handle FREE teacher (special case)
+    # Handle FREE teacher (special case - virtual teacher for free periods)
     is_free_teacher = teacher_code.upper().startswith("FREE")
     teacher = None
     
     if is_free_teacher:
-        # For FREE teachers, create or get a special teacher user
-        # FREE, FREE1, FREE2, etc. are all valid
+        # FREE, FREE1, FREE2, etc. are virtual teachers for free periods
+        # They are stored as actual users but treated specially in the algorithm
         free_code = teacher_code.upper()  # Normalize to uppercase
         
-        # Try to find existing FREE teacher in this center
-        from django.db.models import Q
         try:
-            teacher = AccountUser.objects.get(
-                role=AccountUser.ROLE_TEACHER,
-                center=timetable.center,
-                teacher_code__iexact=free_code
-            )
-        except AccountUser.DoesNotExist:
-            # Create new FREE teacher
-            teacher = AccountUser.objects.create_user(
-                username=free_code,
-                teacher_code=free_code,
-                role=AccountUser.ROLE_TEACHER,
-                center=timetable.center,
-                first_name="FREE",
-                last_name=free_code.replace("FREE", "").strip() or "",
-                teacher_subjects="FREE",
-                password="FREE_TEACHER_PLACEHOLDER",  # Placeholder password, not used for login
-            )
-        except AccountUser.MultipleObjectsReturned:
-            # If multiple found, use the first one
+            # Try to find existing FREE teacher in this center by teacher_code
             teacher = AccountUser.objects.filter(
-                role=AccountUser.ROLE_TEACHER,
-                center=timetable.center,
-                teacher_code__iexact=free_code
+                teacher_code__iexact=free_code,
+                center=timetable.center
             ).first()
-        
-        # Ensure teacher belongs to the same center
-        if teacher.center != timetable.center:
-            teacher.center = timetable.center
-            teacher.save()
+            
+            if not teacher:
+                # Create new FREE teacher
+                # Use center ID in username to ensure uniqueness across centers
+                center_short = str(timetable.center.id)[:8]
+                username = f"{free_code}_{center_short}"
+                
+                # Check if username already exists, if so append a number
+                base_username = username
+                counter = 1
+                while AccountUser.objects.filter(username=username).exists():
+                    username = f"{base_username}_{counter}"
+                    counter += 1
+                
+                teacher = AccountUser(
+                    username=username,
+                    teacher_code=free_code,
+                    role=AccountUser.ROLE_TEACHER,
+                    center=timetable.center,
+                    first_name="FREE",
+                    last_name=free_code.replace("FREE", "").strip() or "Period",
+                    teacher_subjects="FREE",
+                    is_active=True,
+                )
+                teacher.set_unusable_password()  # FREE teachers can't login
+                teacher.save()
+                
+        except Exception as e:
+            import traceback
+            return Response(
+                {
+                    "detail": f"Error handling FREE teacher '{free_code}': {str(e)}",
+                    "traceback": traceback.format_exc()
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
     else:
         # Get regular teacher
         try:

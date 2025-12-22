@@ -57,6 +57,12 @@ class Timetable(TimeStampedModel):
         help_text="Center for which this timetable is created.",
     )
     
+    name = models.CharField(
+        max_length=255,
+        blank=True,
+        help_text="Name of the timetable. Example: 'JEE Main 2025 Schedule'",
+    )
+    
     from_date = models.DateField(
         help_text="Start date of the timetable period. Example: 2025-01-01",
     )
@@ -90,6 +96,8 @@ class Timetable(TimeStampedModel):
         verbose_name_plural = "Timetables"
 
     def __str__(self) -> str:
+        if self.name:
+            return f"{self.name} ({self.center.name})"
         return f"{self.center.name} - {self.from_date} to {self.to_date}"
 
 

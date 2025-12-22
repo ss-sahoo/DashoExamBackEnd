@@ -215,30 +215,39 @@ def build_teachers_payload(timetable: Timetable) -> List[Dict[str, Any]]:
 
     payload: List[Dict[str, Any]] = []
     for teacher in teachers_qs:
-        # Default: all slots are available
-        # Remove slots that are:
-        # 1. Explicitly marked as unavailable by admin
-        # 2. Teacher is busy in another timetable at overlapping time
-        unavailable = teacher_unavailable.get(teacher.id, set())
+        # Check if this is a FREE teacher (FREE, FREE1, FREE2, etc.)
+        teacher_code = teacher.teacher_code or teacher.username
+        is_free_teacher = teacher_code.upper().startswith("FREE")
         
-        available_slots = []
-        for code in all_slot_codes:
-            if code in unavailable:
-                continue  # Admin marked unavailable
+        if is_free_teacher:
+            # FREE teachers are available in ALL slots
+            available_slots = all_slot_codes.copy()
+        else:
+            # Default: all slots are available
+            # Remove slots that are:
+            # 1. Explicitly marked as unavailable by admin
+            # 2. Teacher is busy in another timetable at overlapping time
+            unavailable = teacher_unavailable.get(teacher.id, set())
             
-            info = slot_info.get(code, {})
-            if is_teacher_busy(teacher.id, info.get("date"), info.get("start_time"), info.get("end_time")):
-                continue  # Teacher busy in another timetable
-            
-            available_slots.append(code)
+            available_slots = []
+            for code in all_slot_codes:
+                if code in unavailable:
+                    continue  # Admin marked unavailable
+                
+                info = slot_info.get(code, {})
+                if is_teacher_busy(teacher.id, info.get("date"), info.get("start_time"), info.get("end_time")):
+                    continue  # Teacher busy in another timetable
+                
+                available_slots.append(code)
         
         payload.append(
             {
                 "Employ-id": teacher.teacher_employee_id or teacher.id,
                 "Name": teacher.get_full_name() or teacher.username,
-                "Code": teacher.teacher_code or teacher.username,
+                "Code": teacher_code,
                 "subjects": teacher.teacher_subjects or "",
                 "avilable_slots": available_slots,
+                "is_free": is_free_teacher,
             }
         )
 
