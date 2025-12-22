@@ -2385,7 +2385,7 @@ def get_timetable_batch_assignments(request, timetable_id: str):
             "teachers": [],
         }
     
-    # Add teacher assignments (include FREE teachers in batch view)
+    # Add teacher assignments (include FREE periods)
     for load in faculty_loads:
         batch_code = load.batch.code
         
@@ -2398,28 +2398,37 @@ def get_timetable_batch_assignments(request, timetable_id: str):
                 "teachers": [],
             }
         
-        # Check if this is a FREE teacher
-        is_free = load.teacher.teacher_code and load.teacher.teacher_code.upper().startswith("FREE")
-        
-        if is_free:
-            subject = "FREE"
+        # Handle null teacher (FREE periods)
+        if load.teacher is None:
+            # FREE period - no teacher
+            batches_dict[batch_code]["teachers"].append({
+                "teacher_code": None,
+                "teacher_name": None,
+                "teacher_id": None,
+                "subject": load.subject_name or "FREE",
+                "is_free": True,
+                "min_lectures_per_day": load.min_lectures_per_day,
+                "max_lectures_per_day": load.max_lectures_per_day,
+                "max_lectures_per_week": load.max_lectures_per_week,
+                "total_lectures": load.total_lectures,
+            })
         else:
-            subject = load.teacher.teacher_subjects or "Not specified"
-        
-        teacher_code = load.teacher.teacher_code or load.teacher.username
-        teacher_name = f"{load.teacher.first_name} {load.teacher.last_name}".strip() or teacher_code
-        
-        batches_dict[batch_code]["teachers"].append({
-            "teacher_code": teacher_code,
-            "teacher_name": teacher_name,
-            "teacher_id": str(load.teacher.id),
-            "subject": subject,
-            "is_free": is_free,
-            "min_lectures_per_day": load.min_lectures_per_day,
-            "max_lectures_per_day": load.max_lectures_per_day,
-            "max_lectures_per_week": load.max_lectures_per_week,
-            "total_lectures": load.total_lectures,
-        })
+            # Regular teacher
+            subject = load.subject_name or load.teacher.teacher_subjects or "Not specified"
+            teacher_code = load.teacher.teacher_code or load.teacher.username
+            teacher_name = f"{load.teacher.first_name} {load.teacher.last_name}".strip() or teacher_code
+            
+            batches_dict[batch_code]["teachers"].append({
+                "teacher_code": teacher_code,
+                "teacher_name": teacher_name,
+                "teacher_id": str(load.teacher.id),
+                "subject": subject,
+                "is_free": False,
+                "min_lectures_per_day": load.min_lectures_per_day,
+                "max_lectures_per_day": load.max_lectures_per_day,
+                "max_lectures_per_week": load.max_lectures_per_week,
+                "total_lectures": load.total_lectures,
+            })
     
     batches_list = list(batches_dict.values())
     
