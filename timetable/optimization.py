@@ -130,9 +130,8 @@ def build_teachers_payload(timetable: Timetable) -> List[Dict[str, Any]]:
     - We read TeacherSlotAvailability for this timetable to know which
       slot codes are allowed for each teacher.
     - If no availability record exists for a slot, teacher is considered AVAILABLE by default
-    - Also excludes slots where teacher is busy in another timetable (time overlap check)
+    - Only checks is_available flag, ignores busy status in other timetables
     """
-    from .models import TimetableEntry
 
     # Get teachers in the same center as the timetable
     teachers_qs = User.objects.filter(
@@ -146,23 +145,17 @@ def build_teachers_payload(timetable: Timetable) -> List[Dict[str, Any]]:
         .order_by("day_index", "slot_number")
     )
     
-    # Build slot info: code -> (date, start_time, end_time)
-    slot_info = {}
+    # Build slot codes list
     all_slot_codes = []
     for slot in all_slots:
         day_key = DAY_MAP_SHORT.get(slot.day, f"d{slot.day_index}")
         code = slot.slot_code or f"{day_key}{slot.slot_number}"
         all_slot_codes.append(code)
-        slot_info[code] = {
-            "date": slot.actual_date,
-            "start_time": slot.start_time,
-            "end_time": slot.end_time,
-        }
 
-    # teacher_id -> set of UNAVAILABLE slot_codes (admin marked)
+    # teacher_id -> set of UNAVAILABLE slot_codes (admin marked is_available=False)
     teacher_unavailable: Dict[int, set] = {}
 
-    # Get explicit availability records (both available and unavailable)
+    # Get explicit availability records
     avail_qs = (
         TeacherSlotAvailability.objects.filter(
             timetable=timetable,
@@ -175,43 +168,8 @@ def build_teachers_payload(timetable: Timetable) -> List[Dict[str, Any]]:
         code = av.day_slot.slot_code or f"{day_key}{av.day_slot.slot_number}"
         
         if not av.is_available:
-            # Track unavailable slots
+            # Track unavailable slots (only where is_available=False)
             teacher_unavailable.setdefault(av.teacher_id, set()).add(code)
-
-    # Get busy slots from OTHER timetables (teacher has class at overlapping time)
-    teacher_ids = [t.id for t in teachers_qs]
-    
-    other_entries = TimetableEntry.objects.filter(
-        teacher_id__in=teacher_ids
-    ).exclude(
-        day_slot__timetable=timetable
-    ).select_related('day_slot', 'teacher')
-    
-    # Build busy slots list: (teacher_id, date, start_time, end_time)
-    busy_slots = []
-    for entry in other_entries:
-        if entry.day_slot.actual_date and entry.teacher_id:
-            busy_slots.append({
-                "teacher_id": entry.teacher_id,
-                "date": entry.day_slot.actual_date,
-                "start_time": entry.day_slot.start_time,
-                "end_time": entry.day_slot.end_time,
-            })
-    
-    def check_time_overlap(start1, end1, start2, end2):
-        """Check if two time ranges overlap."""
-        return start1 < end2 and start2 < end1
-    
-    def is_teacher_busy(teacher_id, slot_date, slot_start, slot_end):
-        """Check if teacher is busy at given date/time (with overlap check)."""
-        if not slot_date:
-            return False
-        for busy in busy_slots:
-            if (busy["teacher_id"] == teacher_id and 
-                busy["date"] == slot_date and
-                check_time_overlap(slot_start, slot_end, busy["start_time"], busy["end_time"])):
-                return True
-        return False
 
     payload: List[Dict[str, Any]] = []
     for teacher in teachers_qs:
@@ -224,20 +182,13 @@ def build_teachers_payload(timetable: Timetable) -> List[Dict[str, Any]]:
             available_slots = all_slot_codes.copy()
         else:
             # Default: all slots are available
-            # Remove slots that are:
-            # 1. Explicitly marked as unavailable by admin
-            # 2. Teacher is busy in another timetable at overlapping time
+            # Only remove slots explicitly marked as unavailable by admin
             unavailable = teacher_unavailable.get(teacher.id, set())
             
             available_slots = []
             for code in all_slot_codes:
                 if code in unavailable:
-                    continue  # Admin marked unavailable
-                
-                info = slot_info.get(code, {})
-                if is_teacher_busy(teacher.id, info.get("date"), info.get("start_time"), info.get("end_time")):
-                    continue  # Teacher busy in another timetable
-                
+                    continue  # Admin marked is_available=False
                 available_slots.append(code)
         
         payload.append(
