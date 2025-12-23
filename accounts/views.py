@@ -476,6 +476,139 @@ def leave_institute(request):
 
 @api_view(['GET'])
 @permission_classes([permissions.IsAuthenticated])
+def all_people_view(request):
+    """
+    Get all people with filters and role information.
+    
+    Query Parameters:
+    - role: Filter by role (e.g., 'teacher', 'student', 'ADMIN')
+    - search: Search by name, email, or username
+    - is_active: Filter by active status ('true' or 'false')
+    - center_id: Filter by center
+    - institute_id: Filter by institute
+    - page: Page number (default: 1)
+    - page_size: Items per page (default: 20, max: 100)
+    """
+    from django.db.models import Q
+    from django.core.paginator import Paginator
+    
+    user = request.user
+    
+    # Base queryset - admins see all, others see their institute
+    if user.role in ['super_admin', 'SUPER_ADMIN']:
+        queryset = User.objects.all()
+    elif user.role in ['institute_admin', 'ADMIN', 'exam_admin']:
+        queryset = User.objects.filter(
+            Q(institute=user.institute) | Q(center__institute=user.institute)
+        )
+    else:
+        # Regular users see people in their institute/center
+        queryset = User.objects.filter(institute=user.institute)
+    
+    # Apply filters
+    role_filter = request.GET.get('role')
+    if role_filter:
+        # Support both lowercase and uppercase role variants
+        role_variants = [role_filter, role_filter.lower(), role_filter.upper()]
+        queryset = queryset.filter(role__in=role_variants)
+    
+    search = request.GET.get('search')
+    if search:
+        queryset = queryset.filter(
+            Q(first_name__icontains=search) |
+            Q(last_name__icontains=search) |
+            Q(email__icontains=search) |
+            Q(username__icontains=search) |
+            Q(teacher_code__icontains=search)
+        )
+    
+    is_active = request.GET.get('is_active')
+    if is_active is not None:
+        queryset = queryset.filter(is_active=is_active.lower() == 'true')
+    
+    center_id = request.GET.get('center_id')
+    if center_id:
+        queryset = queryset.filter(center_id=center_id)
+    
+    institute_id = request.GET.get('institute_id')
+    if institute_id and user.role in ['super_admin', 'SUPER_ADMIN']:
+        queryset = queryset.filter(institute_id=institute_id)
+    
+    # Order by name
+    queryset = queryset.order_by('first_name', 'last_name')
+    
+    # Pagination
+    page = int(request.GET.get('page', 1))
+    page_size = min(int(request.GET.get('page_size', 20)), 100)
+    
+    paginator = Paginator(queryset, page_size)
+    page_obj = paginator.get_page(page)
+    
+    # Get all available roles for filter dropdown
+    all_roles = [
+        {'value': 'super_admin', 'label': 'Super Admin'},
+        {'value': 'institute_admin', 'label': 'Institute Admin'},
+        {'value': 'exam_admin', 'label': 'Exam Admin'},
+        {'value': 'teacher', 'label': 'Teacher'},
+        {'value': 'student', 'label': 'Student'},
+        {'value': 'ADMIN', 'label': 'Center Admin'},
+        {'value': 'STAFF', 'label': 'Staff'},
+    ]
+    
+    # Get role counts
+    role_counts = {}
+    for role_choice in all_roles:
+        role_val = role_choice['value']
+        if user.role in ['super_admin', 'SUPER_ADMIN']:
+            count = User.objects.filter(role=role_val).count()
+        elif user.role in ['institute_admin', 'ADMIN', 'exam_admin']:
+            count = User.objects.filter(
+                Q(institute=user.institute) | Q(center__institute=user.institute),
+                role=role_val
+            ).count()
+        else:
+            count = User.objects.filter(institute=user.institute, role=role_val).count()
+        role_counts[role_val] = count
+    
+    # Serialize users
+    users_data = []
+    for u in page_obj:
+        users_data.append({
+            'id': str(u.id) if hasattr(u.id, 'hex') else u.id,
+            'username': u.username,
+            'email': u.email,
+            'first_name': u.first_name,
+            'last_name': u.last_name,
+            'full_name': u.get_full_name(),
+            'role': u.role,
+            'role_display': dict(User.ROLE_CHOICES).get(u.role, u.role),
+            'is_active': u.is_active,
+            'is_verified': u.is_verified,
+            'phone': u.phone or u.phone_number,
+            'profile_picture': u.profile_picture.url if u.profile_picture else (u.profile_image.url if u.profile_image else None),
+            'teacher_code': u.teacher_code,
+            'institute_id': u.institute_id,
+            'institute_name': u.institute.name if u.institute else None,
+            'center_id': str(u.center_id) if u.center_id else None,
+            'center_name': u.center.name if u.center else None,
+            'created_at': u.created_at.isoformat() if u.created_at else None,
+        })
+    
+    return Response({
+        'users': users_data,
+        'total_count': paginator.count,
+        'page': page,
+        'page_size': page_size,
+        'total_pages': paginator.num_pages,
+        'has_next': page_obj.has_next(),
+        'has_previous': page_obj.has_previous(),
+        'roles': all_roles,
+        'role_counts': role_counts,
+    })
+
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
 def institute_search(request):
     """Search for institutes by name or domain"""
     query = request.GET.get('q', '')
