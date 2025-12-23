@@ -2192,11 +2192,20 @@ def remove_teacher_from_batch(request):
     """
     Admin removes a teacher assignment from a batch in a timetable.
     
+    For regular teachers:
     Payload:
     {
         "timetable_id": "uuid",
         "batch_code": "HDTN-1A-ZA1",
         "teacher_code": "AK-CAP"
+    }
+    
+    For FREE periods (FREE, FREE1, FREE2, etc.):
+    Payload:
+    {
+        "timetable_id": "uuid",
+        "batch_code": "HDTN-1A-ZA1",
+        "teacher_code": "FREE2"  // or "subject_name": "FREE2"
     }
     
     Returns:
@@ -2219,10 +2228,17 @@ def remove_teacher_from_batch(request):
     timetable_id = request.data.get("timetable_id")
     batch_code = request.data.get("batch_code")
     teacher_code = request.data.get("teacher_code")
+    subject_name = request.data.get("subject_name")  # Alternative for FREE periods
     
-    if not timetable_id or not batch_code or not teacher_code:
+    if not timetable_id or not batch_code:
         return Response(
-            {"detail": "timetable_id, batch_code, and teacher_code are required."},
+            {"detail": "timetable_id and batch_code are required."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    
+    if not teacher_code and not subject_name:
+        return Response(
+            {"detail": "teacher_code or subject_name is required."},
             status=status.HTTP_400_BAD_REQUEST,
         )
     
@@ -2257,6 +2273,68 @@ def remove_teacher_from_batch(request):
             status=status.HTTP_404_NOT_FOUND,
         )
     
+    # Check if this is a FREE period removal
+    is_free_period = False
+    free_code = None
+    
+    if teacher_code and str(teacher_code).upper().startswith("FREE"):
+        is_free_period = True
+        free_code = str(teacher_code).upper()
+    elif subject_name and str(subject_name).upper().startswith("FREE"):
+        is_free_period = True
+        free_code = str(subject_name).upper()
+    
+    if is_free_period:
+        # Handle FREE period removal
+        try:
+            faculty_load = BatchFacultyLoad.objects.get(
+                timetable=timetable,
+                batch=batch,
+                teacher__isnull=True,
+                subject_name__iexact=free_code
+            )
+        except BatchFacultyLoad.DoesNotExist:
+            return Response(
+                {"detail": f"FREE period '{free_code}' is not assigned to batch '{batch_code}' in this timetable."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        
+        # Remove timetable entries for this FREE period in this batch (if any)
+        entries_removed = TimetableEntry.objects.filter(
+            day_slot__timetable=timetable,
+            batch=batch,
+            teacher__isnull=True,
+            subject_name__iexact=free_code
+        ).delete()[0]
+        
+        # Remove fixed slots for this FREE period in this batch (if any)
+        fixed_slots_removed = FixedSlot.objects.filter(
+            timetable=timetable,
+            batch=batch,
+            teacher__isnull=True,
+            subject_name__iexact=free_code
+        ).delete()[0]
+        
+        # Remove the faculty load assignment
+        faculty_load.delete()
+        
+        return Response(
+            {
+                "message": f"FREE period '{free_code}' removed from batch successfully.",
+                "timetable_id": str(timetable.id),
+                "batch_code": batch.code,
+                "batch_name": batch.name,
+                "teacher_code": None,
+                "teacher_name": None,
+                "subject": free_code,
+                "is_free": True,
+                "entries_removed": entries_removed,
+                "fixed_slots_removed": fixed_slots_removed,
+            },
+            status=status.HTTP_200_OK,
+        )
+    
+    # Regular teacher handling
     # Get teacher
     try:
         teacher = AccountUser.objects.get(
@@ -3833,36 +3911,38 @@ def save_generated_timetable(timetable, generated_timetable, teachers_dict, batc
 @permission_classes([IsAuthenticated])
 def regenerate_timetable_from_slot(request, timetable_id: str):
     """
-    Regenerate timetable from a specific slot, keeping all assignments before that slot fixed.
+    Regenerate timetable from a specific slot using genetic algorithm (async with Celery).
     
-    This is useful when you want to keep the timetable up to a certain point and regenerate
-    the rest. The function takes the current timetable, creates new fixed slots from the
-    beginning up to the stop_slot, and then regenerates the timetable from that point.
+    This keeps all assignments before the stop_slot fixed and regenerates the rest
+    using the genetic algorithm for better optimization.
     
     POST /api/timetable/timetables/<timetable_id>/regenerate-from-slot/
     
     Body:
     {
         "stop_slot": "w3",  # Required: slot code to stop at (e.g., 'm1', 'tu3', 'w3', 'd1_3')
-        "max_retries": 1000,  # Optional
-        "max_try_for_slot_assign": 100,  # Optional
-        "weight_power_fector": 3,  # Optional
-        "max_one_subject_repetation_per_day": 2,  # Optional
-        "max_one_subject_repetation_per_day_penalty_fector": 0,  # Optional
-        "weight_penalty_consu_sub_repetation": [0.01, 0, 0, 0, 0]  # Optional
+        
+        # User configurable parameters (optional)
+        "max_retries": 1000,
+        "max_try_for_slot_assign": 100,
+        "weight_power_fector": 3,
+        "max_one_subject_repetation_per_day": 2,
+        "max_one_subject_repetation_per_day_penalty_fector": 0,
+        "weight_penalty_consu_sub_repetation": [0.01, 0, 0, 0, 0]
     }
     
     Returns:
     {
-        "success": true/false,
-        "feasible": true/false,
-        "violations": {...},
-        "timetable_generated": true/false,
-        "entries_created": 0,
+        "task_id": "abc-123-def",
+        "status": "PENDING",
+        "algorithm_used": "genetic_algorithm",
         "stop_slot": "w3",
         "fixed_slots_count": 15,
-        "message": "..."
+        "message": "Genetic algorithm task started..."
     }
+    
+    Then poll for progress:
+    GET /api/timetable/tasks/<task_id>/status/
     """
     try:
         timetable = Timetable.objects.get(id=timetable_id)
@@ -3889,13 +3969,32 @@ def regenerate_timetable_from_slot(request, timetable_id: str):
             status=status.HTTP_400_BAD_REQUEST,
         )
     
-    # Get algorithm parameters
+    # FROM FRONTEND: User configurable parameters
     max_retries = data.get("max_retries", 1000)
     max_try_for_slot_assign = data.get("max_try_for_slot_assign", 100)
     weight_power_fector = data.get("weight_power_fector", 3)
     max_one_subject_repetation_per_day = data.get("max_one_subject_repetation_per_day", 2)
     max_one_subject_repetation_per_day_penalty_fector = data.get("max_one_subject_repetation_per_day_penalty_fector", 0)
     weight_penalty_consu_sub_repetation = data.get("weight_penalty_consu_sub_repetation", [0.01, 0, 0, 0, 0])
+    
+    # HARDCODED: Genetic algorithm parameters
+    generations = 100
+    population_size = 50
+    mutation_rate = 0.03
+    elite_size = 10
+    tournament_size = 5
+    max_retries_per_individual = max_try_for_slot_assign
+    
+    # HARDCODED: Fitness function parameters
+    hard_constraint_penalty = 30000
+    min_weekly_classes_penalty = 40
+    min_weekly_classes_penalty_exponent = 2
+    max_weekly_classes_penalty = 200
+    max_weekly_classes_penalty_exponent = 4
+    consu_sub_rep_penalty = 40
+    consu_sub_rep_penalty_fector = 3
+    sub_variation_per_day_reward_fector = 1.2
+    sub_spread_over_week_reward_fector = 2.0
     
     try:
         # Build payload from models
@@ -4017,101 +4116,70 @@ def regenerate_timetable_from_slot(request, timetable_id: str):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         
-        # Generate new timetable with new fixed slots
-        try:
-            generated_timetable = generate_random_timetable(
-                batches=batches_dict_algo,
-                teachers=teachers_dict,
-                avilable_slots=available_slots,
-                fixed_slots=new_fixed_slots,
-                MAX_RETRIES=max_retries,
-                max_try_for_slot_assign=max_try_for_slot_assign,
-                weight_power_fector=weight_power_fector,
-                max_one_subject_repetation_per_day=max_one_subject_repetation_per_day,
-                max_one_subject_repetation_per_day_penalty_fector=max_one_subject_repetation_per_day_penalty_fector,
-                weight_penalty_consu_sub_repetation=weight_penalty_consu_sub_repetation
-            )
-        except Exception as e:
-            return Response(
-                {
-                    "success": False,
-                    "feasible": True,
-                    "violations": {},
-                    "timetable_generated": False,
-                    "entries_created": 0,
-                    "stop_slot": stop_slot,
-                    "fixed_slots_count": fixed_slots_count,
-                    "message": f"Failed to regenerate timetable: {str(e)}"
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+        # Serialize data for Celery task
+        teachers_data = {}
+        for code, teacher in teachers_dict.items():
+            teachers_data[code] = {
+                'code': teacher.code,
+                'name': teacher.name,
+                'employ_id': getattr(teacher, 'employ_id', ''),
+                'subject': getattr(teacher, 'subject', ''),
+                'avilable_slots': list(teacher.avilable_slots)
+            }
         
-        # Save results to database
-        slot_code_to_dayslot = {}
-        for day_slot in timetable.day_slots.all():
-            if day_slot.day_index:
-                day_key = f"d{day_slot.day_index}"
-            else:
-                day_key = DAY_MAP_SHORT.get(day_slot.day, "")
-            code = day_slot.slot_code or f"{day_key}{day_slot.slot_number}"
-            slot_code_to_dayslot[code] = day_slot
+        batches_data = {}
+        for key, batch in batches_dict_algo.items():
+            sub_teachers_serialized = {}
+            for sub_key, sub_data in batch.sub_teachers.items():
+                sub_teachers_serialized[sub_key] = {
+                    'subject': sub_data['subject'],
+                    'teacher_code': sub_data['teacher'].code,
+                    'min_class_per_week': sub_data['min_class_per_week'],
+                    'max_class_per_week': sub_data['max_class_per_week'],
+                    'max_class_per_day': sub_data['max_class_per_day']
+                }
+            batches_data[key] = {
+                'batch_code': batch.batch_code,
+                'sub_teachers': sub_teachers_serialized
+            }
         
-        teacher_code_to_user = {}
-        for teacher_code, teacher_dto in teachers_dict.items():
-            user_obj = AccountUser.objects.filter(
-                teacher_code=teacher_code
-            ).first() or AccountUser.objects.filter(
-                username=teacher_code
-            ).first()
-            if user_obj:
-                teacher_code_to_user[teacher_code] = user_obj
+        # Run with Celery asynchronously
+        from .tasks import run_genetic_algorithm_task
         
-        batch_code_to_batch = {}
-        for batch_code in batches_dict_algo.keys():
-            batch = Batch.objects.filter(code=batch_code).first()
-            if batch:
-                batch_code_to_batch[batch_code] = batch
-        
-        entries_created = 0
-        
-        with transaction.atomic():
-            # Clear existing entries (we'll recreate all)
-            TimetableEntry.objects.filter(day_slot__timetable=timetable).delete()
-            
-            # Save generated timetable
-            for day_key, slots in generated_timetable.items():
-                for slot_code, batch_assignments in slots.items():
-                    day_slot = slot_code_to_dayslot.get(slot_code)
-                    if not day_slot:
-                        continue
-                    
-                    for batch_code, (subject, teacher_code) in batch_assignments.items():
-                        batch = batch_code_to_batch.get(batch_code)
-                        if not batch:
-                            continue
-                        
-                        teacher = teacher_code_to_user.get(teacher_code)
-                        
-                        TimetableEntry.objects.create(
-                            day_slot=day_slot,
-                            batch=batch,
-                            subject=subject,
-                            teacher=teacher,
-                        )
-                        entries_created += 1
+        task = run_genetic_algorithm_task.delay(
+            timetable_id=str(timetable_id),
+            batches_data=batches_data,
+            teachers_data=teachers_data,
+            available_slots=available_slots,
+            fixed_slots=new_fixed_slots,  # Use the new fixed slots (up to stop_slot)
+            generations=generations,
+            population_size=population_size,
+            mutation_rate=mutation_rate,
+            elite_size=elite_size,
+            tournament_size=tournament_size,
+            max_retries_per_individual=max_retries_per_individual,
+            clear_existing=True,  # Always clear and regenerate
+            hard_constraint_penalty=hard_constraint_penalty,
+            min_weekly_classes_penalty=min_weekly_classes_penalty,
+            min_weekly_classes_penalty_exponent=min_weekly_classes_penalty_exponent,
+            max_weekly_classes_penalty=max_weekly_classes_penalty,
+            max_weekly_classes_penalty_exponent=max_weekly_classes_penalty_exponent,
+            consu_sub_rep_penalty=consu_sub_rep_penalty,
+            consu_sub_rep_penalty_fector=consu_sub_rep_penalty_fector,
+            sub_variation_per_day_reward_fector=sub_variation_per_day_reward_fector,
+            sub_spread_over_week_reward_fector=sub_spread_over_week_reward_fector
+        )
         
         return Response(
             {
-                "success": True,
-                "feasible": True,
-                "violations": {},
-                "timetable_generated": True,
-                "entries_created": entries_created,
+                "task_id": task.id,
+                "status": "PENDING",
+                "algorithm_used": "genetic_algorithm",
                 "stop_slot": stop_slot,
                 "fixed_slots_count": fixed_slots_count,
-                "message": f"Timetable regenerated successfully from slot '{stop_slot}'. Created {entries_created} entries."
+                "message": f"Genetic algorithm task started. Regenerating from slot '{stop_slot}'. Population: {population_size}, Generations: {generations}"
             },
-            status=status.HTTP_200_OK,
+            status=status.HTTP_202_ACCEPTED,
         )
         
     except Exception as e:
