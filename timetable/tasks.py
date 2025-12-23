@@ -2,9 +2,13 @@
 Celery tasks for timetable generation.
 """
 from celery import shared_task
+from celery.utils.log import get_task_logger
 from django.conf import settings
 import json
 import copy
+
+# Setup logger for Celery tasks
+logger = get_task_logger(__name__)
 
 
 @shared_task(bind=True, name='timetable.tasks.run_genetic_algorithm_task')
@@ -51,6 +55,10 @@ def run_genetic_algorithm_task(
     from collections import defaultdict
     import random
     
+    logger.info(f"=== GENETIC ALGORITHM STARTED ===")
+    logger.info(f"Timetable ID: {timetable_id}")
+    logger.info(f"Generations: {generations}, Population: {population_size}")
+    
     # Update task state
     self.update_state(state='PROGRESS', meta={
         'current': 0,
@@ -91,7 +99,10 @@ def run_genetic_algorithm_task(
             })()
             batches_dict_algo[key] = batch
         
+        logger.info(f"Data loaded: {len(teachers_dict)} teachers, {len(batches_dict_algo)} batches")
+        
         # Generate initial population
+        logger.info(f"Generating initial population of {population_size} timetables...")
         self.update_state(state='PROGRESS', meta={
             'current': 0,
             'total': generations,
@@ -134,10 +145,14 @@ def run_genetic_algorithm_task(
                 continue
         
         if not population:
+            logger.error("Failed to generate any valid timetables for initial population")
             return {
                 'success': False,
                 'error': 'Failed to generate any valid timetables for initial population'
             }
+        
+        logger.info(f"Initial population created: {len(population)} timetables")
+        logger.info(f"Starting evolution for {generations} generations...")
         
         # Run genetic algorithm
         for gen in range(generations):
@@ -176,8 +191,11 @@ def run_genetic_algorithm_task(
             
             population = new_population
             
-            # Update progress
+            # Update progress and log every 10 generations
             best_fitness = population[0][1]
+            if (gen + 1) % 10 == 0:
+                logger.info(f"Generation {gen + 1}/{generations}: Best Fitness = {best_fitness:.2f}")
+            
             self.update_state(state='PROGRESS', meta={
                 'current': gen + 1,
                 'total': generations,
@@ -189,12 +207,17 @@ def run_genetic_algorithm_task(
         population.sort(key=lambda x: x[1], reverse=True)
         best_timetable, best_fitness = population[0]
         
+        logger.info(f"=== EVOLUTION COMPLETE ===")
+        logger.info(f"Best Fitness: {best_fitness:.2f}")
+        
         # Check final constraints
         final_violations = check_constraints(
             best_timetable, batches_dict_algo, teachers_dict, available_slots, fixed_slots
         )
+        logger.info(f"Final Violations: {final_violations}")
         
         # Save to database
+        logger.info("Saving timetable to database...")
         self.update_state(state='PROGRESS', meta={
             'current': generations,
             'total': generations,
@@ -205,6 +228,9 @@ def run_genetic_algorithm_task(
         entries_created = save_timetable_to_db(
             timetable_id, best_timetable, teachers_dict, batches_dict_algo, clear_existing
         )
+        
+        logger.info(f"=== GENETIC ALGORITHM COMPLETED ===")
+        logger.info(f"Entries created: {entries_created}")
         
         return {
             'success': True,
@@ -218,6 +244,8 @@ def run_genetic_algorithm_task(
         
     except Exception as e:
         import traceback
+        logger.error(f"GENETIC ALGORITHM FAILED: {str(e)}")
+        logger.error(traceback.format_exc())
         return {
             'success': False,
             'error': str(e),
