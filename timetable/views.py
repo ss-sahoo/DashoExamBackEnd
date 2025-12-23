@@ -4773,3 +4773,206 @@ def get_teacher_timetable(request, timetable_id: str, teacher_id: str = None):
         status=status.HTTP_200_OK,
     )
 
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def activate_timetable(request, timetable_id: str):
+    """
+    Activate a timetable for its assigned batches.
+    
+    When a timetable is activated:
+    1. The timetable's is_active flag is set to True
+    2. All other timetables that share the same batches are deactivated
+    
+    This ensures only one timetable is active per batch at a time.
+    
+    POST /api/timetable/admin/timetables/<timetable_id>/activate/
+    
+    Optional payload:
+    {
+        "deactivate_others": true  // Default: true. If false, only activates this timetable without deactivating others
+    }
+    
+    Returns:
+    {
+        "message": "Timetable activated successfully.",
+        "timetable_id": "uuid",
+        "timetable_name": "...",
+        "is_active": true,
+        "batches_affected": ["BATCH-001", "BATCH-002"],
+        "deactivated_timetables": [
+            {"id": "uuid", "name": "..."}
+        ]
+    }
+    """
+    user = request.user
+    
+    # Check if user is Admin or Super Admin
+    if user.role not in (AccountUser.ROLE_ADMIN, AccountUser.ROLE_SUPER_ADMIN):
+        return Response(
+            {"detail": "Only Admin and Super Admin can activate timetables."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    
+    # Get timetable
+    try:
+        timetable = Timetable.objects.select_related("center").get(id=timetable_id)
+    except Timetable.DoesNotExist:
+        return Response(
+            {"detail": "Timetable not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+    
+    # Check permissions: Admin can only manage their center's timetables
+    if user.role == AccountUser.ROLE_ADMIN:
+        if not user.center:
+            return Response(
+                {"detail": "Admin user is not linked to any center."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if timetable.center != user.center:
+            return Response(
+                {"detail": "You can only manage timetables in your center."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+    
+    deactivate_others = request.data.get("deactivate_others", True)
+    
+    # Get all batches assigned to this timetable
+    batch_ids = set()
+    
+    # From TimetableBatch
+    batch_ids.update(
+        TimetableBatch.objects.filter(timetable=timetable).values_list('batch_id', flat=True)
+    )
+    
+    # From BatchFacultyLoad
+    batch_ids.update(
+        BatchFacultyLoad.objects.filter(timetable=timetable).values_list('batch_id', flat=True)
+    )
+    
+    # Get batch codes for response
+    batches = Batch.objects.filter(id__in=batch_ids)
+    batch_codes = [b.code for b in batches]
+    
+    deactivated_timetables = []
+    
+    with transaction.atomic():
+        if deactivate_others and batch_ids:
+            # Find all other timetables that have these batches assigned
+            other_timetable_ids = set()
+            
+            # From TimetableBatch
+            other_timetable_ids.update(
+                TimetableBatch.objects.filter(
+                    batch_id__in=batch_ids
+                ).exclude(
+                    timetable=timetable
+                ).values_list('timetable_id', flat=True)
+            )
+            
+            # From BatchFacultyLoad
+            other_timetable_ids.update(
+                BatchFacultyLoad.objects.filter(
+                    batch_id__in=batch_ids
+                ).exclude(
+                    timetable=timetable
+                ).values_list('timetable_id', flat=True)
+            )
+            
+            # Deactivate other timetables
+            if other_timetable_ids:
+                other_timetables = Timetable.objects.filter(
+                    id__in=other_timetable_ids,
+                    is_active=True
+                )
+                
+                for tt in other_timetables:
+                    deactivated_timetables.append({
+                        "id": str(tt.id),
+                        "name": tt.name or str(tt),
+                    })
+                
+                other_timetables.update(is_active=False)
+        
+        # Activate this timetable
+        timetable.is_active = True
+        timetable.save()
+    
+    return Response(
+        {
+            "message": "Timetable activated successfully.",
+            "timetable_id": str(timetable.id),
+            "timetable_name": timetable.name or str(timetable),
+            "center": timetable.center.name,
+            "is_active": True,
+            "batches_affected": batch_codes,
+            "deactivated_timetables": deactivated_timetables,
+            "deactivated_count": len(deactivated_timetables),
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def deactivate_timetable(request, timetable_id: str):
+    """
+    Deactivate a timetable.
+    
+    POST /api/timetable/admin/timetables/<timetable_id>/deactivate/
+    
+    Returns:
+    {
+        "message": "Timetable deactivated successfully.",
+        "timetable_id": "uuid",
+        "timetable_name": "...",
+        "is_active": false
+    }
+    """
+    user = request.user
+    
+    # Check if user is Admin or Super Admin
+    if user.role not in (AccountUser.ROLE_ADMIN, AccountUser.ROLE_SUPER_ADMIN):
+        return Response(
+            {"detail": "Only Admin and Super Admin can deactivate timetables."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    
+    # Get timetable
+    try:
+        timetable = Timetable.objects.select_related("center").get(id=timetable_id)
+    except Timetable.DoesNotExist:
+        return Response(
+            {"detail": "Timetable not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+    
+    # Check permissions: Admin can only manage their center's timetables
+    if user.role == AccountUser.ROLE_ADMIN:
+        if not user.center:
+            return Response(
+                {"detail": "Admin user is not linked to any center."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if timetable.center != user.center:
+            return Response(
+                {"detail": "You can only manage timetables in your center."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+    
+    # Deactivate the timetable
+    timetable.is_active = False
+    timetable.save()
+    
+    return Response(
+        {
+            "message": "Timetable deactivated successfully.",
+            "timetable_id": str(timetable.id),
+            "timetable_name": timetable.name or str(timetable),
+            "center": timetable.center.name,
+            "is_active": False,
+        },
+        status=status.HTTP_200_OK,
+    )

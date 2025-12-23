@@ -41,6 +41,8 @@ from timetable.views import (
     get_all_batches_timetable,
     get_batch_timetable,
     get_teacher_timetable,
+    activate_timetable,
+    deactivate_timetable,
 )
 
 # Import timetable auth and management views from accounts
@@ -58,7 +60,6 @@ from accounts.timetable_views import (
     create_teacher,
     create_student,
     create_staff,
-    bulk_create_teachers,
 )
 from accounts.center_views import (
     list_centers,
@@ -115,7 +116,6 @@ urlpatterns = [
     # Admin User Creation APIs (for their center)
     # ===========
     path("admin/teachers/create/", create_teacher, name="admin-create-teacher"),
-    path("admin/teachers/bulk-create/", bulk_create_teachers, name="admin-bulk-create-teachers"),
     path("admin/students/create/", create_student, name="admin-create-student"),
     path("admin/staff/create/", create_staff, name="admin-create-staff"),
     
@@ -136,6 +136,8 @@ urlpatterns = [
     # ===========
     path("admin/timetables/create/", create_timetable_with_slots, name="create-timetable-with-slots"),
     path("admin/timetables/<uuid:timetable_id>/update/", update_timetable, name="update-timetable"),
+    path("admin/timetables/<uuid:timetable_id>/activate/", activate_timetable, name="activate-timetable"),
+    path("admin/timetables/<uuid:timetable_id>/deactivate/", deactivate_timetable, name="deactivate-timetable"),
     path("timetables/", list_timetables, name="list-timetables"),
     path("timetables/<uuid:timetable_id>/", get_timetable, name="get-timetable"),
     path("timetables/<uuid:timetable_id>/slots/", get_timetable_slots, name="get-timetable-slots"),
