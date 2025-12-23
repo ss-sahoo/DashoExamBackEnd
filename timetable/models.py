@@ -81,7 +81,7 @@ class Timetable(TimeStampedModel):
     )
     
     is_active = models.BooleanField(
-        default=True,
+        default=False,
         help_text="Whether this timetable is currently active.",
     )
     
