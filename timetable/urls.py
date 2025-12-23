@@ -58,6 +58,7 @@ from accounts.timetable_views import (
     create_teacher,
     create_student,
     create_staff,
+    bulk_create_teachers,
 )
 from accounts.center_views import (
     list_centers,
@@ -114,6 +115,7 @@ urlpatterns = [
     # Admin User Creation APIs (for their center)
     # ===========
     path("admin/teachers/create/", create_teacher, name="admin-create-teacher"),
+    path("admin/teachers/bulk-create/", bulk_create_teachers, name="admin-bulk-create-teachers"),
     path("admin/students/create/", create_student, name="admin-create-student"),
     path("admin/staff/create/", create_staff, name="admin-create-staff"),
     
