@@ -539,3 +539,422 @@ def generate_random_timetable(
     # If all retries failed
     raise Exception(f"Failed to generate valid timetable after {MAX_RETRIES} retries.")
 
+
+# =============================================================================
+# GENETIC ALGORITHM FUNCTIONS
+# =============================================================================
+
+import copy
+
+
+def fitness_score(
+    timetable: Dict[str, Dict[str, Dict[str, Tuple[str, str]]]],
+    batches: Dict[str, Any],
+    teachers: Dict[str, Any],
+    avilable_slots: Dict[str, Dict[str, str]],
+    fixed_slots: Optional[Dict[str, Dict[str, Dict[str, Optional[Tuple[str, str]]]]]] = None,
+    hard_constraint_penalty: int = 30000,
+    min_weekly_classes_penalty: int = 40,
+    min_weekly_classes_penalty_exponent: int = 2,
+    max_weekly_classes_penalty: int = 200,
+    max_weekly_classes_penalty_exponent: int = 4,
+    consu_sub_rep_penalty: int = 40,
+    consu_sub_rep_penalty_fector: int = 3,
+    sub_variation_per_day_reward_fector: float = 1.2,
+    sub_spread_over_week_reward_fector: float = 2.0
+) -> float:
+    """
+    Calculate fitness score for a timetable.
+    Higher score = better timetable.
+    
+    Constraints checked:
+    1. Teacher unavailable in slot (hard)
+    2. Teacher double booking (hard)
+    3. Min/Max weekly classes per teacher
+    4. No back-to-back same subject
+    5. Subject repetition per day (max 2-3 times)
+    6. Subject variety per day (reward)
+    7. Subject spread over week (reward)
+    8. Fixed slot violations (hard)
+    """
+    penalty = 0
+    reward = 0
+    
+    teacher_slot_map = defaultdict(set)
+    batch_teacher_counter = defaultdict(lambda: defaultdict(int))
+    teacher_availability = {t.code: set(t.avilable_slots) for t in teachers.values()}
+    subject_days = defaultdict(lambda: defaultdict(set))
+    max_min_class = {}
+    
+    # Process timetable
+    for day, slots in timetable.items():
+        for slot, batch_data in slots.items():
+            for batch_code, entry in batch_data.items():
+                if not entry or len(entry) < 2:
+                    continue
+                subject, teacher_code = entry
+                
+                # Skip entries without teacher (Exam, Free Period)
+                if not teacher_code:
+                    continue
+                
+                # Constraint 1: Teacher unavailable in that slot
+                if teacher_code in teacher_availability:
+                    if slot not in teacher_availability[teacher_code]:
+                        penalty += hard_constraint_penalty
+                
+                # Constraint 2: Double booking
+                if teacher_code in teacher_slot_map[slot]:
+                    penalty += hard_constraint_penalty
+                else:
+                    teacher_slot_map[slot].add(teacher_code)
+                
+                # Track count and day for subjects
+                batch_teacher_counter[batch_code][teacher_code] += 1
+                subject_days[batch_code][subject].add(day)
+    
+    # Calculate max min_class for each batch
+    for batch_key, batch in batches.items():
+        maximum_min_class = 0
+        for subject, teacher_data in batch.sub_teachers.items():
+            min_class = teacher_data['min_class_per_week']
+            if maximum_min_class < min_class:
+                maximum_min_class = min_class
+        max_min_class[batch.batch_code] = maximum_min_class
+    
+    # Constraint 3: Min/Max weekly class check
+    for batch_key, batch in batches.items():
+        for subject, teacher_data in batch.sub_teachers.items():
+            teacher_code = teacher_data['teacher'].code
+            count = batch_teacher_counter[batch.batch_code].get(teacher_code, 0)
+            min_class = teacher_data['min_class_per_week']
+            max_class = teacher_data['max_class_per_week']
+            maximum_min_class = max_min_class.get(batch.batch_code, 1)
+            
+            if count < min_class:
+                ratio = maximum_min_class / min_class if min_class > 0 else 1
+                penalty += (ratio * (min_class - count)) ** min_weekly_classes_penalty_exponent * min_weekly_classes_penalty
+            elif count > max_class:
+                penalty += (count - max_class) ** max_weekly_classes_penalty_exponent * max_weekly_classes_penalty
+    
+    # Constraint 4: No back-to-back same subject
+    for day in avilable_slots:
+        slot_ids = list(avilable_slots[day].keys())
+        for batch_key in batches:
+            prev_subject = None
+            subject_repetation_count = 0
+            
+            for slot_id in slot_ids:
+                entry = timetable.get(day, {}).get(slot_id, {}).get(batches[batch_key].batch_code)
+                subject = entry[0] if entry and len(entry) >= 1 else None
+                
+                if subject is not None and prev_subject == subject:
+                    subject_repetation_count += 1
+                else:
+                    if subject_repetation_count > 0:
+                        penalty += (subject_repetation_count ** consu_sub_rep_penalty_fector) * consu_sub_rep_penalty
+                    subject_repetation_count = 0
+                prev_subject = subject
+            
+            if subject_repetation_count > 0:
+                penalty += (subject_repetation_count ** consu_sub_rep_penalty_fector) * consu_sub_rep_penalty
+    
+    # Constraint 5: Subject repetition per day (max 2-3 times)
+    for batch_key, batch in batches.items():
+        for day in avilable_slots:
+            subject_daily_counter = defaultdict(int)
+            for slot in avilable_slots[day]:
+                entry = timetable.get(day, {}).get(slot, {}).get(batch.batch_code)
+                if entry and len(entry) >= 1:
+                    subject = entry[0]
+                    subject_daily_counter[subject] += 1
+            
+            for subject, count in subject_daily_counter.items():
+                if count > 2:
+                    penalty += 100
+    
+    # Constraint 6: Subject variety per day (reward)
+    for day in avilable_slots:
+        for batch_key in batches:
+            subjects_today = []
+            for slot_id in avilable_slots[day]:
+                entry = timetable.get(day, {}).get(slot_id, {}).get(batches[batch_key].batch_code)
+                if entry and len(entry) >= 1:
+                    subjects_today.append(entry[0])
+            
+            if subjects_today:
+                subject_set = set(subjects_today)
+                reward += len(subject_set) ** sub_variation_per_day_reward_fector
+    
+    # Constraint 7: Same subject spread over week (reward)
+    for batch_code in subject_days:
+        for subject in subject_days[batch_code]:
+            days_appeared = len(subject_days[batch_code][subject])
+            reward += days_appeared ** sub_spread_over_week_reward_fector
+    
+    # Constraint 8: Fixed slot violation
+    if fixed_slots:
+        batch_code_to_key = {batch.batch_code: key for key, batch in batches.items()}
+        for day in fixed_slots:
+            for slot in fixed_slots[day]:
+                for batch_code, expected_value in fixed_slots[day][slot].items():
+                    if expected_value is None:
+                        # Check if slot should be empty
+                        actual = timetable.get(day, {}).get(slot, {}).get(batch_code)
+                        if actual is not None:
+                            penalty += hard_constraint_penalty
+                        continue
+                    
+                    expected_subject, expected_teacher_code = expected_value
+                    key = batch_code_to_key.get(batch_code)
+                    if not key:
+                        penalty += 100
+                        continue
+                    
+                    entry = timetable.get(day, {}).get(slot, {}).get(batches[key].batch_code)
+                    if not entry:
+                        penalty += 100
+                    else:
+                        assigned_subject, assigned_teacher = entry
+                        if assigned_subject != expected_subject:
+                            penalty += hard_constraint_penalty
+                        if expected_teacher_code and assigned_teacher != expected_teacher_code:
+                            penalty += hard_constraint_penalty
+    
+    return reward - penalty
+
+
+def crossover(
+    t1: Dict[str, Dict[str, Dict[str, Tuple[str, str]]]],
+    t2: Dict[str, Dict[str, Dict[str, Tuple[str, str]]]],
+    fixed_slots: Optional[Dict] = None
+) -> Dict[str, Dict[str, Dict[str, Tuple[str, str]]]]:
+    """
+    Crossover two timetables to create a child.
+    Randomly selects days from each parent.
+    """
+    days = list(t1.keys())
+    child = copy.deepcopy(t1)
+    
+    # Take half the days from t2
+    for day in random.sample(days, len(days) // 2):
+        child[day] = copy.deepcopy(t2[day])
+    
+    return child
+
+
+def mutate(
+    timetable: Dict[str, Dict[str, Dict[str, Tuple[str, str]]]],
+    batches: Dict[str, Any],
+    teachers: Dict[str, Any],
+    mutation_rate: float = 0.02
+) -> None:
+    """
+    Mutate a timetable by randomly changing some assignments.
+    Modifies timetable in place.
+    """
+    for day in timetable:
+        for slot in list(timetable[day].keys()):
+            if random.random() < mutation_rate:
+                batch_codes = list(timetable[day][slot].keys())
+                if not batch_codes:
+                    continue
+                
+                # Choose one batch randomly
+                batch_code = random.choice(batch_codes)
+                entry = timetable[day][slot].get(batch_code)
+                if not entry or len(entry) < 2:
+                    continue
+                
+                subject, old_teacher_code = entry
+                
+                # Skip entries without teacher (Exam, Free Period)
+                if not old_teacher_code:
+                    continue
+                
+                # Get the actual Batch object
+                batch_obj = None
+                for b in batches.values():
+                    if b.batch_code == batch_code:
+                        batch_obj = b
+                        break
+                
+                if not batch_obj:
+                    continue
+                
+                # Get list of all teacher codes already teaching in this slot
+                busy_teachers = set()
+                for _, tc in timetable[day][slot].values():
+                    if tc:
+                        busy_teachers.add(tc)
+                
+                # Try to reassign with a different subject & valid teacher
+                possible_subjects = list(batch_obj.sub_teachers.keys())
+                random.shuffle(possible_subjects)
+                
+                for new_sub in possible_subjects:
+                    new_teacher = batch_obj.sub_teachers[new_sub]['teacher']
+                    new_teacher_code = new_teacher.code
+                    
+                    if (slot in new_teacher.avilable_slots and
+                        new_teacher_code not in busy_teachers and
+                        new_teacher_code != old_teacher_code):
+                        timetable[day][slot][batch_code] = (batch_obj.sub_teachers[new_sub]['subject'], new_teacher_code)
+                        break
+
+
+def run_genetic_algorithm(
+    batches: Dict[str, Any],
+    teachers: Dict[str, Any],
+    avilable_slots: Dict[str, Dict[str, str]],
+    fixed_slots: Optional[Dict[str, Dict[str, Dict[str, Optional[Tuple[str, str]]]]]] = None,
+    generations: int = 100,
+    population_size: int = 50,
+    mutation_rate: float = 0.03,
+    elite_size: int = 10,
+    tournament_size: int = 5,
+    max_retries_per_individual: int = 100,
+    progress_callback: Optional[callable] = None
+) -> Tuple[Dict[str, Dict[str, Dict[str, Tuple[str, str]]]], float]:
+    """
+    Run the genetic algorithm to optimize timetable.
+    
+    Args:
+        batches: Batch configuration
+        teachers: Teacher configuration
+        avilable_slots: Available slots
+        fixed_slots: Fixed slot constraints
+        generations: Number of generations to run
+        population_size: Size of population
+        mutation_rate: Probability of mutation
+        elite_size: Number of elite individuals to keep
+        tournament_size: Tournament selection size
+        max_retries_per_individual: Max retries when generating initial population
+        progress_callback: Optional callback(generation, best_fitness) for progress updates
+    
+    Returns:
+        (best_timetable, best_fitness)
+    """
+    # Generate initial population
+    population = []
+    for i in range(population_size):
+        try:
+            timetable = generate_random_timetable(
+                batches, teachers, avilable_slots, fixed_slots,
+                MAX_RETRIES=max_retries_per_individual
+            )
+            fitness = fitness_score(timetable, batches, teachers, avilable_slots, fixed_slots)
+            population.append((timetable, fitness))
+        except Exception as e:
+            # If we can't generate enough individuals, continue with what we have
+            if len(population) >= elite_size:
+                break
+            continue
+    
+    if not population:
+        raise Exception("Failed to generate any valid timetables for initial population")
+    
+    # Run genetic algorithm
+    for gen in range(generations):
+        # Sort by fitness (descending)
+        population.sort(key=lambda x: x[1], reverse=True)
+        
+        # Keep elite individuals
+        new_population = population[:elite_size]
+        
+        # Generate new individuals
+        while len(new_population) < population_size:
+            # Tournament selection
+            parent1 = random.choice(population[:tournament_size])[0]
+            parent2 = random.choice(population[:tournament_size])[0]
+            
+            # Crossover
+            child = crossover(parent1, parent2, fixed_slots)
+            
+            # Mutation
+            mutate(child, batches, teachers, mutation_rate)
+            
+            # Calculate fitness
+            score = fitness_score(child, batches, teachers, avilable_slots, fixed_slots)
+            new_population.append((child, score))
+        
+        population = new_population
+        
+        # Progress callback
+        if progress_callback:
+            progress_callback(gen + 1, population[0][1])
+        
+        # Log progress every 10 generations
+        if (gen + 1) % 10 == 0:
+            print(f"Generation {gen + 1}: Best Fitness = {population[0][1]}")
+    
+    # Return best timetable
+    population.sort(key=lambda x: x[1], reverse=True)
+    best_timetable, best_fitness = population[0]
+    
+    return best_timetable, best_fitness
+
+
+def check_constraints(
+    timetable: Dict[str, Dict[str, Dict[str, Tuple[str, str]]]],
+    batches: Dict[str, Any],
+    teachers: Dict[str, Any],
+    avilable_slots: Dict[str, Dict[str, str]],
+    fixed_slots: Optional[Dict] = None
+) -> Dict[str, List[str]]:
+    """
+    Check all constraints and return violations.
+    """
+    violations = defaultdict(list)
+    
+    teacher_slot_map = defaultdict(set)
+    batch_teacher_counter = defaultdict(lambda: defaultdict(int))
+    teacher_availability = {t.code: set(t.avilable_slots) for t in teachers.values()}
+    
+    # Check basic constraints
+    for day, slots in timetable.items():
+        for slot, batch_data in slots.items():
+            for batch_code, entry in batch_data.items():
+                if not entry or len(entry) < 2:
+                    continue
+                subject, teacher_code = entry
+                
+                if not teacher_code:
+                    continue
+                
+                # Teacher unavailable
+                if teacher_code in teacher_availability:
+                    if slot not in teacher_availability[teacher_code]:
+                        violations["teacher_unavailable"].append(
+                            f"{day}-{slot}: {teacher_code} not available"
+                        )
+                
+                # Double booking
+                if teacher_code in teacher_slot_map[slot]:
+                    violations["double_booking"].append(
+                        f"{day}-{slot}: {teacher_code} double booked"
+                    )
+                else:
+                    teacher_slot_map[slot].add(teacher_code)
+                
+                batch_teacher_counter[batch_code][teacher_code] += 1
+    
+    # Min/Max class violations
+    for batch_key, batch in batches.items():
+        for subject, teacher_data in batch.sub_teachers.items():
+            teacher_code = teacher_data['teacher'].code
+            count = batch_teacher_counter[batch.batch_code].get(teacher_code, 0)
+            min_class = teacher_data['min_class_per_week']
+            max_class = teacher_data['max_class_per_week']
+            
+            if count < min_class:
+                violations["min_class"].append(
+                    f"{batch.batch_code}-{teacher_code}: {count}/{min_class} classes"
+                )
+            if count > max_class:
+                violations["max_class"].append(
+                    f"{batch.batch_code}-{teacher_code}: {count}/{max_class} classes"
+                )
+    
+    return dict(violations)
+
