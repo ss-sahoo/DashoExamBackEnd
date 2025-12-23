@@ -4781,17 +4781,11 @@ def activate_timetable(request, timetable_id: str):
     """
     Activate a timetable for its assigned batches.
     
-    When a timetable is activated:
-    1. The timetable's is_active flag is set to True
-    2. All other timetables that share the same batches are deactivated
-    
-    This ensures only one timetable is active per batch at a time.
-    
     POST /api/timetable/admin/timetables/<timetable_id>/activate/
     
     Optional payload:
     {
-        "deactivate_others": true  // Default: true. If false, only activates this timetable without deactivating others
+        "deactivate_others": false  // Default: false. If true, deactivates other timetables sharing same batches
     }
     
     Returns:
@@ -4837,7 +4831,7 @@ def activate_timetable(request, timetable_id: str):
                 status=status.HTTP_403_FORBIDDEN,
             )
     
-    deactivate_others = request.data.get("deactivate_others", True)
+    deactivate_others = request.data.get("deactivate_others", False)
     
     # Get all batches assigned to this timetable
     batch_ids = set()
