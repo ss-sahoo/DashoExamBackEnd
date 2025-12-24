@@ -6,6 +6,7 @@ from celery.utils.log import get_task_logger
 from django.conf import settings
 import json
 import copy
+import time
 
 # Setup logger for Celery tasks
 logger = get_task_logger(__name__)
@@ -55,6 +56,9 @@ def run_genetic_algorithm_task(
     from collections import defaultdict
     import random
     
+    # Track overall start time
+    task_start_time = time.time()
+    
     logger.info(f"=== GENETIC ALGORITHM STARTED ===")
     logger.info(f"Timetable ID: {timetable_id}")
     logger.info(f"Generations: {generations}, Population: {population_size}")
@@ -63,7 +67,11 @@ def run_genetic_algorithm_task(
     self.update_state(state='PROGRESS', meta={
         'current': 0,
         'total': generations,
-        'status': 'Initializing...'
+        'status': 'Initializing...',
+        'phase': 'initialization',
+        'elapsed_seconds': 0,
+        'estimated_remaining_seconds': None,
+        'percent_complete': 0
     })
     
     try:
@@ -102,11 +110,16 @@ def run_genetic_algorithm_task(
         logger.info(f"Data loaded: {len(teachers_dict)} teachers, {len(batches_dict_algo)} batches")
         
         # Generate initial population
+        population_start_time = time.time()
         logger.info(f"Generating initial population of {population_size} timetables...")
         self.update_state(state='PROGRESS', meta={
             'current': 0,
             'total': generations,
-            'status': f'Generating initial population ({population_size} individuals)...'
+            'status': f'Generating initial population ({population_size} individuals)...',
+            'phase': 'population_generation',
+            'elapsed_seconds': round(time.time() - task_start_time, 1),
+            'estimated_remaining_seconds': None,
+            'percent_complete': 0
         })
         
         population = []
@@ -134,10 +147,17 @@ def run_genetic_algorithm_task(
                 population.append((timetable, fitness))
                 
                 if (i + 1) % 10 == 0:
+                    elapsed = time.time() - task_start_time
                     self.update_state(state='PROGRESS', meta={
                         'current': 0,
                         'total': generations,
-                        'status': f'Generated {i + 1}/{population_size} initial timetables...'
+                        'status': f'Generated {i + 1}/{population_size} initial timetables...',
+                        'phase': 'population_generation',
+                        'population_progress': i + 1,
+                        'population_total': population_size,
+                        'elapsed_seconds': round(elapsed, 1),
+                        'estimated_remaining_seconds': None,
+                        'percent_complete': 0
                     })
             except Exception as e:
                 if len(population) >= elite_size:
@@ -151,11 +171,18 @@ def run_genetic_algorithm_task(
                 'error': 'Failed to generate any valid timetables for initial population'
             }
         
-        logger.info(f"Initial population created: {len(population)} timetables")
+        population_time = time.time() - population_start_time
+        logger.info(f"Initial population created: {len(population)} timetables in {population_time:.1f}s")
         logger.info(f"Starting evolution for {generations} generations...")
+        
+        # Track generation times for estimation
+        generation_times = []
+        evolution_start_time = time.time()
         
         # Run genetic algorithm
         for gen in range(generations):
+            gen_start_time = time.time()
+            
             # Sort by fitness (descending - higher is better)
             population.sort(key=lambda x: x[1], reverse=True)
             
@@ -191,24 +218,51 @@ def run_genetic_algorithm_task(
             
             population = new_population
             
+            # Track generation time
+            gen_time = time.time() - gen_start_time
+            generation_times.append(gen_time)
+            
+            # Calculate time estimates
+            elapsed_total = time.time() - task_start_time
+            elapsed_evolution = time.time() - evolution_start_time
+            
+            # Use average of last 10 generations for better estimation
+            recent_times = generation_times[-10:] if len(generation_times) >= 10 else generation_times
+            avg_gen_time = sum(recent_times) / len(recent_times)
+            
+            remaining_generations = generations - (gen + 1)
+            estimated_remaining = remaining_generations * avg_gen_time
+            
+            # Calculate percent complete (population generation is ~10%, evolution is ~90%)
+            percent_complete = round(10 + (90 * (gen + 1) / generations), 1)
+            
             # Update progress and log every 10 generations
             best_fitness = population[0][1]
             if (gen + 1) % 10 == 0:
-                logger.info(f"Generation {gen + 1}/{generations}: Best Fitness = {best_fitness:.2f}")
+                logger.info(f"Generation {gen + 1}/{generations}: Best Fitness = {best_fitness:.2f}, "
+                           f"Elapsed: {elapsed_total:.1f}s, ETA: {estimated_remaining:.1f}s")
             
             self.update_state(state='PROGRESS', meta={
                 'current': gen + 1,
                 'total': generations,
                 'status': f'Generation {gen + 1}/{generations}',
-                'best_fitness': best_fitness
+                'phase': 'evolution',
+                'best_fitness': best_fitness,
+                'elapsed_seconds': round(elapsed_total, 1),
+                'estimated_remaining_seconds': round(estimated_remaining, 1),
+                'percent_complete': percent_complete,
+                'avg_generation_time': round(avg_gen_time, 3),
+                'current_generation_time': round(gen_time, 3)
             })
         
         # Get best timetable
         population.sort(key=lambda x: x[1], reverse=True)
         best_timetable, best_fitness = population[0]
         
+        evolution_time = time.time() - evolution_start_time
         logger.info(f"=== EVOLUTION COMPLETE ===")
         logger.info(f"Best Fitness: {best_fitness:.2f}")
+        logger.info(f"Evolution time: {evolution_time:.1f}s")
         
         # Check final constraints
         final_violations = check_constraints(
@@ -217,20 +271,30 @@ def run_genetic_algorithm_task(
         logger.info(f"Final Violations: {final_violations}")
         
         # Save to database
+        save_start_time = time.time()
         logger.info("Saving timetable to database...")
         self.update_state(state='PROGRESS', meta={
             'current': generations,
             'total': generations,
             'status': 'Saving timetable to database...',
-            'best_fitness': best_fitness
+            'phase': 'saving',
+            'best_fitness': best_fitness,
+            'elapsed_seconds': round(time.time() - task_start_time, 1),
+            'estimated_remaining_seconds': 5,
+            'percent_complete': 95
         })
         
         entries_created = save_timetable_to_db(
             timetable_id, best_timetable, teachers_dict, batches_dict_algo, clear_existing
         )
         
+        save_time = time.time() - save_start_time
+        total_time = time.time() - task_start_time
+        
         logger.info(f"=== GENETIC ALGORITHM COMPLETED ===")
         logger.info(f"Entries created: {entries_created}")
+        logger.info(f"Total time: {total_time:.1f}s (Population: {population_time:.1f}s, "
+                   f"Evolution: {evolution_time:.1f}s, Save: {save_time:.1f}s)")
         
         return {
             'success': True,
@@ -239,17 +303,26 @@ def run_genetic_algorithm_task(
             'generations': generations,
             'population_size': population_size,
             'final_violations': final_violations,
-            'algorithm_used': 'genetic_algorithm'
+            'algorithm_used': 'genetic_algorithm',
+            'timing': {
+                'total_seconds': round(total_time, 1),
+                'population_generation_seconds': round(population_time, 1),
+                'evolution_seconds': round(evolution_time, 1),
+                'save_seconds': round(save_time, 1),
+                'avg_generation_time': round(sum(generation_times) / len(generation_times), 3) if generation_times else 0
+            }
         }
         
     except Exception as e:
         import traceback
-        logger.error(f"GENETIC ALGORITHM FAILED: {str(e)}")
+        total_time = time.time() - task_start_time
+        logger.error(f"GENETIC ALGORITHM FAILED after {total_time:.1f}s: {str(e)}")
         logger.error(traceback.format_exc())
         return {
             'success': False,
             'error': str(e),
-            'traceback': traceback.format_exc()
+            'traceback': traceback.format_exc(),
+            'elapsed_seconds': round(total_time, 1)
         }
 
 
