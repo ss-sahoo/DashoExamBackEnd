@@ -50,3 +50,11 @@ OLLAMA_BASE_URL = get_config('OLLAMA_BASE_URL', default='http://localhost:11434'
 # Mathpix OCR Configuration (for PDF extraction)
 MATHPIX_APP_ID = get_config('MATHPIX_APP_ID', default='')
 MATHPIX_APP_KEY = get_config('MATHPIX_APP_KEY', default='')
+
+# Email Configuration
+EMAIL_HOST = get_config('EMAIL_HOST', default='smtp.gmail.com')
+EMAIL_PORT = get_config('EMAIL_PORT', default='587')
+EMAIL_USE_TLS = get_config('EMAIL_USE_TLS', default='True', cast=bool)
+EMAIL_HOST_USER = get_config('EMAIL_HOST_USER', default='diracai.info@gmail.com')
+EMAIL_HOST_PASSWORD = get_config('EMAIL_HOST_PASSWORD', default='fibmduvwoxsjtjvh')
+DEFAULT_FROM_EMAIL = get_config('DEFAULT_FROM_EMAIL', default='Exam Flow System <diracai.info@gmail.com>')
