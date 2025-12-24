@@ -4,7 +4,7 @@ Django settings for exam_flow_backend project.
 
 import os
 from pathlib import Path
-from config import SECRET_KEY, DEBUG, DATABASE_URL, ALLOWED_HOSTS, CORS_ALLOWED_ORIGINS, GEMINI_API_KEY as CONFIG_GEMINI_API_KEY, MATHPIX_APP_ID as CONFIG_MATHPIX_APP_ID, MATHPIX_APP_KEY as CONFIG_MATHPIX_APP_KEY
+from config import SECRET_KEY, DEBUG, DATABASE_URL, ALLOWED_HOSTS, CORS_ALLOWED_ORIGINS, GEMINI_API_KEY as CONFIG_GEMINI_API_KEY, MATHPIX_APP_ID as CONFIG_MATHPIX_APP_ID, MATHPIX_APP_KEY as CONFIG_MATHPIX_APP_KEY, EMAIL_HOST as CONFIG_EMAIL_HOST, EMAIL_PORT as CONFIG_EMAIL_PORT, EMAIL_USE_TLS as CONFIG_EMAIL_USE_TLS, EMAIL_HOST_USER as CONFIG_EMAIL_HOST_USER, EMAIL_HOST_PASSWORD as CONFIG_EMAIL_HOST_PASSWORD, DEFAULT_FROM_EMAIL as CONFIG_DEFAULT_FROM_EMAIL
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -226,16 +226,16 @@ CSRF_COOKIE_PATH = '/'
 CSRF_COOKIE_SAMESITE = 'Lax'
 
 # Email settings
-EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'  # Use console for development
-# For production, use: 'django.core.mail.backends.smtp.EmailBackend'
+# Use SMTP backend for production, console for development
+EMAIL_BACKEND = os.getenv('EMAIL_BACKEND', 'django.core.mail.backends.smtp.EmailBackend')
 
-# Email configuration
-EMAIL_HOST = 'smtp.gmail.com'  # Change to your SMTP server
-EMAIL_PORT = 587
-EMAIL_USE_TLS = True
-EMAIL_HOST_USER = 'your-email@gmail.com'  # Change to your email
-EMAIL_HOST_PASSWORD = 'your-app-password'  # Change to your app password
-DEFAULT_FROM_EMAIL = 'Exam Flow System <noreply@examflow.com>'
+# Email configuration from config.py or environment
+EMAIL_HOST = CONFIG_EMAIL_HOST or os.getenv('EMAIL_HOST', 'smtp.gmail.com')
+EMAIL_PORT = int(CONFIG_EMAIL_PORT or os.getenv('EMAIL_PORT', '587'))
+EMAIL_USE_TLS = CONFIG_EMAIL_USE_TLS if CONFIG_EMAIL_USE_TLS is not None else os.getenv('EMAIL_USE_TLS', 'True').lower() == 'true'
+EMAIL_HOST_USER = CONFIG_EMAIL_HOST_USER or os.getenv('EMAIL_HOST_USER', '')
+EMAIL_HOST_PASSWORD = CONFIG_EMAIL_HOST_PASSWORD or os.getenv('EMAIL_HOST_PASSWORD', '')
+DEFAULT_FROM_EMAIL = CONFIG_DEFAULT_FROM_EMAIL or os.getenv('DEFAULT_FROM_EMAIL', 'Exam Flow System <noreply@examflow.com>')
 
 # Frontend URL for email links
 FRONTEND_URL = 'http://localhost:5173'

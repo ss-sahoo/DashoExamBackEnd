@@ -4894,19 +4894,34 @@ def activate_timetable(request, timetable_id: str):
         timetable.is_active = True
         timetable.save()
     
-    return Response(
-        {
-            "message": "Timetable activated successfully.",
-            "timetable_id": str(timetable.id),
-            "timetable_name": timetable.name or str(timetable),
-            "center": timetable.center.name,
-            "is_active": True,
-            "batches_affected": batch_codes,
-            "deactivated_timetables": deactivated_timetables,
-            "deactivated_count": len(deactivated_timetables),
-        },
-        status=status.HTTP_200_OK,
-    )
+    # Send emails to all teachers if requested
+    send_emails = request.data.get("send_emails", True)
+    email_results = None
+    
+    if send_emails:
+        from .email_service import send_timetable_emails_to_all_teachers
+        email_results = send_timetable_emails_to_all_teachers(timetable)
+    
+    response_data = {
+        "message": "Timetable activated successfully.",
+        "timetable_id": str(timetable.id),
+        "timetable_name": timetable.name or str(timetable),
+        "center": timetable.center.name,
+        "is_active": True,
+        "batches_affected": batch_codes,
+        "deactivated_timetables": deactivated_timetables,
+        "deactivated_count": len(deactivated_timetables),
+    }
+    
+    if email_results:
+        response_data["email_notifications"] = {
+            "total_teachers": email_results['total_teachers'],
+            "emails_sent": email_results['emails_sent'],
+            "emails_failed": email_results['emails_failed'],
+            "no_email": email_results['no_email'],
+        }
+    
+    return Response(response_data, status=status.HTTP_200_OK)
 
 
 @api_view(["POST"])
