@@ -214,6 +214,8 @@ CSRF_TRUSTED_ORIGINS = [
     'http://exam.dashoapp.com',
     'https://exams.dashoapp.com',
     'https://exam.dashoapp.com',
+    'http://timetable.dashoapp.com/',
+     'https://timetable.dashoapp.com/',
 ]
 
 # Disable CSRF for API endpoints (since we're using JWT)
