@@ -34,9 +34,9 @@ DB_PORT = get_config('DB_PORT', '5432')
 DATABASE_URL = get_config('DATABASE_URL', 
     default=f'postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}')
 
-ALLOWED_HOSTS = get_config('ALLOWED_HOSTS', default='localhost,127.0.0.1,128.199.17.132,exams.dashoapp.com,exam.dashoapp.com,dashoapp.com').split(',')
+ALLOWED_HOSTS = get_config('ALLOWED_HOSTS', default='localhost,127.0.0.1,128.199.17.132,exams.dashoapp.com,exam.dashoapp.com,timetable.dashoapp.com,dashoapp.com').split(',')
 CORS_ALLOWED_ORIGINS = get_config('CORS_ALLOWED_ORIGINS', 
-    default='http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173,http://128.199.17.132,http://exams.dashoapp.com,http://exam.dashoapp.com,https://exams.dashoapp.com,https://exam.dashoapp.com').split(',')
+    default='http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173,http://128.199.17.132,http://exams.dashoapp.com,http://exam.dashoapp.com,https://exams.dashoapp.com,https://exam.dashoapp.com,http://timetable.dashoapp.com,https://timetable.dashoapp.com').split(',')
 
 # AI Configuration - Disabled for low-memory deployment
 OPENAI_API_KEY = get_config('OPENAI_API_KEY', default='')
