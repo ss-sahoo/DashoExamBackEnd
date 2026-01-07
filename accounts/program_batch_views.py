@@ -516,7 +516,11 @@ def list_batches(request):
                 {"detail": "Admin user is not linked to any center."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        batches = Batch.objects.filter(program__center=user.center)
+        # Include batches with program in user's center OR batches without program
+        from django.db.models import Q
+        batches = Batch.objects.filter(
+            Q(program__center=user.center) | Q(program__isnull=True)
+        )
         if program_name:
             batches = batches.filter(program__name__icontains=program_name)
     else:
@@ -535,10 +539,10 @@ def list_batches(request):
             "id": str(batch.id),
             "code": batch.code,
             "name": batch.name,
-            "program": batch.program.name,
-            "program_id": str(batch.program.id),
-            "center": batch.program.center.name,
-            "center_id": str(batch.program.center.id),
+            "program": batch.program.name if batch.program else None,
+            "program_id": str(batch.program.id) if batch.program else None,
+            "center": batch.program.center.name if batch.program and batch.program.center else None,
+            "center_id": str(batch.program.center.id) if batch.program and batch.program.center else None,
             "start_date": str(batch.start_date) if batch.start_date else None,
             "end_date": str(batch.end_date) if batch.end_date else None,
             "students_count": batch.enrollments.filter(status=Enrollment.STATUS_ACTIVE).count(),

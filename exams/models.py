@@ -50,6 +50,14 @@ class Exam(models.Model):
     enable_webcam_proctoring = models.BooleanField(default=False)
     allow_tab_switching = models.BooleanField(default=False)
     
+    # Question Shuffling Settings
+    shuffle_questions = models.BooleanField(default=False, help_text="Enable question shuffling for students")
+    shuffle_within_sections = models.BooleanField(default=True, help_text="Shuffle questions within each section")
+    shuffle_sections = models.BooleanField(default=False, help_text="Shuffle the order of sections")
+    shuffle_subjects = models.BooleanField(default=False, help_text="Shuffle the order of subjects")
+    shuffle_options = models.BooleanField(default=False, help_text="Shuffle MCQ options for each question")
+    shuffle_seed_per_student = models.BooleanField(default=True, help_text="Use different shuffle order for each student")
+    
     # Access control
     is_public = models.BooleanField(default=True)
     public_access_token = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)

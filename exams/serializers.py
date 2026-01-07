@@ -40,7 +40,12 @@ class ExamSerializer(serializers.ModelSerializer):
             'status', 'start_date', 'end_date', 'duration_minutes', 'max_attempts',
             'allow_late_submission', 'late_submission_penalty', 'require_fullscreen',
             'disable_copy_paste', 'disable_right_click', 'enable_webcam_proctoring',
-            'allow_tab_switching', 'is_public', 'public_access_token', 'public_token_expires_at',
+            'allow_tab_switching',
+            # Shuffle settings
+            'shuffle_questions', 'shuffle_within_sections', 'shuffle_sections',
+            'shuffle_subjects', 'shuffle_options', 'shuffle_seed_per_student',
+            # Access control
+            'is_public', 'public_access_token', 'public_token_expires_at',
             'public_allowed_ip_ranges', 'public_allow_multiple_devices', 'public_link_created_at',
             'public_link_last_used_at', 'public_link_usage_count',
             'allowed_users', 'allowed_users_data',
@@ -138,7 +143,12 @@ class ExamCreateSerializer(serializers.ModelSerializer):
             'id', 'title', 'description', 'pattern_id', 'start_date', 'end_date',
             'max_attempts', 'allow_late_submission', 'late_submission_penalty',
             'require_fullscreen', 'disable_copy_paste', 'disable_right_click',
-            'enable_webcam_proctoring', 'allow_tab_switching', 'is_public', 'allowed_users',
+            'enable_webcam_proctoring', 'allow_tab_switching',
+            # Shuffle settings
+            'shuffle_questions', 'shuffle_within_sections', 'shuffle_sections',
+            'shuffle_subjects', 'shuffle_options', 'shuffle_seed_per_student',
+            # Access control
+            'is_public', 'allowed_users',
             'status', 'timezone', 'grace_period_minutes', 'buffer_time_minutes', 'auto_start',
             'auto_end', 'reschedule_allowed', 'max_reschedules', 'reschedule_deadline',
             'public_access_token', 'public_token_expires_at', 'public_allowed_ip_ranges',
