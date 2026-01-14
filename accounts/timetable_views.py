@@ -1170,7 +1170,6 @@ def bulk_create_students(request):
             # Generate code and password
             username = generate_user_code('STUDENT', center_code)
             password = generate_password('STUDENT', center_code)
-            student_code = username
             
             # Split name
             name_parts = name.strip().split()
@@ -1189,17 +1188,26 @@ def bulk_create_students(request):
                     role='student',
                     center=center,
                     institute=center.institute,
-                    student_code=student_code,
-                    student_batch_code=batch_code,
-                    student_dob=date_of_birth,
                 )
+                
+                # If batch_code is provided, try to enroll student in that batch
+                if batch_code:
+                    try:
+                        batch = Batch.objects.get(code=batch_code)
+                        Enrollment.objects.get_or_create(
+                            student=new_user,
+                            batch=batch,
+                            defaults={'status': Enrollment.STATUS_ACTIVE}
+                        )
+                    except Batch.DoesNotExist:
+                        pass  # Batch not found, skip enrollment
                 
                 created_students.append({
                     'row': row_num,
                     'name': name,
                     'username': username,
                     'password': password,
-                    'student_code': student_code,
+                    'batch_code': batch_code,
                     'email': new_user.email,
                     'user_id': str(new_user.id),
                 })
@@ -1426,7 +1434,7 @@ def bulk_create_staff(request):
                     last_name=last_name,
                     phone=phone_number or "",
                     phone_number=phone_number or "",
-                    role='staff',
+                    role=User.ROLE_STAFF,  # Use proper role constant
                     center=center,
                     institute=center.institute,
                 )
