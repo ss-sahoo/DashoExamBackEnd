@@ -214,6 +214,8 @@ class UserListView(generics.ListAPIView):
 
     def get_queryset(self):
         user = self.request.user
+        if user.role in ['super_admin', 'SUPER_ADMIN']:
+            return User.objects.all()
         if user.is_institute_admin():
             return User.objects.filter(institute=user.institute)
         return User.objects.filter(id=user.id)
@@ -226,6 +228,8 @@ class UserDetailView(generics.RetrieveUpdateDestroyAPIView):
 
     def get_queryset(self):
         user = self.request.user
+        if user.role in ['super_admin', 'SUPER_ADMIN']:
+            return User.objects.all()
         if user.is_institute_admin():
             return User.objects.filter(institute=user.institute)
         return User.objects.filter(id=user.id)
@@ -233,6 +237,11 @@ class UserDetailView(generics.RetrieveUpdateDestroyAPIView):
     def perform_update(self, serializer):
         actor = self.request.user
         instance = serializer.instance
+
+        # Allow super admins to update anyone
+        if actor.role in ['super_admin', 'SUPER_ADMIN']:
+            serializer.save()
+            return
 
         # Allow institute admins to update users in their institute or users updating themselves
         if actor.is_institute_admin() and instance.institute == actor.institute:
@@ -247,6 +256,11 @@ class UserDetailView(generics.RetrieveUpdateDestroyAPIView):
 
     def perform_destroy(self, instance):
         actor = self.request.user
+
+        # Allow super admins to delete anyone
+        if actor.role in ['super_admin', 'SUPER_ADMIN']:
+            instance.delete()
+            return
 
         if not actor.is_institute_admin():
             raise PermissionDenied("You do not have permission to delete users.")

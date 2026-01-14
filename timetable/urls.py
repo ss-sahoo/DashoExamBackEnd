@@ -56,10 +56,15 @@ from accounts.timetable_auth_views import (
 )
 from accounts.timetable_views import (
     create_center,
+    update_center,
+    delete_center,
     create_admin,
     create_teacher,
     create_student,
     create_staff,
+    bulk_create_teachers,
+    bulk_create_students,
+    bulk_create_staff,
 )
 from accounts.center_views import (
     list_centers,
@@ -107,10 +112,15 @@ urlpatterns = [
     # Super Admin User Creation APIs
     # ===========
     path("superadmin/centers/create/", create_center, name="create-center"),
+    path("superadmin/centers/<uuid:center_id>/update/", update_center, name="update-center"),
+    path("superadmin/centers/<uuid:center_id>/delete/", delete_center, name="delete-center"),
     path("superadmin/admins/create/", create_admin, name="create-admin"),
     path("superadmin/teachers/create/", create_teacher, name="create-teacher"),
     path("superadmin/students/create/", create_student, name="create-student"),
     path("superadmin/staff/create/", create_staff, name="create-staff"),
+    path("superadmin/teachers/bulk_create/", bulk_create_teachers, name="bulk-create-teachers"),
+    path("superadmin/students/bulk_create/", bulk_create_students, name="bulk-create-students"),
+    path("superadmin/staff/bulk_create/", bulk_create_staff, name="bulk-create-staff"),
     
     # ===========
     # Admin User Creation APIs (for their center)
@@ -197,4 +207,3 @@ urlpatterns = [
     path("timetables/<uuid:timetable_id>/teachers/", get_teacher_timetable, name="get-all-teachers-timetable"),
     path("timetables/<uuid:timetable_id>/teachers/<uuid:teacher_id>/", get_teacher_timetable, name="get-teacher-timetable"),
 ]
-

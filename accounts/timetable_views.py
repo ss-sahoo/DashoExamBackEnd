@@ -92,6 +92,95 @@ def create_center(request):
         )
 
 
+@api_view(["PUT"])
+@permission_classes([IsAuthenticated])
+def update_center(request, center_id):
+    """
+    Super Admin updates a Center.
+    
+    Payload:
+    {
+        "name": "Updated Name",
+        "city": "Updated City",
+        "address": "Updated Address"
+    }
+    """
+    is_super, error_response = _check_super_admin(request)
+    if not is_super:
+        return error_response
+    
+    try:
+        center = Center.objects.get(id=center_id)
+    except Center.DoesNotExist:
+        return Response(
+            {"detail": f"Center with id '{center_id}' not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+    
+    name = request.data.get("name")
+    city = request.data.get("city")
+    address = request.data.get("address")
+    
+    if name:
+        center.name = name
+    if city:
+        center.city = city
+    if address is not None:
+        center.address = address
+        
+    try:
+        center.save()
+        return Response(
+            {
+                "id": str(center.id),
+                "name": center.name,
+                "city": center.city,
+                "address": center.address,
+                "institute": {
+                    "id": center.institute.id,
+                    "name": center.institute.name,
+                },
+            },
+            status=status.HTTP_200_OK,
+        )
+    except Exception as e:
+        return Response(
+            {"detail": f"Error updating center: {str(e)}"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+
+@api_view(["DELETE"])
+@permission_classes([IsAuthenticated])
+def delete_center(request, center_id):
+    """
+    Super Admin deletes a Center.
+    """
+    is_super, error_response = _check_super_admin(request)
+    if not is_super:
+        return error_response
+    
+    try:
+        center = Center.objects.get(id=center_id)
+    except Center.DoesNotExist:
+        return Response(
+            {"detail": f"Center with id '{center_id}' not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+    
+    try:
+        center.delete()
+        return Response(
+            {"message": "Center deleted successfully."},
+            status=status.HTTP_200_OK,
+        )
+    except Exception as e:
+        return Response(
+            {"detail": f"Error deleting center: {str(e)}"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def create_admin(request):
@@ -875,4 +964,495 @@ def bulk_create_teachers(request):
         'errors': errors,
         'center': center.name,
     }, status=status.HTTP_201_CREATED if created_teachers else status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def bulk_create_students(request):
+    """
+    Bulk create students from Excel/CSV file or JSON array.
+    
+    Accepts either:
+    1. File upload (Excel .xlsx or CSV) with columns: name, email, phone_number, batch_code, date_of_birth
+    2. JSON array in request body with key "students"
+    
+    File Upload:
+    - Content-Type: multipart/form-data
+    - file: Excel or CSV file
+    - center_id: (optional for Admin, required for Super Admin)
+    
+    Returns:
+    {
+        "message": "Bulk student creation completed.",
+        "total": 10,
+        "success": 8,
+        "failed": 2,
+        "created_students": [...],
+        "errors": [...]
+    }
+    """
+    import openpyxl
+    import csv
+    import io
+    
+    can_proceed, role_info, error_response = _check_admin_or_super(request)
+    if not can_proceed:
+        return error_response
+    
+    is_super, is_admin = role_info
+    user = request.user
+    
+    # Get center
+    center_id = request.data.get("center_id") or request.POST.get("center_id")
+    
+    if is_super:
+        if not center_id:
+            return Response(
+                {"detail": "center_id is required for Super Admin."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        center, error_response = _get_center_by_name_or_id(center_id=center_id)
+        if error_response:
+            return error_response
+    else:
+        if not user.center:
+            return Response(
+                {"detail": "Admin user is not linked to any center."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        center = user.center
+    
+    students_data = []
+    
+    # Check if file upload
+    if 'file' in request.FILES:
+        uploaded_file = request.FILES['file']
+        file_name = uploaded_file.name.lower()
+        
+        try:
+            if file_name.endswith('.xlsx') or file_name.endswith('.xls'):
+                # Parse Excel file
+                wb = openpyxl.load_workbook(uploaded_file, read_only=True)
+                ws = wb.active
+                
+                # Get headers from first row
+                headers = []
+                for cell in ws[1]:
+                    headers.append(str(cell.value).lower().strip() if cell.value else '')
+                
+                # Map headers to expected fields
+                header_map = {}
+                for i, h in enumerate(headers):
+                    if 'name' in h and 'batch' not in h:
+                        header_map['name'] = i
+                    elif 'email' in h:
+                        header_map['email'] = i
+                    elif 'phone' in h:
+                        header_map['phone_number'] = i
+                    elif 'batch' in h:
+                        header_map['batch_code'] = i
+                    elif 'birth' in h or 'dob' in h:
+                        header_map['date_of_birth'] = i
+                
+                if 'name' not in header_map:
+                    return Response(
+                        {"detail": "Excel file must have a 'name' column."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                
+                # Parse rows
+                for row_idx, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
+                    if not row or not any(row):
+                        continue
+                    
+                    student = {
+                        'name': str(row[header_map.get('name', 0)] or '').strip(),
+                        'email': str(row[header_map.get('email', 1)] or '').strip() if header_map.get('email') is not None and len(row) > header_map.get('email', 1) else '',
+                        'phone_number': str(row[header_map.get('phone_number', 2)] or '').strip() if header_map.get('phone_number') is not None and len(row) > header_map.get('phone_number', 2) else '',
+                        'batch_code': str(row[header_map.get('batch_code', 3)] or '').strip() if header_map.get('batch_code') is not None and len(row) > header_map.get('batch_code', 3) else '',
+                        'date_of_birth': str(row[header_map.get('date_of_birth', 4)] or '').strip() if header_map.get('date_of_birth') is not None and len(row) > header_map.get('date_of_birth', 4) else '',
+                        'row': row_idx,
+                    }
+                    
+                    if student['name']:
+                        students_data.append(student)
+                
+                wb.close()
+                
+            elif file_name.endswith('.csv'):
+                # Parse CSV file
+                content = uploaded_file.read().decode('utf-8')
+                reader = csv.DictReader(io.StringIO(content))
+                
+                for row_idx, row in enumerate(reader, start=2):
+                    # Normalize keys
+                    normalized = {}
+                    for k, v in row.items():
+                        key = k.lower().strip()
+                        if 'name' in key and 'batch' not in key:
+                            normalized['name'] = v
+                        elif 'email' in key:
+                            normalized['email'] = v
+                        elif 'phone' in key:
+                            normalized['phone_number'] = v
+                        elif 'batch' in key:
+                            normalized['batch_code'] = v
+                        elif 'birth' in key or 'dob' in key:
+                            normalized['date_of_birth'] = v
+                    
+                    student = {
+                        'name': str(normalized.get('name', '') or '').strip(),
+                        'email': str(normalized.get('email', '') or '').strip(),
+                        'phone_number': str(normalized.get('phone_number', '') or '').strip(),
+                        'batch_code': str(normalized.get('batch_code', '') or '').strip(),
+                        'date_of_birth': str(normalized.get('date_of_birth', '') or '').strip(),
+                        'row': row_idx,
+                    }
+                    
+                    if student['name']:
+                        students_data.append(student)
+            else:
+                return Response(
+                    {"detail": "Unsupported file format. Please upload .xlsx or .csv file."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        except Exception as e:
+            return Response(
+                {"detail": f"Error parsing file: {str(e)}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+    else:
+        # JSON payload
+        students_data = request.data.get("students", [])
+        if not students_data:
+            return Response(
+                {"detail": "No students data provided. Upload a file or provide 'students' array."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+    
+    if not students_data:
+        return Response(
+            {"detail": "No valid student records found in the uploaded data."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    
+    # Process students
+    created_students = []
+    errors = []
+    center_code = center.name[:4].replace(" ", "").replace("-", "")
+    
+    for idx, student_data in enumerate(students_data):
+        name = student_data.get('name', '').strip()
+        email = student_data.get('email', '').strip()
+        phone_number = student_data.get('phone_number', '').strip()
+        batch_code = student_data.get('batch_code', '').strip()
+        date_of_birth = student_data.get('date_of_birth', '').strip()
+        row_num = student_data.get('row', idx + 1)
+        
+        if not name:
+            errors.append({
+                'row': row_num,
+                'error': 'Name is required',
+                'data': student_data
+            })
+            continue
+        
+        # Check for duplicate email
+        if email and User.objects.filter(email=email).exists():
+            errors.append({
+                'row': row_num,
+                'error': f'Email {email} already exists',
+                'data': student_data
+            })
+            continue
+        
+        try:
+            # Generate code and password
+            username = generate_user_code('STUDENT', center_code)
+            password = generate_password('STUDENT', center_code)
+            student_code = username
+            
+            # Split name
+            name_parts = name.strip().split()
+            first_name = name_parts[0] if name_parts else name
+            last_name = " ".join(name_parts[1:]) if len(name_parts) > 1 else ""
+            
+            with transaction.atomic():
+                new_user = User.objects.create_user(
+                    username=username,
+                    email=email or f"{username}@temp.com",
+                    password=password,
+                    first_name=first_name,
+                    last_name=last_name,
+                    phone=phone_number or "",
+                    phone_number=phone_number or "",
+                    role='student',
+                    center=center,
+                    institute=center.institute,
+                    student_code=student_code,
+                    student_batch_code=batch_code,
+                    student_dob=date_of_birth,
+                )
+                
+                created_students.append({
+                    'row': row_num,
+                    'name': name,
+                    'username': username,
+                    'password': password,
+                    'student_code': student_code,
+                    'email': new_user.email,
+                    'user_id': str(new_user.id),
+                })
+        except Exception as e:
+            errors.append({
+                'row': row_num,
+                'error': str(e),
+                'data': student_data
+            })
+    
+    return Response({
+        'message': 'Bulk student creation completed.',
+        'total': len(students_data),
+        'success': len(created_students),
+        'failed': len(errors),
+        'created_students': created_students,
+        'errors': errors,
+        'center': center.name,
+    }, status=status.HTTP_201_CREATED if created_students else status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def bulk_create_staff(request):
+    """
+    Bulk create staff from Excel/CSV file or JSON array.
+    
+    Accepts either:
+    1. File upload (Excel .xlsx or CSV) with columns: name, email, phone_number
+    2. JSON array in request body with key "staff"
+    
+    File Upload:
+    - Content-Type: multipart/form-data
+    - file: Excel or CSV file
+    - center_id: (optional for Admin, required for Super Admin)
+    
+    Returns:
+    {
+        "message": "Bulk staff creation completed.",
+        "total": 10,
+        "success": 8,
+        "failed": 2,
+        "created_staff": [...],
+        "errors": [...]
+    }
+    """
+    import openpyxl
+    import csv
+    import io
+    
+    can_proceed, role_info, error_response = _check_admin_or_super(request)
+    if not can_proceed:
+        return error_response
+    
+    is_super, is_admin = role_info
+    user = request.user
+    
+    # Get center
+    center_id = request.data.get("center_id") or request.POST.get("center_id")
+    
+    if is_super:
+        if not center_id:
+            return Response(
+                {"detail": "center_id is required for Super Admin."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        center, error_response = _get_center_by_name_or_id(center_id=center_id)
+        if error_response:
+            return error_response
+    else:
+        if not user.center:
+            return Response(
+                {"detail": "Admin user is not linked to any center."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        center = user.center
+    
+    staff_data = []
+    
+    # Check if file upload
+    if 'file' in request.FILES:
+        uploaded_file = request.FILES['file']
+        file_name = uploaded_file.name.lower()
+        
+        try:
+            if file_name.endswith('.xlsx') or file_name.endswith('.xls'):
+                # Parse Excel file
+                wb = openpyxl.load_workbook(uploaded_file, read_only=True)
+                ws = wb.active
+                
+                # Get headers from first row
+                headers = []
+                for cell in ws[1]:
+                    headers.append(str(cell.value).lower().strip() if cell.value else '')
+                
+                # Map headers to expected fields
+                header_map = {}
+                for i, h in enumerate(headers):
+                    if 'name' in h:
+                        header_map['name'] = i
+                    elif 'email' in h:
+                        header_map['email'] = i
+                    elif 'phone' in h:
+                        header_map['phone_number'] = i
+                
+                if 'name' not in header_map:
+                    return Response(
+                        {"detail": "Excel file must have a 'name' column."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                
+                # Parse rows
+                for row_idx, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
+                    if not row or not any(row):
+                        continue
+                    
+                    staff = {
+                        'name': str(row[header_map.get('name', 0)] or '').strip(),
+                        'email': str(row[header_map.get('email', 1)] or '').strip() if header_map.get('email') is not None and len(row) > header_map.get('email', 1) else '',
+                        'phone_number': str(row[header_map.get('phone_number', 2)] or '').strip() if header_map.get('phone_number') is not None and len(row) > header_map.get('phone_number', 2) else '',
+                        'row': row_idx,
+                    }
+                    
+                    if staff['name']:
+                        staff_data.append(staff)
+                
+                wb.close()
+                
+            elif file_name.endswith('.csv'):
+                # Parse CSV file
+                content = uploaded_file.read().decode('utf-8')
+                reader = csv.DictReader(io.StringIO(content))
+                
+                for row_idx, row in enumerate(reader, start=2):
+                    # Normalize keys
+                    normalized = {}
+                    for k, v in row.items():
+                        key = k.lower().strip()
+                        if 'name' in key:
+                            normalized['name'] = v
+                        elif 'email' in key:
+                            normalized['email'] = v
+                        elif 'phone' in key:
+                            normalized['phone_number'] = v
+                    
+                    staff = {
+                        'name': str(normalized.get('name', '') or '').strip(),
+                        'email': str(normalized.get('email', '') or '').strip(),
+                        'phone_number': str(normalized.get('phone_number', '') or '').strip(),
+                        'row': row_idx,
+                    }
+                    
+                    if staff['name']:
+                        staff_data.append(staff)
+            else:
+                return Response(
+                    {"detail": "Unsupported file format. Please upload .xlsx or .csv file."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        except Exception as e:
+            return Response(
+                {"detail": f"Error parsing file: {str(e)}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+    else:
+        # JSON payload
+        staff_data = request.data.get("staff", [])
+        if not staff_data:
+            return Response(
+                {"detail": "No staff data provided. Upload a file or provide 'staff' array."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+    
+    if not staff_data:
+        return Response(
+            {"detail": "No valid staff records found in the uploaded data."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    
+    # Process staff
+    created_staff = []
+    errors = []
+    center_code = center.name[:4].replace(" ", "").replace("-", "")
+    
+    for idx, staff_member in enumerate(staff_data):
+        name = staff_member.get('name', '').strip()
+        email = staff_member.get('email', '').strip()
+        phone_number = staff_member.get('phone_number', '').strip()
+        row_num = staff_member.get('row', idx + 1)
+        
+        if not name:
+            errors.append({
+                'row': row_num,
+                'error': 'Name is required',
+                'data': staff_member
+            })
+            continue
+        
+        # Check for duplicate email
+        if email and User.objects.filter(email=email).exists():
+            errors.append({
+                'row': row_num,
+                'error': f'Email {email} already exists',
+                'data': staff_member
+            })
+            continue
+        
+        try:
+            # Generate code and password
+            username = generate_user_code('STAFF', center_code)
+            password = generate_password('STAFF', center_code)
+            
+            # Split name
+            name_parts = name.strip().split()
+            first_name = name_parts[0] if name_parts else name
+            last_name = " ".join(name_parts[1:]) if len(name_parts) > 1 else ""
+            
+            with transaction.atomic():
+                new_user = User.objects.create_user(
+                    username=username,
+                    email=email or f"{username}@temp.com",
+                    password=password,
+                    first_name=first_name,
+                    last_name=last_name,
+                    phone=phone_number or "",
+                    phone_number=phone_number or "",
+                    role='staff',
+                    center=center,
+                    institute=center.institute,
+                )
+                
+                created_staff.append({
+                    'row': row_num,
+                    'name': name,
+                    'username': username,
+                    'password': password,
+                    'email': new_user.email,
+                    'user_id': str(new_user.id),
+                })
+        except Exception as e:
+            errors.append({
+                'row': row_num,
+                'error': str(e),
+                'data': staff_member
+            })
+    
+    return Response({
+        'message': 'Bulk staff creation completed.',
+        'total': len(staff_data),
+        'success': len(created_staff),
+        'failed': len(errors),
+        'created_staff': created_staff,
+        'errors': errors,
+        'center': center.name,
+    }, status=status.HTTP_201_CREATED if created_staff else status.HTTP_400_BAD_REQUEST)
 
