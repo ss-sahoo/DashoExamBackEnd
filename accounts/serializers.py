@@ -47,15 +47,16 @@ class InstituteCreateSerializer(serializers.ModelSerializer):
         return value.lower() if value else None
     
     def create(self, validated_data):
-        """Create institute and set the creator as institute admin"""
+        """Create institute and set the creator as super_admin"""
         user = self.context['request'].user
         validated_data['created_by'] = user
         validated_data['is_verified'] = True  # Auto-verify user-created institutes
         institute = Institute.objects.create(**validated_data)
         
-        # Update user's institute and role
+        # Update user's institute and role - make them super_admin
         user.institute = institute
-        user.role = 'institute_admin'
+        user.role = 'super_admin'
+        user.is_staff = True  # Give staff access
         user.save()
         
         return institute
