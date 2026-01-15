@@ -17,7 +17,13 @@ from .models import User
 
 def _get_user_by_identifier(identifier: str) -> Optional[User]:
     """
-    Allow login using username, email, OR teacher_code (for teachers).
+    Allow login using username (which can be a code like ADM001, TCH001, STU001),
+    email, OR teacher_code (for teachers).
+    
+    Code-based login:
+    - Admin: username like ADM001, ADM002, etc.
+    - Teacher: username or teacher_code like TCH001, TCH002, etc.
+    - Student: username like STU001, STU002, etc.
     """
     try:
         return User.objects.get(
@@ -162,6 +168,14 @@ class StaffLoginView(BaseRoleLoginView):
     Non-teaching staff login.
     """
     allowed_roles = ('STAFF',)
+
+
+class ManagerLoginView(BaseRoleLoginView):
+    """
+    Manager login - Company level management.
+    Has access to all features across all institutes.
+    """
+    allowed_roles = ('manager', 'super_admin', 'SUPER_ADMIN')
 
 
 @api_view(["POST"])

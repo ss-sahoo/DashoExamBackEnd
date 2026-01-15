@@ -111,6 +111,8 @@ class User(AbstractUser):
         # Timetable system roles
         ('ADMIN', 'Center Admin'),
         ('STAFF', 'Staff'),
+        # Company management role
+        ('manager', 'Manager'),
     ]
     
     # ===========

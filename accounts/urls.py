@@ -6,6 +6,7 @@ from .timetable_auth_views import (
     TeacherLoginView,
     StudentLoginView,
     StaffLoginView,
+    ManagerLoginView,
     change_password as timetable_change_password,
 )
 
@@ -21,6 +22,7 @@ urlpatterns = [
     path('teacher/login/', TeacherLoginView.as_view(), name='exam-teacher-login'),
     path('student/login/', StudentLoginView.as_view(), name='exam-student-login'),
     path('staff/login/', StaffLoginView.as_view(), name='exam-staff-login'),
+    path('manager/login/', ManagerLoginView.as_view(), name='exam-manager-login'),
     path('auth/change-password/', timetable_change_password, name='exam-change-password'),
     
     # User management
