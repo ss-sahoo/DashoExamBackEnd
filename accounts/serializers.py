@@ -115,16 +115,17 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
 
 class UserSerializer(serializers.ModelSerializer):
     institute = InstituteSerializer(read_only=True)
+    institute_id = serializers.IntegerField(read_only=True)  # Add institute_id for frontend
     full_name = serializers.CharField(source='get_full_name', read_only=True)
 
     class Meta:
         model = User
         fields = [
             'id', 'email', 'username', 'first_name', 'last_name', 'full_name',
-            'role', 'institute', 'phone', 'profile_picture', 'is_verified',
+            'role', 'institute', 'institute_id', 'phone', 'profile_picture', 'is_verified',
             'is_active', 'created_at'
         ]
-        read_only_fields = ['id', 'email', 'created_at']
+        read_only_fields = ['id', 'email', 'created_at', 'institute_id']
 
 
 class UserLoginSerializer(serializers.Serializer):

@@ -98,7 +98,11 @@ def user_login_view(request):
             'username': user.username,
             'email': user.email,
             'full_name': user.get_full_name(),
+            'first_name': user.first_name,
+            'last_name': user.last_name,
             'role': user.role,
+            'institute_id': user.institute_id,
+            'institute_name': user.institute.name if user.institute else None,
             'center_id': user.center_id,
         },
         'message': 'Login successful'
