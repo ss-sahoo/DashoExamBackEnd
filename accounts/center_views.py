@@ -52,6 +52,14 @@ def list_centers(request):
     # Serialize
     centers_data = []
     for center in centers:
+        # Count admins for this center (exclude super admins)
+        admin_count = User.objects.filter(
+            center=center,
+            role__in=['ADMIN', 'admin', 'institute_admin']
+        ).exclude(
+            role__in=['SUPER_ADMIN', 'super_admin']
+        ).count()
+        
         centers_data.append({
             "id": str(center.id),
             "name": center.name,
@@ -61,6 +69,7 @@ def list_centers(request):
                 "id": center.institute.id,
                 "name": center.institute.name,
             },
+            "admin_count": admin_count,
             "created_at": center.created_at.isoformat() if hasattr(center, 'created_at') else None,
         })
     

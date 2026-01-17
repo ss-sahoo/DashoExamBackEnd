@@ -140,7 +140,7 @@ def create_program(request):
 @permission_classes([IsAuthenticated])
 def create_batch(request):
     """
-    Admin creates a new Batch (optionally under a program) in their center.
+    Admin or Super Admin creates a new Batch (optionally under a program) in their center.
     
     Payload:
     {
@@ -163,12 +163,40 @@ def create_batch(request):
         "center_id": "uuid"
     }
     """
-    is_admin, error_response = _check_admin(request)
-    if not is_admin:
-        return error_response
+    user = request.user
     
-    admin_user = request.user
-    center = admin_user.center
+    # Allow both Admin and Super Admin to create batches
+    if user.role in [User.ROLE_SUPER_ADMIN, 'SUPER_ADMIN', 'super_admin']:
+        # Super admin can create batch in any center (must specify center)
+        center_id = request.data.get("center_id")
+        center_name = request.data.get("center_name")
+        
+        if not center_id and not center_name:
+            # If no center specified, try to use user's center if they have one
+            if user.center:
+                center = user.center
+            else:
+                return Response(
+                    {"detail": "Super Admin must provide center_id or center_name, or be assigned to a center."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        else:
+            center, error_response = _get_center_by_name_or_id(center_name=center_name, center_id=center_id)
+            if error_response:
+                return error_response
+    elif user.role in ['ADMIN', 'institute_admin']:
+        # Admin can only create in their center
+        if not user.center:
+            return Response(
+                {"detail": "Admin user is not linked to any center."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        center = user.center
+    else:
+        return Response(
+            {"detail": "Only Admin and Super Admin can create batches."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
     
     program_id = request.data.get("program_id")
     program_name = request.data.get("program_name")
@@ -187,14 +215,14 @@ def create_batch(request):
     if not name:
         name = f"Batch {code}"
     
-    # Find program in admin's center (optional) - support both program_id and program_name
+    # Find program in center (optional) - support both program_id and program_name
     program = None
     if program_id:
         try:
             program = Program.objects.get(id=program_id, center=center)
         except Program.DoesNotExist:
             return Response(
-                {"detail": f"Program with id '{program_id}' not found in your center '{center.name}'."},
+                {"detail": f"Program with id '{program_id}' not found in center '{center.name}'."},
                 status=status.HTTP_404_NOT_FOUND,
             )
     elif program_name:
@@ -202,12 +230,12 @@ def create_batch(request):
             program = Program.objects.get(center=center, name=program_name)
         except Program.DoesNotExist:
             return Response(
-                {"detail": f"Program '{program_name}' not found in your center '{center.name}'."},
+                {"detail": f"Program '{program_name}' not found in center '{center.name}'."},
                 status=status.HTTP_404_NOT_FOUND,
             )
         except Program.MultipleObjectsReturned:
             return Response(
-                {"detail": f"Multiple programs found with name '{program_name}'. Please contact Super Admin."},
+                {"detail": f"Multiple programs found with name '{program_name}'. Please use program_id."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
     

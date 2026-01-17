@@ -93,12 +93,14 @@ class InstituteInvitationSerializer(serializers.ModelSerializer):
 class UserRegistrationSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, validators=[validate_password])
     password_confirm = serializers.CharField(write_only=True)
+    institute_id = serializers.IntegerField(required=False, allow_null=True)
+    role = serializers.CharField(required=False, allow_null=True)
 
     class Meta:
         model = User
         fields = [
             'email', 'username', 'first_name', 'last_name', 'password', 
-            'password_confirm', 'phone'
+            'password_confirm', 'phone', 'institute_id', 'role'
         ]
 
     def validate(self, attrs):
@@ -108,8 +110,16 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         validated_data.pop('password_confirm')
-        # Users register without institute initially
-        user = User.objects.create_user(**validated_data)
+        # Extract institute_id and role if provided
+        institute_id = validated_data.pop('institute_id', None)
+        role = validated_data.pop('role', 'STUDENT')  # Default to STUDENT if not provided
+        
+        # Create user with institute and role
+        user = User.objects.create_user(
+            **validated_data,
+            institute_id=institute_id,
+            role=role
+        )
         return user
 
 

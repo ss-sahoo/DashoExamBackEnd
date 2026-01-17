@@ -1,5 +1,7 @@
 from django.urls import path
 from . import views
+from .analytics_views import dashboard_analytics
+from .admin_center_views import assign_center_to_admin, remove_center_from_admin, get_available_centers
 from .timetable_auth_views import (
     SuperAdminLoginView,
     AdminLoginView,
@@ -53,4 +55,12 @@ urlpatterns = [
     path('invitations/<int:invitation_id>/accept/', views.accept_invitation, name='accept-invitation'),
     path('invitations/<int:invitation_id>/decline/', views.decline_invitation, name='decline-invitation'),
     path('my-invitations/', views.my_invitations, name='my-invitations'),
+    
+    # Analytics
+    path('analytics/dashboard/', dashboard_analytics, name='dashboard-analytics'),
+    
+    # Admin Center Assignment
+    path('assign-center/', assign_center_to_admin, name='assign-center'),
+    path('remove-center/', remove_center_from_admin, name='remove-center'),
+    path('available-centers/', get_available_centers, name='available-centers'),
 ]
