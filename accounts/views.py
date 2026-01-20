@@ -91,6 +91,19 @@ def user_login_view(request):
         "access": str(refresh.access_token),
     }
     
+    # Get center_id - either from direct assignment or from admin_centers
+    center_id = None
+    center_name = None
+    if user.center_id:
+        center_id = str(user.center_id)
+        center_name = user.center.name if user.center else None
+    else:
+        # Check if user is admin of any center
+        admin_center = user.admin_centers.first()
+        if admin_center:
+            center_id = str(admin_center.id)
+            center_name = admin_center.name
+    
     return Response({
         'tokens': tokens,
         'user': {
@@ -103,7 +116,8 @@ def user_login_view(request):
             'role': user.role,
             'institute_id': user.institute_id,
             'institute_name': user.institute.name if user.institute else None,
-            'center_id': user.center_id,
+            'center_id': center_id,
+            'center_name': center_name,
         },
         'message': 'Login successful'
     })

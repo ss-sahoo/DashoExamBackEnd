@@ -52,11 +52,10 @@ from .evaluation_views import (
     manual_evaluate_question, ai_evaluate_question, get_evaluation_batches,
     update_evaluation_settings, get_pending_evaluations, batch_ai_evaluate
 )
-from .ai_proctoring import AIProctoringSystem
+from .ai_proctoring import mediapipe_proctoring as proctoring_analyzer
 from .pdf_utils import ensure_answer_sheet_pdf
 
-# Create a global instance
-proctoring_analyzer = AIProctoringSystem()
+# proctoring_analyzer is now the MediaPipe system
 from accounts.jwt_utils import get_tokens_for_user
 
 User = get_user_model()
@@ -1153,12 +1152,39 @@ def student_dashboard_data(request):
     user = request.user
     now = timezone.now()
     
+    # Check if user has institute
+    if not user.institute:
+        return Response({
+            'error': 'No institute assigned',
+            'stats': {
+                'total_exams_attempted': 0,
+                'average_score': 0,
+                'total_violations': 0,
+                'current_rank': 1
+            },
+            'student_info': {
+                'name': user.get_full_name(),
+                'email': user.email,
+                'institute': None,
+                'center': None,
+                'center_location': None,
+            },
+            'available_exams': [],
+            'scheduled_exams': [],
+            'ongoing_exams': [],
+            'completed_exams': [],
+            'disqualified_exams': []
+        })
+    
+    # Filter exams by student's institute only (simplified for now)
     # Get available exams (published/active, within time window, not exceeded attempts)
     available_exams = Exam.objects.filter(
-        Q(is_public=True) | Q(allowed_users=user),
+        institute=user.institute,
         status__in=['published', 'active'],
         start_date__lte=now,
         end_date__gte=now
+    ).filter(
+        Q(is_public=True) | Q(allowed_users=user)
     ).exclude(
         attempts__student=user,
         attempts__status__in=['submitted', 'auto_submitted']
@@ -1166,10 +1192,12 @@ def student_dashboard_data(request):
     
     # Get scheduled exams (future exams that students can see)
     scheduled_exams = Exam.objects.filter(
-        Q(is_public=True) | Q(allowed_users=user),
+        institute=user.institute,
         status__in=['published', 'active'],
         start_date__gt=now,
         end_date__gte=now
+    ).filter(
+        Q(is_public=True) | Q(allowed_users=user)
     ).distinct()
     
     # Get ongoing exams (started but not submitted)
@@ -1310,6 +1338,13 @@ def student_dashboard_data(request):
             'average_score': round(average_score, 2),
             'total_violations': total_violations,
             'current_rank': 1  # TODO: Implement ranking system
+        },
+        'student_info': {
+            'name': user.get_full_name(),
+            'email': user.email,
+            'institute': user.institute.name if user.institute else None,
+            'center': getattr(user.center, 'name', None) if hasattr(user, 'center') else None,
+            'center_location': getattr(user.center, 'location', None) if hasattr(user, 'center') else None,
         },
         'available_exams': available_exams_data,
         'scheduled_exams': scheduled_exams_data,

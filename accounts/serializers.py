@@ -127,15 +127,37 @@ class UserSerializer(serializers.ModelSerializer):
     institute = InstituteSerializer(read_only=True)
     institute_id = serializers.IntegerField(read_only=True)  # Add institute_id for frontend
     full_name = serializers.CharField(source='get_full_name', read_only=True)
+    center_id = serializers.SerializerMethodField()
+    center_name = serializers.SerializerMethodField()
 
     class Meta:
         model = User
         fields = [
             'id', 'email', 'username', 'first_name', 'last_name', 'full_name',
-            'role', 'institute', 'institute_id', 'phone', 'profile_picture', 'is_verified',
-            'is_active', 'created_at'
+            'role', 'institute', 'institute_id', 'center_id', 'center_name', 
+            'phone', 'profile_picture', 'is_verified', 'is_active', 'created_at'
         ]
-        read_only_fields = ['id', 'email', 'created_at', 'institute_id']
+        read_only_fields = ['id', 'email', 'created_at', 'institute_id', 'center_id', 'center_name']
+    
+    def get_center_id(self, obj):
+        """Get center ID - either from direct assignment or from admin_centers"""
+        if obj.center_id:
+            return str(obj.center_id)
+        # Check if user is admin of any center
+        admin_center = obj.admin_centers.first()
+        if admin_center:
+            return str(admin_center.id)
+        return None
+    
+    def get_center_name(self, obj):
+        """Get center name - either from direct assignment or from admin_centers"""
+        if obj.center:
+            return obj.center.name
+        # Check if user is admin of any center
+        admin_center = obj.admin_centers.first()
+        if admin_center:
+            return admin_center.name
+        return None
 
 
 class UserLoginSerializer(serializers.Serializer):

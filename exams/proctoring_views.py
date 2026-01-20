@@ -10,11 +10,9 @@ from datetime import timedelta
 import json
 
 from .models import Exam, ExamAttempt, ExamProctoring, ExamViolation
-from .ai_proctoring import AIProctoringSystem
+from .ai_proctoring import mediapipe_proctoring as ai_proctoring
 from .serializers import ExamSerializer
 from accounts.models import User
-
-ai_proctoring = AIProctoringSystem()
 
 
 @api_view(['POST'])
