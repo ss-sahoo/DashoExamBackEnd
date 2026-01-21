@@ -112,7 +112,7 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
         validated_data.pop('password_confirm')
         # Extract institute_id and role if provided
         institute_id = validated_data.pop('institute_id', None)
-        role = validated_data.pop('role', 'STUDENT')  # Default to STUDENT if not provided
+        role = validated_data.pop('role', 'student')  # Default to student (lowercase) if not provided
         
         # Create user with institute and role
         user = User.objects.create_user(
