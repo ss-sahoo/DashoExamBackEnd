@@ -114,6 +114,9 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
         institute_id = validated_data.pop('institute_id', None)
         role = validated_data.pop('role', 'student')  # Default to student (lowercase) if not provided
         
+        # ALWAYS normalize role to lowercase to prevent uppercase roles
+        role = role.lower() if role else 'student'
+        
         # Create user with institute and role
         user = User.objects.create_user(
             **validated_data,

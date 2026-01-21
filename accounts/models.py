@@ -209,6 +209,15 @@ class User(AbstractUser):
         return self.role in ['super_admin', 'institute_admin', 'exam_admin', 'ADMIN']
     
     # ===========
+    # CUSTOM SAVE METHOD
+    # ===========
+    def save(self, *args, **kwargs):
+        """Override save to always normalize role to lowercase"""
+        if self.role:
+            self.role = self.role.lower()
+        super().save(*args, **kwargs)
+    
+    # ===========
     # TIMETABLE SYSTEM METHODS
     # ===========
     def is_super_admin(self) -> bool:
