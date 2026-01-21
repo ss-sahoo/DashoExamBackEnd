@@ -13,14 +13,13 @@ from .utils import generate_user_code, generate_password
 
 
 def _check_super_admin(request):
-    """Helper to check if user is super admin (supports both role formats)."""
+    """Helper to check if user is super admin."""
     if not request.user.is_authenticated:
         return False, Response(
             {"detail": "Authentication required."},
             status=status.HTTP_401_UNAUTHORIZED,
         )
-    # Support both 'super_admin' and 'SUPER_ADMIN' roles
-    if request.user.role not in [User.ROLE_SUPER_ADMIN, 'SUPER_ADMIN']:
+    if request.user.role != 'super_admin':
         return False, Response(
             {"detail": "Only Super Admin can perform this action."},
             status=status.HTTP_403_FORBIDDEN,
@@ -247,7 +246,7 @@ def create_admin(request):
                 last_name=last_name,
                 phone=phone_number or "",
                 phone_number=phone_number or "",
-                role='ADMIN',  # Use timetable role
+                role='admin',  # Use lowercase admin role
                 center=center,
                 institute=center.institute,
             )
@@ -328,8 +327,8 @@ def _check_admin_or_super(request):
             status=status.HTTP_401_UNAUTHORIZED,
         )
     user = request.user
-    is_super = user.role in [User.ROLE_SUPER_ADMIN, 'SUPER_ADMIN']
-    is_admin = user.role in [User.ROLE_ADMIN, 'ADMIN', 'institute_admin']
+    is_super = user.role == 'super_admin'
+    is_admin = user.role in ['admin', 'institute_admin']
     
     if not (is_super or is_admin):
         return False, None, Response(
@@ -671,7 +670,7 @@ def create_staff(request):
                 last_name=last_name,
                 phone=phone_number or "",
                 phone_number=phone_number or "",
-                role=User.ROLE_STAFF,  # Use timetable role
+                role='staff',  # Use lowercase staff role
                 center=center,
                 institute=center.institute,
             )

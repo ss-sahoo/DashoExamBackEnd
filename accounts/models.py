@@ -87,31 +87,26 @@ class User(AbstractUser):
     Combines fields from both systems with role compatibility.
     """
     # ===========
-    # ROLE DEFINITIONS - Supporting both exam and timetable roles
+    # ROLE DEFINITIONS - All lowercase for consistency
     # ===========
-    # Exam system roles (primary)
     ROLE_SUPER_ADMIN = 'super_admin'
     ROLE_INSTITUTE_ADMIN = 'institute_admin'
     ROLE_EXAM_ADMIN = 'exam_admin'
     ROLE_TEACHER = 'teacher'
     ROLE_STUDENT = 'student'
+    ROLE_ADMIN = 'admin'  # Center admin (changed from 'ADMIN' to 'admin')
+    ROLE_STAFF = 'staff'  # Staff (changed from 'STAFF' to 'staff')
+    ROLE_MANAGER = 'manager'
     
-    # Timetable system roles (for compatibility)
-    ROLE_ADMIN = 'ADMIN'  # Center admin
-    ROLE_STAFF = 'STAFF'  # Non-teaching staff
-    
-    # Combined role choices
+    # Role choices - all lowercase
     ROLE_CHOICES = [
-        # Exam system roles
         ('super_admin', 'Super Admin'),
         ('institute_admin', 'Institute Admin'),
         ('exam_admin', 'Exam Admin'),
         ('teacher', 'Teacher'),
         ('student', 'Student'),
-        # Timetable system roles
-        ('ADMIN', 'Center Admin'),
-        ('STAFF', 'Staff'),
-        # Company management role
+        ('admin', 'Center Admin'),
+        ('staff', 'Staff'),
         ('manager', 'Manager'),
     ]
     
@@ -217,23 +212,23 @@ class User(AbstractUser):
     # TIMETABLE SYSTEM METHODS
     # ===========
     def is_super_admin(self) -> bool:
-        """Check if user is super admin (timetable system)"""
-        return self.role in [self.ROLE_SUPER_ADMIN, 'SUPER_ADMIN']
+        """Check if user is super admin"""
+        return self.role == self.ROLE_SUPER_ADMIN
     
     def is_admin(self) -> bool:
-        """Check if user is center admin (timetable system)"""
-        return self.role in [self.ROLE_ADMIN, 'ADMIN', 'institute_admin']
+        """Check if user is center admin or institute admin"""
+        return self.role in [self.ROLE_ADMIN, self.ROLE_INSTITUTE_ADMIN]
     
     def is_teacher(self) -> bool:
         """Check if user is teacher"""
-        return self.role in ['teacher', 'TEACHER']
+        return self.role == self.ROLE_TEACHER
     
     def is_student(self) -> bool:
         """Check if user is student"""
-        return self.role in ['student', 'STUDENT']
+        return self.role == self.ROLE_STUDENT
     
     def is_staff_role(self) -> bool:
-        """Check if user is staff (timetable system)"""
+        """Check if user is staff"""
         return self.role == self.ROLE_STAFF
     
     # ===========

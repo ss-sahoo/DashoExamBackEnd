@@ -25,7 +25,7 @@ def _check_super_admin(request):
             status=status.HTTP_401_UNAUTHORIZED,
         )
     # Support both 'super_admin' and 'SUPER_ADMIN' roles
-    if request.user.role not in [User.ROLE_SUPER_ADMIN, 'SUPER_ADMIN']:
+    if request.user.role not in ['super_admin']:
         return False, Response(
             {"detail": "Only Super Admin can perform this action."},
             status=status.HTTP_403_FORBIDDEN,
@@ -166,7 +166,7 @@ def create_batch(request):
     user = request.user
     
     # Allow both Admin and Super Admin to create batches
-    if user.role in [User.ROLE_SUPER_ADMIN, 'SUPER_ADMIN', 'super_admin']:
+    if user.role in ['super_admin', 'super_admin']:
         # Super admin can create batch in any center (must specify center)
         center_id = request.data.get("center_id")
         center_name = request.data.get("center_name")
@@ -439,7 +439,7 @@ def list_programs(request):
     center_name = request.query_params.get("center_name", "")
     
     # Support both role formats
-    if user.role in [User.ROLE_SUPER_ADMIN, 'SUPER_ADMIN']:
+    if user.role in ['super_admin']:
         programs = Program.objects.all()
         if center_name:
             programs = programs.filter(center__name__icontains=center_name)
@@ -503,7 +503,7 @@ def get_program(request, program_id: str):
                 {"detail": "You don't have permission to view this program."},
                 status=status.HTTP_403_FORBIDDEN,
             )
-    elif user.role not in [User.ROLE_SUPER_ADMIN, 'SUPER_ADMIN']:
+    elif user.role not in ['super_admin']:
         return Response(
             {"detail": "Only Super Admin and Admin can view programs."},
             status=status.HTTP_403_FORBIDDEN,
@@ -532,7 +532,7 @@ def list_batches(request):
     program_name = request.query_params.get("program_name", "")
     center_name = request.query_params.get("center_name", "")
     
-    if user.role in [User.ROLE_SUPER_ADMIN, 'SUPER_ADMIN']:
+    if user.role in ['super_admin']:
         batches = Batch.objects.all()
         if center_name:
             batches = batches.filter(program__center__name__icontains=center_name)
@@ -611,7 +611,7 @@ def get_batch(request, batch_id: str):
                 {"detail": "You don't have permission to view this batch."},
                 status=status.HTTP_403_FORBIDDEN,
             )
-    elif user.role not in [User.ROLE_SUPER_ADMIN, 'SUPER_ADMIN']:
+    elif user.role not in ['super_admin']:
         return Response(
             {"detail": "Only Super Admin and Admin can view batches."},
             status=status.HTTP_403_FORBIDDEN,
@@ -677,7 +677,7 @@ def get_teachers_in_center(request):
     center_id = request.query_params.get("center_id", "")
     
     # Determine which center to query
-    if user.role in [User.ROLE_SUPER_ADMIN, 'SUPER_ADMIN']:
+    if user.role in ['super_admin']:
         # Super admin can query any center
         if center_id:
             try:

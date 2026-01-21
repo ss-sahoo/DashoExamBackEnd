@@ -332,7 +332,7 @@ class UserListView(generics.ListAPIView):
 
     def get_queryset(self):
         user = self.request.user
-        if user.role in ['super_admin', 'SUPER_ADMIN']:
+        if user.role in ['super_admin']:
             return User.objects.all()
         if user.is_institute_admin():
             return User.objects.filter(institute=user.institute)
@@ -346,7 +346,7 @@ class UserDetailView(generics.RetrieveUpdateDestroyAPIView):
 
     def get_queryset(self):
         user = self.request.user
-        if user.role in ['super_admin', 'SUPER_ADMIN']:
+        if user.role in ['super_admin']:
             return User.objects.all()
         if user.is_institute_admin():
             return User.objects.filter(institute=user.institute)
@@ -357,7 +357,7 @@ class UserDetailView(generics.RetrieveUpdateDestroyAPIView):
         instance = serializer.instance
 
         # Allow super admins to update anyone
-        if actor.role in ['super_admin', 'SUPER_ADMIN']:
+        if actor.role in ['super_admin']:
             serializer.save()
             return
 
@@ -376,7 +376,7 @@ class UserDetailView(generics.RetrieveUpdateDestroyAPIView):
         actor = self.request.user
 
         # Allow super admins to delete anyone
-        if actor.role in ['super_admin', 'SUPER_ADMIN']:
+        if actor.role in ['super_admin']:
             instance.delete()
             return
 
@@ -627,9 +627,9 @@ def all_people_view(request):
     user = request.user
     
     # Base queryset - admins see all, others see their institute
-    if user.role in ['super_admin', 'SUPER_ADMIN']:
+    if user.role in ['super_admin']:
         queryset = User.objects.all()
-    elif user.role in ['institute_admin', 'ADMIN', 'exam_admin']:
+    elif user.role in ['institute_admin', 'admin', 'exam_admin']:
         queryset = User.objects.filter(
             Q(institute=user.institute) | Q(center__institute=user.institute)
         )
@@ -663,7 +663,7 @@ def all_people_view(request):
         queryset = queryset.filter(center_id=center_id)
     
     institute_id = request.GET.get('institute_id')
-    if institute_id and user.role in ['super_admin', 'SUPER_ADMIN']:
+    if institute_id and user.role in ['super_admin']:
         queryset = queryset.filter(institute_id=institute_id)
     
     # Order by name
@@ -691,9 +691,9 @@ def all_people_view(request):
     role_counts = {}
     for role_choice in all_roles:
         role_val = role_choice['value']
-        if user.role in ['super_admin', 'SUPER_ADMIN']:
+        if user.role in ['super_admin']:
             count = User.objects.filter(role=role_val).count()
-        elif user.role in ['institute_admin', 'ADMIN', 'exam_admin']:
+        elif user.role in ['institute_admin', 'admin', 'exam_admin']:
             count = User.objects.filter(
                 Q(institute=user.institute) | Q(center__institute=user.institute),
                 role=role_val
