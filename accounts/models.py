@@ -493,3 +493,82 @@ class InstituteSettings(models.Model):
 
     def __str__(self):
         return f"Settings for {self.institute.name}"
+
+
+class DeviceSession(models.Model):
+    """
+    Tracks device-based login sessions for users.
+    Ensures students can only be logged in on one device at a time.
+    """
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='device_sessions',
+        help_text="User associated with this device session"
+    )
+    device_fingerprint = models.CharField(
+        max_length=255,
+        unique=True,
+        db_index=True,
+        help_text="Unique identifier for the device based on browser and hardware characteristics"
+    )
+    device_type = models.CharField(
+        max_length=50,
+        help_text="Type of device: mobile, desktop, tablet"
+    )
+    browser = models.CharField(
+        max_length=100,
+        help_text="Browser name and version"
+    )
+    os = models.CharField(
+        max_length=100,
+        help_text="Operating system name and version"
+    )
+    screen_resolution = models.CharField(
+        max_length=20,
+        help_text="Screen resolution (e.g., 1920x1080)"
+    )
+    timezone = models.CharField(
+        max_length=50,
+        help_text="User's timezone"
+    )
+    ip_address = models.GenericIPAddressField(
+        help_text="IP address of the device"
+    )
+    user_agent = models.TextField(
+        help_text="Full user agent string from the browser"
+    )
+    is_active = models.BooleanField(
+        default=True,
+        db_index=True,
+        help_text="Whether this session is currently active"
+    )
+    last_activity = models.DateTimeField(
+        auto_now=True,
+        help_text="Timestamp of last activity on this session"
+    )
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+        help_text="When this session was created"
+    )
+    expires_at = models.DateTimeField(
+        help_text="When this session expires (24 hours from last activity)"
+    )
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['user', 'is_active']),
+            models.Index(fields=['device_fingerprint']),
+            models.Index(fields=['expires_at']),
+        ]
+        verbose_name = "Device Session"
+        verbose_name_plural = "Device Sessions"
+
+    def __str__(self):
+        return f"{self.user.email} - {self.device_type} ({self.browser}) - {'Active' if self.is_active else 'Inactive'}"
+
+    def is_expired(self):
+        """Check if this session has expired"""
+        from django.utils import timezone
+        return timezone.now() > self.expires_at

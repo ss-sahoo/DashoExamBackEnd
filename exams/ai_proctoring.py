@@ -168,15 +168,15 @@ class MediaPipeProctoringSystem:
             if head_pose_result['violations']:
                 violations.extend(head_pose_result['violations'])
             
-            # 3. EYE OPENNESS (Detect closed eyes)
-            eye_result = self._check_eye_openness(face_landmarks)
-            if eye_result['violations']:
-                violations.extend(eye_result['violations'])
+            # 3. EYE OPENNESS (Detect closed eyes) - DISABLED to reduce false positives
+            # eye_result = self._check_eye_openness(face_landmarks)
+            # if eye_result['violations']:
+            #     violations.extend(eye_result['violations'])
             
-            # 4. FACE POSITION
-            position_result = self._check_face_position(face_landmarks, width, height)
-            if position_result['violations']:
-                violations.extend(position_result['violations'])
+            # 4. FACE POSITION - DISABLED to reduce false positives
+            # position_result = self._check_face_position(face_landmarks, width, height)
+            # if position_result['violations']:
+            #     violations.extend(position_result['violations'])
             
             processing_time = time.time() - start_time
             
@@ -246,26 +246,26 @@ class MediaPipeProctoringSystem:
             avg_gaze_x = (left_gaze_x + right_gaze_x) / 2
             avg_gaze_y = (left_gaze_y + right_gaze_y) / 2
             
-            # Thresholds for gaze detection
-            HORIZONTAL_THRESHOLD = 0.35  # Looking left/right
-            VERTICAL_THRESHOLD = 0.30    # Looking up/down
+            # Thresholds for gaze detection (VERY RELAXED - minimal false positives)
+            HORIZONTAL_THRESHOLD = 0.8  # Looking left/right (was 0.6, now very relaxed)
+            VERTICAL_THRESHOLD = 0.7    # Looking up/down (was 0.5, now very relaxed)
             
             # Detect horizontal gaze (LEFT/RIGHT)
             if avg_gaze_x < -HORIZONTAL_THRESHOLD:
                 violations.append({
                     'type': 'gaze_left',
-                    'severity': 'high',
+                    'severity': 'medium',  # Changed from 'high'
                     'message': f'Looking LEFT - gaze direction: {abs(avg_gaze_x):.2f}',
-                    'confidence': min(0.75 + abs(avg_gaze_x) * 0.3, 0.98),
+                    'confidence': min(0.70 + abs(avg_gaze_x) * 0.2, 0.95),
                     'gaze_x': float(avg_gaze_x),
                     'gaze_y': float(avg_gaze_y)
                 })
             elif avg_gaze_x > HORIZONTAL_THRESHOLD:
                 violations.append({
                     'type': 'gaze_right',
-                    'severity': 'high',
+                    'severity': 'medium',  # Changed from 'high'
                     'message': f'Looking RIGHT - gaze direction: {abs(avg_gaze_x):.2f}',
-                    'confidence': min(0.75 + abs(avg_gaze_x) * 0.3, 0.98),
+                    'confidence': min(0.70 + abs(avg_gaze_x) * 0.2, 0.95),
                     'gaze_x': float(avg_gaze_x),
                     'gaze_y': float(avg_gaze_y)
                 })
@@ -274,18 +274,18 @@ class MediaPipeProctoringSystem:
             if avg_gaze_y < -VERTICAL_THRESHOLD:
                 violations.append({
                     'type': 'gaze_up',
-                    'severity': 'medium',
+                    'severity': 'low',  # Changed from 'medium'
                     'message': f'Looking UP - gaze direction: {abs(avg_gaze_y):.2f}',
-                    'confidence': min(0.70 + abs(avg_gaze_y) * 0.3, 0.95),
+                    'confidence': min(0.65 + abs(avg_gaze_y) * 0.2, 0.90),
                     'gaze_x': float(avg_gaze_x),
                     'gaze_y': float(avg_gaze_y)
                 })
             elif avg_gaze_y > VERTICAL_THRESHOLD:
                 violations.append({
                     'type': 'gaze_down',
-                    'severity': 'high',
+                    'severity': 'medium',  # Changed from 'high'
                     'message': f'Looking DOWN - possibly at phone/notes: {abs(avg_gaze_y):.2f}',
-                    'confidence': min(0.75 + abs(avg_gaze_y) * 0.3, 0.98),
+                    'confidence': min(0.70 + abs(avg_gaze_y) * 0.2, 0.95),
                     'gaze_x': float(avg_gaze_x),
                     'gaze_y': float(avg_gaze_y)
                 })
@@ -363,43 +363,54 @@ class MediaPipeProctoringSystem:
             pitch = angles[0]    # Up/Down rotation
             roll = angles[2]     # Tilt
             
-            # Thresholds (in degrees)
-            YAW_THRESHOLD = 20      # Left/Right (stricter than before)
-            PITCH_THRESHOLD = 18    # Up/Down (stricter than before)
-            ROLL_THRESHOLD = 25     # Tilt
+            # CALIBRATION FIX: Normalize pitch angle
+            # MediaPipe often returns angles in range [0, 180] or [-180, 180]
+            # We need to normalize to [-90, 90] for proper head pose
+            if pitch > 90:
+                pitch = pitch - 180
+            elif pitch < -90:
+                pitch = pitch + 180
             
-            # Detect head rotation violations
+            # Debug logging
+            logger.info(f"Head Pose - Yaw: {yaw:.1f}°, Pitch: {pitch:.1f}°, Roll: {roll:.1f}°")
+            
+            # Thresholds (in degrees) - VERY RELAXED for minimal false positives
+            YAW_THRESHOLD = 50      # Left/Right (was 45, now very relaxed)
+            PITCH_THRESHOLD = 50    # Up/Down (was 40, now very relaxed)
+            ROLL_THRESHOLD = 50     # Tilt (was 40, now very relaxed)
+            
+            # Detect head rotation violations (only significant movements)
             if yaw < -YAW_THRESHOLD:
                 violations.append({
                     'type': 'head_turned_left',
-                    'severity': 'high',
+                    'severity': 'medium',  # Changed from 'high'
                     'message': f'Head turned LEFT ({abs(yaw):.1f}°)',
-                    'confidence': min(0.70 + abs(yaw) / 80, 0.96),
+                    'confidence': min(0.65 + abs(yaw) / 100, 0.92),
                     'angle': float(yaw)
                 })
             elif yaw > YAW_THRESHOLD:
                 violations.append({
                     'type': 'head_turned_right',
-                    'severity': 'high',
+                    'severity': 'medium',  # Changed from 'high'
                     'message': f'Head turned RIGHT ({abs(yaw):.1f}°)',
-                    'confidence': min(0.70 + abs(yaw) / 80, 0.96),
+                    'confidence': min(0.65 + abs(yaw) / 100, 0.92),
                     'angle': float(yaw)
                 })
             
             if pitch < -PITCH_THRESHOLD:
                 violations.append({
                     'type': 'head_looking_up',
-                    'severity': 'medium',
+                    'severity': 'low',  # Changed from 'medium'
                     'message': f'Looking UP ({abs(pitch):.1f}°)',
-                    'confidence': min(0.68 + abs(pitch) / 80, 0.94),
+                    'confidence': min(0.60 + abs(pitch) / 100, 0.88),
                     'angle': float(pitch)
                 })
             elif pitch > PITCH_THRESHOLD:
                 violations.append({
                     'type': 'head_looking_down',
-                    'severity': 'high',
-                    'message': f'Looking DOWN - possibly at phone/notes ({abs(pitch):.1f}°)',
-                    'confidence': min(0.72 + abs(pitch) / 80, 0.97),
+                    'severity': 'medium',  # Changed from 'high'
+                    'message': f'Looking DOWN - possibly at phone/notes ({pitch:.1f}° detected, threshold: {PITCH_THRESHOLD}°)',
+                    'confidence': min(0.65 + abs(pitch) / 100, 0.92),
                     'angle': float(pitch)
                 })
             

@@ -13,6 +13,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from .models import User
+from .device_session_manager import DeviceSessionManager
 
 
 def _get_user_by_identifier(identifier: str) -> Optional[User]:
@@ -57,6 +58,18 @@ class BaseRoleLoginView(APIView):
     def post(self, request, *args, **kwargs):
         identifier = request.data.get("username")  # username OR email
         password = request.data.get("password")
+        force_switch = request.data.get("force_switch", False)  # Allow forcing device switch
+        
+        # Get device information from request
+        device_info = {
+            'user_agent': request.data.get('user_agent', request.META.get('HTTP_USER_AGENT', '')),
+            'screen_resolution': request.data.get('screen_resolution', ''),
+            'timezone': request.data.get('timezone', ''),
+            'device_type': request.data.get('device_type', ''),
+            'browser': request.data.get('browser', ''),
+            'os': request.data.get('os', ''),
+            'ip_address': request.META.get('REMOTE_ADDR', ''),
+        }
 
         if not identifier or not password:
             return Response(
@@ -117,22 +130,59 @@ class BaseRoleLoginView(APIView):
                     status=status.HTTP_403_FORBIDDEN,
                 )
 
+        # Check for device conflicts (unless force_switch is True)
+        try:
+            device_manager = DeviceSessionManager()
+            
+            if not force_switch:
+                has_conflict, conflict_info = device_manager.check_session_conflict(user, device_info)
+                
+                if has_conflict:
+                    # Return conflict information without creating tokens
+                    return Response(
+                        {
+                            "has_conflict": True,
+                            "conflict_info": conflict_info,
+                            "message": "You are already logged in on another device.",
+                        },
+                        status=status.HTTP_409_CONFLICT,
+                    )
+
+            # No conflict or force_switch is True, create session and tokens
+            # If force_switch, invalidate all other sessions
+            session = device_manager.create_session(user, device_info, force_logout_others=force_switch)
+        except Exception as e:
+            # Log the error but don't block login
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Device session error: {str(e)}", exc_info=True)
+            # Continue with login without device session
+            session = None
+        
         tokens = _build_tokens_for_user(user)
 
-        return Response(
-            {
-                "tokens": tokens,
-                "user": {
-                    "id": str(user.id),
-                    "username": user.username,
-                    "email": user.email,
-                    "full_name": user.get_full_name(),
-                    "role": user.role,
-                    "center_id": user.center_id,
-                },
+        response_data = {
+            "tokens": tokens,
+            "user": {
+                "id": str(user.id),
+                "username": user.username,
+                "email": user.email,
+                "full_name": user.get_full_name(),
+                "role": user.role,
+                "center_id": user.center_id,
             },
-            status=status.HTTP_200_OK,
-        )
+        }
+        
+        # Add device session info if available
+        if session:
+            response_data["device_session"] = {
+                "device_fingerprint": session.device_fingerprint,
+                "device_type": session.device_type,
+                "browser": session.browser,
+                "os": session.os,
+            }
+
+        return Response(response_data, status=status.HTTP_200_OK)
 
 
 class SuperAdminLoginView(BaseRoleLoginView):

@@ -647,38 +647,24 @@ def upload_snapshot(request, attempt_id):
                     'message': 'AI analysis failed but snapshot stored'
                 }
         
-        # Selective storage: Only store full snapshot when violations detected
-        # This reduces storage by ~90% since most snapshots have no violations
+        # Check if violations were detected
         has_violations = (
-            not is_identity_verification 
-            and analysis.get('success') 
-            and analysis.get('violations') 
-            and len(analysis.get('violations', [])) > 0
+            not is_identity_verification and 
+            analysis.get('success', False) and 
+            len(analysis.get('violations', [])) > 0
         )
         
-        if has_violations:
-            # Store full snapshot info with image data (violation detected - admin needs to see image)
-            snapshot_info = {
-                'timestamp': serializer.validated_data['timestamp'].isoformat(),
-                'metadata': serializer.validated_data['metadata'],
-                'analysis': analysis,
-                'image_data': serializer.validated_data['image_data'],  # Store base64 image for admin review
-                'stored_reason': 'violation_detected'
-            }
-            proctoring.snapshots.append(snapshot_info)
-        else:
-            # Store minimal metadata only (no violations - just audit trail)
-            minimal_info = {
-                'timestamp': serializer.validated_data['timestamp'].isoformat(),
-                'faces_detected': analysis.get('faces_detected', 0),
-                'success': analysis.get('success', False),
-                'stored_reason': 'metadata_only',
-                'has_violations': False
-            }
-            # Only include error if analysis failed
-            if not analysis.get('success'):
-                minimal_info['error'] = analysis.get('error', 'Unknown error')
-            proctoring.snapshots.append(minimal_info)
+        # ALWAYS store full snapshot with image for review purposes
+        # Store full snapshot info with image data
+        snapshot_info = {
+            'timestamp': serializer.validated_data['timestamp'].isoformat(),
+            'metadata': serializer.validated_data['metadata'],
+            'analysis': analysis,
+            'image_data': serializer.validated_data['image_data'],  # Always store image
+            'stored_reason': 'violation_detected' if has_violations else 'monitoring',
+            'has_violations': has_violations
+        }
+        proctoring.snapshots.append(snapshot_info)
         
         proctoring.save()
         
@@ -1146,7 +1132,8 @@ def violation_dashboard(request):
 @permission_classes([permissions.IsAuthenticated])
 def student_dashboard_data(request):
     """Get comprehensive dashboard data for students"""
-    if request.user.role != 'student':
+    # Check if user is a student (case-insensitive)
+    if request.user.role.lower() != 'student':
         return Response({'error': 'Access denied'}, status=status.HTTP_403_FORBIDDEN)
     
     user = request.user

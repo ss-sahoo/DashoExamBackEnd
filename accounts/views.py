@@ -48,12 +48,25 @@ def user_login_view(request):
     Generic login endpoint - supports username, email, or teacher_code.
     Same authentication style as timetable role-based logins.
     Returns JWT tokens in the same format.
+    Includes device session management.
     """
     from django.db.models import Q
     from rest_framework_simplejwt.tokens import RefreshToken
+    from .device_session_manager import DeviceSessionManager
     
     identifier = request.data.get('email') or request.data.get('username')
     password = request.data.get('password')
+    
+    # Get device information from request
+    device_info = {
+        'user_agent': request.data.get('user_agent', request.META.get('HTTP_USER_AGENT', '')),
+        'screen_resolution': request.data.get('screen_resolution', ''),
+        'timezone': request.data.get('timezone', ''),
+        'device_type': request.data.get('device_type', ''),
+        'browser': request.data.get('browser', ''),
+        'os': request.data.get('os', ''),
+        'ip_address': request.META.get('REMOTE_ADDR', ''),
+    }
     
     if not identifier or not password:
         return Response({
@@ -84,8 +97,42 @@ def user_login_view(request):
             'detail': 'User account is disabled.'
         }, status=status.HTTP_403_FORBIDDEN)
     
+    # Check for device conflicts
+    try:
+        device_manager = DeviceSessionManager()
+        has_conflict, conflict_info = device_manager.check_session_conflict(user, device_info)
+        
+        if has_conflict:
+            # Return conflict information without creating tokens
+            return Response(
+                {
+                    "has_conflict": True,
+                    "conflict_info": conflict_info,
+                    "message": "You are already logged in on another device.",
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+        
+        # No conflict, create session
+        session = device_manager.create_session(user, device_info)
+    except Exception as e:
+        # Log the error but don't block login
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Device session error: {str(e)}", exc_info=True)
+        # Continue with login without device session
+        session = None
+    
     # Generate JWT tokens (same format as timetable)
     refresh = RefreshToken.for_user(user)
+    
+    # Add device fingerprint to the token payload for validation
+    if session:
+        refresh['device_fingerprint'] = session.device_fingerprint
+        # Regenerate access token with the updated payload
+        access_token = refresh.access_token
+        access_token['device_fingerprint'] = session.device_fingerprint
+    
     tokens = {
         "refresh": str(refresh),
         "access": str(refresh.access_token),
@@ -104,7 +151,7 @@ def user_login_view(request):
             center_id = str(admin_center.id)
             center_name = admin_center.name
     
-    return Response({
+    response_data = {
         'tokens': tokens,
         'user': {
             'id': str(user.id),
@@ -120,15 +167,67 @@ def user_login_view(request):
             'center_name': center_name,
         },
         'message': 'Login successful'
-    })
+    }
+    
+    # Add device session info if available
+    if session:
+        response_data['device_session'] = {
+            'device_fingerprint': session.device_fingerprint,
+            'device_type': session.device_type,
+            'browser': session.browser,
+            'os': session.os,
+        }
+    
+    return Response(response_data)
 
 
 @api_view(['POST'])
 @permission_classes([permissions.AllowAny])  # Allow any user to logout
 @csrf_exempt
 def user_logout_view(request):
-    """User logout - properly clear all session data and CSRF tokens"""
+    """User logout - properly clear all session data, CSRF tokens, and device sessions"""
+    from .device_session_manager import DeviceSessionManager
+    from rest_framework_simplejwt.authentication import JWTAuthentication
+    import logging
+    
+    logger = logging.getLogger(__name__)
+    
     try:
+        # Get device fingerprint before logging out
+        device_fingerprint = None
+        
+        # Try to get from header first
+        device_fingerprint = request.headers.get('X-Device-Fingerprint')
+        
+        # If not in header, try to get from JWT token
+        if not device_fingerprint and request.user.is_authenticated:
+            try:
+                jwt_auth = JWTAuthentication()
+                auth_header = request.META.get('HTTP_AUTHORIZATION', '')
+                if auth_header.startswith('Bearer '):
+                    token = auth_header.split(' ')[1]
+                    validated_token = jwt_auth.get_validated_token(token)
+                    device_fingerprint = validated_token.get('device_fingerprint')
+            except Exception as e:
+                logger.warning(f"Could not extract device fingerprint from token: {str(e)}")
+        
+        # Invalidate device session if we have the fingerprint
+        if device_fingerprint:
+            success = DeviceSessionManager.invalidate_session(device_fingerprint)
+            if success:
+                logger.info(f"Invalidated device session on logout: {device_fingerprint[:8]}...")
+            else:
+                logger.warning(f"Could not invalidate device session: {device_fingerprint[:8]}...")
+        elif request.user.is_authenticated:
+            # If we don't have fingerprint, invalidate ALL active sessions for this user
+            # This is a fallback to ensure logout works even without fingerprint
+            from .models import DeviceSession
+            invalidated_count = DeviceSession.objects.filter(
+                user=request.user,
+                is_active=True
+            ).update(is_active=False)
+            logger.info(f"Invalidated {invalidated_count} device session(s) for user {request.user.email} on logout")
+        
         # Logout the user if authenticated
         if request.user.is_authenticated:
             logout(request)
@@ -157,6 +256,7 @@ def user_logout_view(request):
         return response
     except Exception as e:
         # Even if there's an error, try to clear everything
+        logger.error(f"Error during logout: {str(e)}", exc_info=True)
         try:
             request.session.flush()
         except:

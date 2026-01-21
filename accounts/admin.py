@@ -1,6 +1,6 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
-from .models import User, Institute, UserPermission, InstituteSettings, InstituteInvitation
+from .models import User, Institute, UserPermission, InstituteSettings, InstituteInvitation, DeviceSession
 
 
 @admin.register(Institute)
@@ -57,3 +57,27 @@ class InstituteInvitationAdmin(admin.ModelAdmin):
     list_filter = ['status', 'role', 'institute']
     search_fields = ['email', 'institute__name']
     readonly_fields = ['created_at', 'updated_at']
+
+
+@admin.register(DeviceSession)
+class DeviceSessionAdmin(admin.ModelAdmin):
+    list_display = ['user', 'device_type', 'browser', 'os', 'is_active', 'last_activity', 'created_at']
+    list_filter = ['is_active', 'device_type', 'created_at']
+    search_fields = ['user__email', 'device_fingerprint', 'ip_address']
+    readonly_fields = ['created_at', 'last_activity', 'device_fingerprint']
+    ordering = ['-last_activity']
+    
+    fieldsets = (
+        ('User Information', {
+            'fields': ('user', 'is_active')
+        }),
+        ('Device Information', {
+            'fields': ('device_fingerprint', 'device_type', 'browser', 'os', 'screen_resolution', 'timezone')
+        }),
+        ('Network Information', {
+            'fields': ('ip_address', 'user_agent')
+        }),
+        ('Session Timing', {
+            'fields': ('created_at', 'last_activity', 'expires_at')
+        }),
+    )

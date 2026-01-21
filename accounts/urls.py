@@ -11,6 +11,12 @@ from .timetable_auth_views import (
     ManagerLoginView,
     change_password as timetable_change_password,
 )
+from .device_session_views import (
+    check_device_view,
+    logout_device_view,
+    active_sessions_view,
+    delete_session_view,
+)
 
 urlpatterns = [
     # Authentication (generic exam auth)
@@ -63,4 +69,10 @@ urlpatterns = [
     path('assign-center/', assign_center_to_admin, name='assign-center'),
     path('remove-center/', remove_center_from_admin, name='remove-center'),
     path('available-centers/', get_available_centers, name='available-centers'),
+    
+    # Device Session Management
+    path('check-device/', check_device_view, name='check-device'),
+    path('logout-device/', logout_device_view, name='logout-device'),
+    path('active-sessions/', active_sessions_view, name='active-sessions'),
+    path('session/<str:fingerprint>/', delete_session_view, name='delete-session'),
 ]

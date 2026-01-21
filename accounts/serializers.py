@@ -3,7 +3,7 @@ from django.contrib.auth import authenticate
 from django.contrib.auth.password_validation import validate_password
 from django.utils import timezone
 from datetime import timedelta
-from .models import User, Institute, UserPermission, InstituteSettings, InstituteInvitation
+from .models import User, Institute, UserPermission, InstituteSettings, InstituteInvitation, DeviceSession
 
 
 class InstituteSerializer(serializers.ModelSerializer):
@@ -212,3 +212,96 @@ class ChangePasswordSerializer(serializers.Serializer):
         if not user.check_password(value):
             raise serializers.ValidationError("Old password is incorrect")
         return value
+
+
+
+class DeviceSessionSerializer(serializers.ModelSerializer):
+    """
+    Serializer for DeviceSession model.
+    
+    **Feature: exam-security-enhancements, Property 3: Device information completeness**
+    **Validates: Requirements 1.3**
+    """
+    user_email = serializers.EmailField(source='user.email', read_only=True)
+    login_timestamp = serializers.DateTimeField(source='created_at', read_only=True)
+    
+    class Meta:
+        model = DeviceSession
+        fields = [
+            'id',
+            'user',
+            'user_email',
+            'device_fingerprint',
+            'device_type',
+            'browser',
+            'os',
+            'screen_resolution',
+            'timezone',
+            'ip_address',
+            'user_agent',
+            'is_active',
+            'last_activity',
+            'login_timestamp',
+            'created_at',
+            'expires_at'
+        ]
+        read_only_fields = [
+            'id',
+            'user',
+            'user_email',
+            'is_active',
+            'last_activity',
+            'login_timestamp',
+            'created_at',
+            'expires_at'
+        ]
+
+
+class DeviceCheckRequestSerializer(serializers.Serializer):
+    """Serializer for device check request"""
+    user_agent = serializers.CharField()
+    screen_resolution = serializers.CharField()
+    timezone = serializers.CharField()
+    device_type = serializers.CharField()
+    browser = serializers.CharField()
+    os = serializers.CharField()
+    ip_address = serializers.IPAddressField(required=False)
+
+
+class DeviceCheckResponseSerializer(serializers.Serializer):
+    """
+    Serializer for device check response.
+    
+    **Feature: exam-security-enhancements, Property 3: Device information completeness**
+    **Validates: Requirements 1.3**
+    """
+    has_conflict = serializers.BooleanField()
+    conflict_info = serializers.DictField(required=False, allow_null=True)
+    device_fingerprint = serializers.CharField()
+    
+    def to_representation(self, instance):
+        """
+        Ensure conflict_info contains all required fields when present.
+        
+        **Feature: exam-security-enhancements, Property 3: Device information completeness**
+        **Validates: Requirements 1.3**
+        """
+        data = super().to_representation(instance)
+        
+        # Validate that conflict_info has all required fields
+        if data.get('has_conflict') and data.get('conflict_info'):
+            conflict_info = data['conflict_info']
+            required_fields = ['device_type', 'browser', 'login_timestamp', 'last_activity']
+            
+            for field in required_fields:
+                if field not in conflict_info:
+                    raise serializers.ValidationError(
+                        f"Conflict info missing required field: {field}"
+                    )
+        
+        return data
+
+
+class LogoutDeviceRequestSerializer(serializers.Serializer):
+    """Serializer for logout device request"""
+    device_fingerprint = serializers.CharField()

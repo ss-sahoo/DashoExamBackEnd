@@ -10,7 +10,7 @@ from django.db import transaction
 @permission_classes([IsAuthenticated])
 def assign_center_to_admin(request):
     """
-    Assign a center to an admin user.
+    Assign a center to a user (admin, teacher, or student).
     
     POST /api/auth/assign-center/
     {
@@ -18,7 +18,7 @@ def assign_center_to_admin(request):
         "center_id": "center_id_or_uuid"
     }
     
-    Only super admins can assign centers to admins.
+    Only super admins can assign centers to users.
     """
     user = request.user
     
@@ -53,10 +53,12 @@ def assign_center_to_admin(request):
             # Try by name
             center = Center.objects.get(name=center_id)
         
-        # Check if the admin user is actually an admin
-        if admin_user.role.lower() not in ['admin', 'institute_admin', 'center_admin']:
+        # Check if the user role is valid for center assignment
+        # Allow admins, teachers, and students to be assigned to centers
+        valid_roles = ['admin', 'institute_admin', 'center_admin', 'teacher', 'student']
+        if admin_user.role.lower() not in valid_roles:
             return Response(
-                {'error': f'User {admin_user.email} is not an admin (current role: {admin_user.role})'},
+                {'error': f'User {admin_user.email} cannot be assigned to a center (current role: {admin_user.role})'},
                 status=status.HTTP_400_BAD_REQUEST
             )
         

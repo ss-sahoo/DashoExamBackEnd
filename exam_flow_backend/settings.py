@@ -51,6 +51,7 @@ MIDDLEWARE = [
     'exam_flow_backend.middleware.DisableCSRFForAPI',  # Disable CSRF for API
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'accounts.device_session_middleware.DeviceSessionValidationMiddleware',  # Validate device sessions
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
@@ -201,6 +202,7 @@ CORS_ALLOW_HEADERS = [
     'user-agent',
     'x-csrftoken',
     'x-requested-with',
+    'x-device-fingerprint',  # For device session validation
 ]
 
 # CSRF settings
