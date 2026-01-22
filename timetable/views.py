@@ -299,10 +299,14 @@ def update_timetable(request, timetable_id: str):
       "to_date": "2025-03-31",          # Optional
       "free_classes_count": 3,          # Optional
       "description": "Updated desc",    # Optional
-      "is_active": true,                # Optional
+      "name": "Timetable Name",         # Optional
       "weekly_slots": {...},            # Optional - replaces all slots if provided
       "holidays": [...]                 # Optional - replaces all holidays if provided
     }
+    
+    Note: To activate/deactivate a timetable, use the dedicated endpoints:
+    - POST /api/timetable/admin/timetables/<id>/activate/
+    - POST /api/timetable/admin/timetables/<id>/deactivate/
     """
     user = request.user
     if user.role.lower() not in (AccountUser.ROLE_ADMIN.lower(), AccountUser.ROLE_SUPER_ADMIN.lower()):
@@ -369,8 +373,9 @@ def update_timetable(request, timetable_id: str):
     if "description" in data:
         timetable.description = data["description"]
 
-    if "is_active" in data:
-        timetable.is_active = data["is_active"]
+    # Note: is_active should only be changed via activate/deactivate endpoints
+    # if "is_active" in data:
+    #     timetable.is_active = data["is_active"]
 
     timetable.save()
 
