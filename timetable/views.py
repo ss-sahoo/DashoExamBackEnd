@@ -305,7 +305,7 @@ def update_timetable(request, timetable_id: str):
     }
     """
     user = request.user
-    if user.role not in (AccountUser.ROLE_ADMIN, AccountUser.ROLE_SUPER_ADMIN):
+    if user.role.lower() not in (AccountUser.ROLE_ADMIN.lower(), AccountUser.ROLE_SUPER_ADMIN.lower()):
         return Response(
             {"detail": "Only Admin or Super Admin can update timetables."},
             status=status.HTTP_403_FORBIDDEN,
@@ -321,7 +321,7 @@ def update_timetable(request, timetable_id: str):
         )
 
     # Check permissions: Admin can only update their center's timetables
-    if user.role == AccountUser.ROLE_ADMIN:
+    if user.role.lower() == AccountUser.ROLE_ADMIN.lower():
         if not user.center:
             return Response(
                 {"detail": "Admin user is not linked to any center."},
@@ -527,7 +527,7 @@ def get_timetable(request, timetable_id: str):
     
     # Check permissions: Admin can only see their center's timetables
     user = request.user
-    if user.role == AccountUser.ROLE_ADMIN:
+    if user.role.lower() == AccountUser.ROLE_ADMIN.lower():
         if user.center != timetable.center:
             return Response(
                 {"detail": "You don't have permission to view this timetable."},
@@ -592,7 +592,7 @@ def get_timetable_slots(request, timetable_id: str):
     
     # Check permissions
     user = request.user
-    if user.role == AccountUser.ROLE_ADMIN:
+    if user.role.lower() == AccountUser.ROLE_ADMIN.lower():
         if user.center != timetable.center:
             return Response(
                 {"detail": "You don't have permission to view this timetable."},
@@ -673,7 +673,7 @@ def set_free_classes_count(request, timetable_id: str):
     }
     """
     user = request.user
-    if user.role not in (AccountUser.ROLE_ADMIN, AccountUser.ROLE_SUPER_ADMIN):
+    if user.role.lower() not in (AccountUser.ROLE_ADMIN.lower(), AccountUser.ROLE_SUPER_ADMIN.lower()):
         return Response(
             {"detail": "Only Admin or Super Admin can set free classes count."},
             status=status.HTTP_403_FORBIDDEN,
@@ -688,7 +688,7 @@ def set_free_classes_count(request, timetable_id: str):
         )
     
     # Check permissions: Admin can only update timetables in their center
-    if user.role == AccountUser.ROLE_ADMIN:
+    if user.role.lower() == AccountUser.ROLE_ADMIN.lower():
         if not user.center:
             return Response(
                 {"detail": "Admin user is not linked to any center."},
@@ -775,7 +775,7 @@ def get_free_classes_count(request, timetable_id: str):
     
     # Check permissions: Admin can only view timetables in their center
     user = request.user
-    if user.role == AccountUser.ROLE_ADMIN:
+    if user.role.lower() == AccountUser.ROLE_ADMIN.lower():
         if not user.center:
             return Response(
                 {"detail": "Admin user is not linked to any center."},
@@ -829,14 +829,14 @@ def list_timetables(request):
     user = request.user
     
     # Filter by center based on role
-    if user.role == AccountUser.ROLE_ADMIN:
+    if user.role.lower() == AccountUser.ROLE_ADMIN.lower():
         if not user.center:
             return Response(
                 {"detail": "Admin user is not linked to any center."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
         timetables = Timetable.objects.filter(center=user.center)
-    elif user.role == AccountUser.ROLE_SUPER_ADMIN:
+    elif user.role.lower() == AccountUser.ROLE_SUPER_ADMIN.lower():
         # Super Admin can filter by center_id, center_name, or see all
         center_id = request.query_params.get("center_id")
         center_name = request.query_params.get("center_name")
@@ -930,14 +930,14 @@ def set_teacher_slot_availability(request):
     user = request.user
     
     # Check if user is Admin or Super Admin
-    if user.role not in (AccountUser.ROLE_ADMIN, AccountUser.ROLE_SUPER_ADMIN):
+    if user.role.lower() not in (AccountUser.ROLE_ADMIN.lower(), AccountUser.ROLE_SUPER_ADMIN.lower()):
         return Response(
             {"detail": "Only Admin and Super Admin can set teacher availability."},
             status=status.HTTP_403_FORBIDDEN,
         )
     
     # If Admin, ensure they can only manage their center's timetables
-    if user.role == AccountUser.ROLE_ADMIN:
+    if user.role.lower() == AccountUser.ROLE_ADMIN.lower():
         if not user.center:
             return Response(
                 {"detail": "Admin user is not linked to any center."},
@@ -971,7 +971,7 @@ def set_teacher_slot_availability(request):
         )
     
     # Check permissions: Admin can only manage their center's timetables
-    if user.role == AccountUser.ROLE_ADMIN:
+    if user.role.lower() == AccountUser.ROLE_ADMIN.lower():
         if timetable.center != user.center:
             return Response(
                 {"detail": "You can only manage timetables in your center."},
@@ -1096,7 +1096,7 @@ def get_teacher_availability(request, timetable_id: str):
     user = request.user
     
     # Check if user is Admin or Super Admin
-    if user.role not in (AccountUser.ROLE_ADMIN, AccountUser.ROLE_SUPER_ADMIN):
+    if user.role.lower() not in (AccountUser.ROLE_ADMIN.lower(), AccountUser.ROLE_SUPER_ADMIN.lower()):
         return Response(
             {"detail": "Only Admin and Super Admin can view teacher availability."},
             status=status.HTTP_403_FORBIDDEN,
@@ -1112,7 +1112,7 @@ def get_teacher_availability(request, timetable_id: str):
         )
     
     # Check permissions: Admin can only view their center's timetables
-    if user.role == AccountUser.ROLE_ADMIN:
+    if user.role.lower() == AccountUser.ROLE_ADMIN.lower():
         if not user.center:
             return Response(
                 {"detail": "Admin user is not linked to any center."},
@@ -1258,7 +1258,7 @@ def get_available_teachers_for_slot(request, timetable_id: str, slot_id: str = N
     user = request.user
     
     # Check if user is Admin or Super Admin
-    if user.role not in (AccountUser.ROLE_ADMIN, AccountUser.ROLE_SUPER_ADMIN):
+    if user.role.lower() not in (AccountUser.ROLE_ADMIN.lower(), AccountUser.ROLE_SUPER_ADMIN.lower()):
         return Response(
             {"detail": "Only Admin and Super Admin can view teacher availability."},
             status=status.HTTP_403_FORBIDDEN,
@@ -1274,7 +1274,7 @@ def get_available_teachers_for_slot(request, timetable_id: str, slot_id: str = N
         )
     
     # Check permissions
-    if user.role == AccountUser.ROLE_ADMIN:
+    if user.role.lower() == AccountUser.ROLE_ADMIN.lower():
         if not user.center:
             return Response(
                 {"detail": "Admin user is not linked to any center."},
@@ -1497,7 +1497,7 @@ def get_teacher_wise_availability(request, timetable_id: str):
     user = request.user
     
     # Check if user is Admin or Super Admin
-    if user.role not in (AccountUser.ROLE_ADMIN, AccountUser.ROLE_SUPER_ADMIN):
+    if user.role.lower() not in (AccountUser.ROLE_ADMIN.lower(), AccountUser.ROLE_SUPER_ADMIN.lower()):
         return Response(
             {"detail": "Only Admin and Super Admin can view teacher availability."},
             status=status.HTTP_403_FORBIDDEN,
@@ -1513,7 +1513,7 @@ def get_teacher_wise_availability(request, timetable_id: str):
         )
     
     # Check permissions: Admin can only view their center's timetables
-    if user.role == AccountUser.ROLE_ADMIN:
+    if user.role.lower() == AccountUser.ROLE_ADMIN.lower():
         if not user.center:
             return Response(
                 {"detail": "Admin user is not linked to any center."},
@@ -1698,7 +1698,7 @@ def assign_batch_to_timetable(request):
     user = request.user
     
     # Check if user is Admin or Super Admin
-    if user.role not in (AccountUser.ROLE_ADMIN, AccountUser.ROLE_SUPER_ADMIN):
+    if user.role.lower() not in (AccountUser.ROLE_ADMIN.lower(), AccountUser.ROLE_SUPER_ADMIN.lower()):
         return Response(
             {"detail": "Only Admin and Super Admin can assign batches to timetables."},
             status=status.HTTP_403_FORBIDDEN,
@@ -1723,7 +1723,7 @@ def assign_batch_to_timetable(request):
         )
     
     # Check permissions: Admin can only manage their center's timetables
-    if user.role == AccountUser.ROLE_ADMIN:
+    if user.role.lower() == AccountUser.ROLE_ADMIN.lower():
         if not user.center:
             return Response(
                 {"detail": "Admin user is not linked to any center."},
@@ -1807,7 +1807,7 @@ def assign_teacher_to_batch(request):
     user = request.user
     
     # Check if user is Admin or Super Admin
-    if user.role not in (AccountUser.ROLE_ADMIN, AccountUser.ROLE_SUPER_ADMIN):
+    if user.role.lower() not in (AccountUser.ROLE_ADMIN.lower(), AccountUser.ROLE_SUPER_ADMIN.lower()):
         return Response(
             {"detail": "Only Admin and Super Admin can assign teachers to batches."},
             status=status.HTTP_403_FORBIDDEN,
@@ -1847,7 +1847,7 @@ def assign_teacher_to_batch(request):
         )
     
     # Check permissions: Admin can only manage their center's timetables
-    if user.role == AccountUser.ROLE_ADMIN:
+    if user.role.lower() == AccountUser.ROLE_ADMIN.lower():
         if not user.center:
             return Response(
                 {"detail": "Admin user is not linked to any center."},
@@ -2098,7 +2098,7 @@ def remove_batch_from_timetable(request):
     user = request.user
     
     # Check if user is Admin or Super Admin
-    if user.role not in (AccountUser.ROLE_ADMIN, AccountUser.ROLE_SUPER_ADMIN):
+    if user.role.lower() not in (AccountUser.ROLE_ADMIN.lower(), AccountUser.ROLE_SUPER_ADMIN.lower()):
         return Response(
             {"detail": "Only Admin and Super Admin can remove batches from timetables."},
             status=status.HTTP_403_FORBIDDEN,
@@ -2123,7 +2123,7 @@ def remove_batch_from_timetable(request):
         )
     
     # Check permissions: Admin can only manage their center's timetables
-    if user.role == AccountUser.ROLE_ADMIN:
+    if user.role.lower() == AccountUser.ROLE_ADMIN.lower():
         if not user.center:
             return Response(
                 {"detail": "Admin user is not linked to any center."},
@@ -2221,7 +2221,7 @@ def remove_teacher_from_batch(request):
     user = request.user
     
     # Check if user is Admin or Super Admin
-    if user.role not in (AccountUser.ROLE_ADMIN, AccountUser.ROLE_SUPER_ADMIN):
+    if user.role.lower() not in (AccountUser.ROLE_ADMIN.lower(), AccountUser.ROLE_SUPER_ADMIN.lower()):
         return Response(
             {"detail": "Only Admin and Super Admin can remove teachers from batches."},
             status=status.HTTP_403_FORBIDDEN,
@@ -2254,7 +2254,7 @@ def remove_teacher_from_batch(request):
         )
     
     # Check permissions: Admin can only manage their center's timetables
-    if user.role == AccountUser.ROLE_ADMIN:
+    if user.role.lower() == AccountUser.ROLE_ADMIN.lower():
         if not user.center:
             return Response(
                 {"detail": "Admin user is not linked to any center."},
@@ -2437,7 +2437,7 @@ def get_timetable_batch_assignments(request, timetable_id: str):
     user = request.user
     
     # Check if user is Admin or Super Admin
-    if user.role not in (AccountUser.ROLE_ADMIN, AccountUser.ROLE_SUPER_ADMIN):
+    if user.role.lower() not in (AccountUser.ROLE_ADMIN.lower(), AccountUser.ROLE_SUPER_ADMIN.lower()):
         return Response(
             {"detail": "Only Admin and Super Admin can view batch assignments."},
             status=status.HTTP_403_FORBIDDEN,
@@ -2453,7 +2453,7 @@ def get_timetable_batch_assignments(request, timetable_id: str):
         )
     
     # Check permissions: Admin can only view their center's timetables
-    if user.role == AccountUser.ROLE_ADMIN:
+    if user.role.lower() == AccountUser.ROLE_ADMIN.lower():
         if not user.center:
             return Response(
                 {"detail": "Admin user is not linked to any center."},
@@ -2596,7 +2596,7 @@ def get_batch_wise_slots(request, timetable_id: str, batch_id: str = None):
     user = request.user
     
     # Check if user is Admin or Super Admin
-    if user.role not in (AccountUser.ROLE_ADMIN, AccountUser.ROLE_SUPER_ADMIN):
+    if user.role.lower() not in (AccountUser.ROLE_ADMIN.lower(), AccountUser.ROLE_SUPER_ADMIN.lower()):
         return Response(
             {"detail": "Only Admin and Super Admin can view batch-wise slots."},
             status=status.HTTP_403_FORBIDDEN,
@@ -2612,7 +2612,7 @@ def get_batch_wise_slots(request, timetable_id: str, batch_id: str = None):
         )
     
     # Check permissions
-    if user.role == AccountUser.ROLE_ADMIN:
+    if user.role.lower() == AccountUser.ROLE_ADMIN.lower():
         if not user.center:
             return Response(
                 {"detail": "Admin user is not linked to any center."},
@@ -2799,7 +2799,7 @@ def assign_fixed_slot(request):
     user = request.user
     
     # Check if user is Admin or Super Admin
-    if user.role not in (AccountUser.ROLE_ADMIN, AccountUser.ROLE_SUPER_ADMIN):
+    if user.role.lower() not in (AccountUser.ROLE_ADMIN.lower(), AccountUser.ROLE_SUPER_ADMIN.lower()):
         return Response(
             {"detail": "Only Admin and Super Admin can assign fixed slots."},
             status=status.HTTP_403_FORBIDDEN,
@@ -2834,7 +2834,7 @@ def assign_fixed_slot(request):
         )
     
     # Check permissions: Admin can only manage their center's timetables
-    if user.role == AccountUser.ROLE_ADMIN:
+    if user.role.lower() == AccountUser.ROLE_ADMIN.lower():
         if not user.center:
             return Response(
                 {"detail": "Admin user is not linked to any center."},
@@ -3018,7 +3018,7 @@ def get_fixed_slots(request, timetable_id: str):
     user = request.user
     
     # Check if user is Admin or Super Admin
-    if user.role not in (AccountUser.ROLE_ADMIN, AccountUser.ROLE_SUPER_ADMIN):
+    if user.role.lower() not in (AccountUser.ROLE_ADMIN.lower(), AccountUser.ROLE_SUPER_ADMIN.lower()):
         return Response(
             {"detail": "Only Admin and Super Admin can view fixed slots."},
             status=status.HTTP_403_FORBIDDEN,
@@ -3034,7 +3034,7 @@ def get_fixed_slots(request, timetable_id: str):
         )
     
     # Check permissions: Admin can only view their center's timetables
-    if user.role == AccountUser.ROLE_ADMIN:
+    if user.role.lower() == AccountUser.ROLE_ADMIN.lower():
         if not user.center:
             return Response(
                 {"detail": "Admin user is not linked to any center."},
@@ -3133,7 +3133,7 @@ def update_fixed_slot(request, fixed_slot_id: str):
     user = request.user
     
     # Check if user is Admin or Super Admin
-    if user.role not in (AccountUser.ROLE_ADMIN, AccountUser.ROLE_SUPER_ADMIN):
+    if user.role.lower() not in (AccountUser.ROLE_ADMIN.lower(), AccountUser.ROLE_SUPER_ADMIN.lower()):
         return Response(
             {"detail": "Only Admin and Super Admin can update fixed slots."},
             status=status.HTTP_403_FORBIDDEN,
@@ -3153,7 +3153,7 @@ def update_fixed_slot(request, fixed_slot_id: str):
     timetable = fixed_slot.timetable
     
     # Check permissions: Admin can only manage their center's timetables
-    if user.role == AccountUser.ROLE_ADMIN:
+    if user.role.lower() == AccountUser.ROLE_ADMIN.lower():
         if not user.center:
             return Response(
                 {"detail": "Admin user is not linked to any center."},
@@ -3310,7 +3310,7 @@ def delete_fixed_slot(request, fixed_slot_id: str):
     user = request.user
     
     # Check if user is Admin or Super Admin
-    if user.role not in (AccountUser.ROLE_ADMIN, AccountUser.ROLE_SUPER_ADMIN):
+    if user.role.lower() not in (AccountUser.ROLE_ADMIN.lower(), AccountUser.ROLE_SUPER_ADMIN.lower()):
         return Response(
             {"detail": "Only Admin and Super Admin can delete fixed slots."},
             status=status.HTTP_403_FORBIDDEN,
@@ -3330,7 +3330,7 @@ def delete_fixed_slot(request, fixed_slot_id: str):
     timetable = fixed_slot.timetable
     
     # Check permissions: Admin can only manage their center's timetables
-    if user.role == AccountUser.ROLE_ADMIN:
+    if user.role.lower() == AccountUser.ROLE_ADMIN.lower():
         if not user.center:
             return Response(
                 {"detail": "Admin user is not linked to any center."},
@@ -3411,7 +3411,7 @@ def check_timetable_feasibility(request, timetable_id: str):
     
     # Check permissions
     user = request.user
-    if user.role not in (AccountUser.ROLE_ADMIN, AccountUser.ROLE_SUPER_ADMIN):
+    if user.role.lower() not in (AccountUser.ROLE_ADMIN.lower(), AccountUser.ROLE_SUPER_ADMIN.lower()):
         return Response(
             {"detail": "Only Admin or Super Admin can check feasibility."},
             status=status.HTTP_403_FORBIDDEN,
@@ -3540,7 +3540,7 @@ def run_timetable_optimization(request, timetable_id: str):
     
     # Check permissions
     user = request.user
-    if user.role not in (AccountUser.ROLE_ADMIN, AccountUser.ROLE_SUPER_ADMIN):
+    if user.role.lower() not in (AccountUser.ROLE_ADMIN.lower(), AccountUser.ROLE_SUPER_ADMIN.lower()):
         return Response(
             {"detail": "Only Admin or Super Admin can run optimization."},
             status=status.HTTP_403_FORBIDDEN,
@@ -3956,7 +3956,7 @@ def regenerate_timetable_from_slot(request, timetable_id: str):
     
     # Check permissions
     user = request.user
-    if user.role not in (AccountUser.ROLE_ADMIN, AccountUser.ROLE_SUPER_ADMIN):
+    if user.role.lower() not in (AccountUser.ROLE_ADMIN.lower(), AccountUser.ROLE_SUPER_ADMIN.lower()):
         return Response(
             {"detail": "Only Admin or Super Admin can regenerate timetable."},
             status=status.HTTP_403_FORBIDDEN,
@@ -4257,7 +4257,7 @@ def get_all_batches_timetable(request, timetable_id: str):
     
     # Check permissions
     user = request.user
-    if user.role == AccountUser.ROLE_ADMIN:
+    if user.role.lower() == AccountUser.ROLE_ADMIN.lower():
         if not user.center:
             return Response(
                 {"detail": "Admin user is not linked to any center."},
@@ -4424,7 +4424,7 @@ def get_batch_timetable(request, timetable_id: str, batch_id: str):
     
     # Check permissions
     user = request.user
-    if user.role == AccountUser.ROLE_ADMIN:
+    if user.role.lower() == AccountUser.ROLE_ADMIN.lower():
         if not user.center:
             return Response(
                 {"detail": "Admin user is not linked to any center."},
@@ -4576,7 +4576,7 @@ def get_teacher_timetable(request, timetable_id: str, teacher_id: str = None):
     
     # Check permissions
     user = request.user
-    if user.role == AccountUser.ROLE_ADMIN:
+    if user.role.lower() == AccountUser.ROLE_ADMIN.lower():
         if not user.center:
             return Response(
                 {"detail": "Admin user is not linked to any center."},
@@ -4805,7 +4805,7 @@ def activate_timetable(request, timetable_id: str):
     user = request.user
     
     # Check if user is Admin or Super Admin
-    if user.role not in (AccountUser.ROLE_ADMIN, AccountUser.ROLE_SUPER_ADMIN):
+    if user.role.lower() not in (AccountUser.ROLE_ADMIN.lower(), AccountUser.ROLE_SUPER_ADMIN.lower()):
         return Response(
             {"detail": "Only Admin and Super Admin can activate timetables."},
             status=status.HTTP_403_FORBIDDEN,
@@ -4821,7 +4821,7 @@ def activate_timetable(request, timetable_id: str):
         )
     
     # Check permissions: Admin can only manage their center's timetables
-    if user.role == AccountUser.ROLE_ADMIN:
+    if user.role.lower() == AccountUser.ROLE_ADMIN.lower():
         if not user.center:
             return Response(
                 {"detail": "Admin user is not linked to any center."},
@@ -4945,7 +4945,7 @@ def deactivate_timetable(request, timetable_id: str):
     user = request.user
     
     # Check if user is Admin or Super Admin
-    if user.role not in (AccountUser.ROLE_ADMIN, AccountUser.ROLE_SUPER_ADMIN):
+    if user.role.lower() not in (AccountUser.ROLE_ADMIN.lower(), AccountUser.ROLE_SUPER_ADMIN.lower()):
         return Response(
             {"detail": "Only Admin and Super Admin can deactivate timetables."},
             status=status.HTTP_403_FORBIDDEN,
@@ -4961,7 +4961,7 @@ def deactivate_timetable(request, timetable_id: str):
         )
     
     # Check permissions: Admin can only manage their center's timetables
-    if user.role == AccountUser.ROLE_ADMIN:
+    if user.role.lower() == AccountUser.ROLE_ADMIN.lower():
         if not user.center:
             return Response(
                 {"detail": "Admin user is not linked to any center."},
