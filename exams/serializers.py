@@ -684,3 +684,36 @@ class EmailTemplateSerializer(serializers.Serializer):
     subject = serializers.CharField(max_length=200)
     text_content = serializers.CharField()
     html_content = serializers.CharField()
+
+
+# Geolocation Serializers
+class GeolocationCaptureSerializer(serializers.Serializer):
+    """Serializer for capturing geolocation data"""
+    attempt_id = serializers.IntegerField()
+    latitude = serializers.DecimalField(max_digits=9, decimal_places=6, required=False, allow_null=True)
+    longitude = serializers.DecimalField(max_digits=9, decimal_places=6, required=False, allow_null=True)
+    permission_denied = serializers.BooleanField(default=False)
+    
+    def validate(self, attrs):
+        """Validate that coordinates are provided when permission is not denied"""
+        permission_denied = attrs.get('permission_denied', False)
+        latitude = attrs.get('latitude')
+        longitude = attrs.get('longitude')
+        
+        if not permission_denied:
+            if latitude is None or longitude is None:
+                raise serializers.ValidationError(
+                    "Latitude and longitude are required when permission is granted"
+                )
+        
+        return attrs
+
+
+class GeolocationDataSerializer(serializers.Serializer):
+    """Serializer for geolocation data response"""
+    captured = serializers.BooleanField()
+    permission_denied = serializers.BooleanField(required=False)
+    latitude = serializers.FloatField(required=False, allow_null=True)
+    longitude = serializers.FloatField(required=False, allow_null=True)
+    captured_at = serializers.DateTimeField(required=False, allow_null=True)
+    message = serializers.CharField()

@@ -3506,3 +3506,143 @@ def export_all_attempts(request):
         ])
 
     return response
+
+
+
+# Geolocation API Endpoints
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+def capture_location(request):
+    """
+    Capture and store geolocation data for an exam attempt.
+    
+    POST /api/exams/capture-location/
+    
+    Request body:
+    {
+        "attempt_id": 123,
+        "latitude": 27.7172,
+        "longitude": 85.3240,
+        "permission_denied": false
+    }
+    
+    Implements requirements 2.2, 2.3 from exam-security-enhancements spec.
+    """
+    from .geolocation_service import GeolocationService
+    from .serializers import GeolocationCaptureSerializer
+    from django.core.exceptions import ValidationError
+    
+    # Validate request data
+    serializer = GeolocationCaptureSerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    attempt_id = serializer.validated_data['attempt_id']
+    latitude = serializer.validated_data.get('latitude')
+    longitude = serializer.validated_data.get('longitude')
+    permission_denied = serializer.validated_data.get('permission_denied', False)
+    
+    # Get exam attempt and verify ownership
+    try:
+        attempt = ExamAttempt.objects.get(id=attempt_id)
+    except ExamAttempt.DoesNotExist:
+        return Response(
+            {'error': 'Exam attempt not found'},
+            status=status.HTTP_404_NOT_FOUND
+        )
+    
+    # Verify that the user owns this attempt
+    if attempt.student != request.user:
+        return Response(
+            {'error': 'You do not have permission to update this exam attempt'},
+            status=status.HTTP_403_FORBIDDEN
+        )
+    
+    # Capture geolocation using the service
+    try:
+        result = GeolocationService.capture_location(
+            exam_attempt=attempt,
+            latitude=latitude,
+            longitude=longitude,
+            permission_denied=permission_denied
+        )
+        
+        return Response(result, status=status.HTTP_200_OK)
+        
+    except ValidationError as e:
+        return Response(
+            {'error': str(e)},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    except Exception as e:
+        return Response(
+            {'error': f'Failed to capture geolocation: {str(e)}'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def get_attempt_location(request, attempt_id):
+    """
+    Retrieve geolocation data for a specific exam attempt.
+    
+    GET /api/exams/attempt/{attempt_id}/location/
+    
+    Implements requirements 2.2, 2.3 from exam-security-enhancements spec.
+    """
+    from .geolocation_service import GeolocationService
+    from .serializers import GeolocationDataSerializer
+    from django.core.exceptions import ValidationError
+    
+    # Get exam attempt
+    try:
+        attempt = ExamAttempt.objects.get(id=attempt_id)
+    except ExamAttempt.DoesNotExist:
+        return Response(
+            {'error': 'Exam attempt not found'},
+            status=status.HTTP_404_NOT_FOUND
+        )
+    
+    # Check permissions
+    # Students can only view their own attempts
+    # Admins can view any attempt from their institute
+    user = request.user
+    if user.role == 'student':
+        if attempt.student != user:
+            return Response(
+                {'error': 'You do not have permission to view this exam attempt'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+    else:
+        # Admin/teacher check - must be from same institute
+        if not user.can_manage_exams() or attempt.exam.institute != user.institute:
+            return Response(
+                {'error': 'You do not have permission to view this exam attempt'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+    
+    # Retrieve geolocation data
+    try:
+        location_data = GeolocationService.get_location_for_attempt(attempt_id)
+        
+        if location_data is None:
+            return Response(
+                {'error': 'Exam attempt not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Serialize and return the data
+        serializer = GeolocationDataSerializer(location_data)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+        
+    except ValidationError as e:
+        return Response(
+            {'error': str(e)},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    except Exception as e:
+        return Response(
+            {'error': f'Failed to retrieve geolocation: {str(e)}'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )

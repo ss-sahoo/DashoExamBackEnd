@@ -87,7 +87,9 @@ def create_timetable_with_slots(request):
     """
 
     user = request.user
-    if user.role not in (AccountUser.ROLE_ADMIN, AccountUser.ROLE_SUPER_ADMIN):
+    # Make role check case-insensitive to handle both 'admin'/'ADMIN' and 'super_admin'/'SUPER_ADMIN'
+    user_role_lower = user.role.lower() if user.role else ''
+    if user_role_lower not in (AccountUser.ROLE_ADMIN.lower(), AccountUser.ROLE_SUPER_ADMIN.lower()):
         return Response(
             {"detail": "Only Admin or Super Admin can create timetables."},
             status=status.HTTP_403_FORBIDDEN,
@@ -96,7 +98,7 @@ def create_timetable_with_slots(request):
     data = request.data
 
     center = None
-    if user.role == AccountUser.ROLE_ADMIN:
+    if user_role_lower == AccountUser.ROLE_ADMIN.lower():
         center = user.center
         if not center:
             return Response(

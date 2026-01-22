@@ -116,4 +116,8 @@ urlpatterns = [
     path('exams/<int:exam_id>/proctoring-settings/', proctoring_views.update_proctoring_settings, name='update-proctoring-settings'),
     path('exams/<int:exam_id>/proctoring-statistics/', proctoring_views.get_proctoring_statistics, name='proctoring-statistics'),
     path('attempts/<int:attempt_id>/proctoring-event/', proctoring_views.record_proctoring_event, name='record-proctoring-event'),
+    
+    # Geolocation
+    path('capture-location/', views.capture_location, name='capture-location'),
+    path('attempt/<int:attempt_id>/location/', views.get_attempt_location, name='get-attempt-location'),
 ]

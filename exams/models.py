@@ -340,6 +340,12 @@ class ExamAttempt(models.Model):
     user_agent = models.TextField(blank=True)
     violations_count = models.IntegerField(default=0)
     
+    # Geolocation
+    geolocation_latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    geolocation_longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    geolocation_captured_at = models.DateTimeField(null=True, blank=True)
+    geolocation_permission_denied = models.BooleanField(default=False)
+    
     # Answers (for auto-save during exam)
     answers = models.JSONField(default=dict, blank=True, help_text="Student answers during exam (auto-saved)")
     
