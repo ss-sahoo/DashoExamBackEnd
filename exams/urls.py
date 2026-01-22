@@ -1,11 +1,7 @@
 from django.urls import path, include
 from . import views, scheduling_views, email_views, predictive_views, proctoring_views
-from .test_proctoring_view import test_proctoring
 
 urlpatterns = [
-    # Test endpoint (no auth required)
-    path('test-proctoring/', test_proctoring, name='test-proctoring'),
-    
     # Exams
     path('exams/', views.ExamListView.as_view(), name='exam-list'),
     path('exams/<int:pk>/', views.ExamDetailView.as_view(), name='exam-detail'),
