@@ -1,7 +1,13 @@
 from django.urls import path, include
-from . import views, scheduling_views, email_views, predictive_views, proctoring_views
+from . import views, scheduling_views, email_views, predictive_views, proctoring_views, center_dashboard_views
 
 urlpatterns = [
+    # Center Dashboard
+    path('center-dashboard-stats/', center_dashboard_views.center_dashboard_stats, name='center-dashboard-stats'),
+    path('center-activity/', center_dashboard_views.center_activity, name='center-activity'),
+    path('center-batch-stats/', center_dashboard_views.center_batch_stats, name='center-batch-stats'),
+    path('center-upcoming-exams/', center_dashboard_views.center_upcoming_exams, name='center-upcoming-exams'),
+    
     # Exams
     path('exams/', views.ExamListView.as_view(), name='exam-list'),
     path('exams/<int:pk>/', views.ExamDetailView.as_view(), name='exam-detail'),

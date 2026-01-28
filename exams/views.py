@@ -136,7 +136,9 @@ class ExamListView(generics.ListCreateAPIView):
             
             # Batch-specific exams - visible if student is in any of the allowed batches
             student_batches = user.batches.all() if hasattr(user, 'batches') else []
-            if student_batches.exists():
+            has_batches = student_batches.exists() if hasattr(student_batches, 'exists') else len(student_batches) > 0
+            
+            if has_batches:
                 visibility_filter |= Q(visibility_scope='batches', allowed_batches__in=student_batches)
             
             # Also allow explicitly allowed users
