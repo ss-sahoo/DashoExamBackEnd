@@ -69,10 +69,36 @@ class Exam(models.Model):
     public_link_usage_count = models.IntegerField(default=0)
     allowed_users = models.ManyToManyField(User, blank=True, related_name='allowed_exams')
     
+    # Visibility Scope - controls who can access this exam
+    VISIBILITY_SCOPE_CHOICES = [
+        ('institute', 'Institute-Wide'),
+        ('centers', 'Specific Centers'),
+        ('batches', 'Specific Batches'),
+    ]
+    visibility_scope = models.CharField(
+        max_length=20,
+        choices=VISIBILITY_SCOPE_CHOICES,
+        default='institute',
+        help_text="Controls which students can access this exam"
+    )
+    allowed_centers = models.ManyToManyField(
+        'accounts.Center',
+        blank=True,
+        related_name='exams',
+        help_text="Centers whose students can access this exam (when visibility_scope='centers')"
+    )
+    allowed_batches = models.ManyToManyField(
+        'accounts.Batch',
+        blank=True,
+        related_name='exams',
+        help_text="Batches whose students can access this exam (when visibility_scope='batches')"
+    )
+    
     # Metadata
     created_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='created_exams')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
     
     @property
     def total_questions(self):
@@ -277,6 +303,45 @@ class Exam(models.Model):
             except ValueError:
                 # Skip invalid patterns silently
                 continue
+        return False
+
+    def can_student_access(self, student):
+        """
+        Check if a student can access this exam based on visibility scope.
+        
+        Returns:
+            bool: True if the student is allowed to access this exam
+        """
+        # If student is not actually a student role, deny access
+        if not student or not student.is_student():
+            return False
+        
+        # Check if student belongs to the same institute as the exam
+        student_institute_id = getattr(student, 'institute_id', None) or getattr(student.institute, 'id', None) if hasattr(student, 'institute') else None
+        if student_institute_id and str(student_institute_id) != str(self.institute_id):
+            return False
+        
+        # Institute-wide: all students in the institute can access
+        if self.visibility_scope == 'institute':
+            return True
+        
+        # Center-specific: only students in the allowed centers can access
+        if self.visibility_scope == 'centers':
+            student_center = getattr(student, 'center', None)
+            if student_center and self.allowed_centers.filter(id=student_center.id).exists():
+                return True
+            return False
+        
+        # Batch-specific: only students in the allowed batches can access
+        if self.visibility_scope == 'batches':
+            # Check if student is in any of the allowed batches
+            student_batches = student.batches.all() if hasattr(student, 'batches') else []
+            for batch in student_batches:
+                if self.allowed_batches.filter(id=batch.id).exists():
+                    return True
+            return False
+        
+        # Default: deny access
         return False
 
 

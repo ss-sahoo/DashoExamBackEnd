@@ -576,3 +576,32 @@ class DeviceSession(models.Model):
         """Check if this session has expired"""
         from django.utils import timezone
         return timezone.now() > self.expires_at
+
+
+class ActivityLog(models.Model):
+    """
+    Tracks all major activities within an institute for auditing.
+    """
+    LOG_TYPES = [
+        ('exam', 'Exam Activity'),
+        ('user', 'User Activity'),
+        ('violation', 'Security Violation'),
+        ('login', 'Login Activity'),
+        ('system', 'System Activity'),
+    ]
+    
+    institute = models.ForeignKey(Institute, on_delete=models.CASCADE, related_name='activity_logs')
+    user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='activities')
+    log_type = models.CharField(max_length=20, choices=LOG_TYPES)
+    title = models.CharField(max_length=255)
+    description = models.TextField()
+    timestamp = models.DateTimeField(auto_now_add=True)
+    status = models.CharField(max_length=20, default='info') # success, warning, error, info
+    metadata = models.JSONField(default=dict, blank=True)
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-timestamp']
+
+    def __str__(self):
+        return f"{self.title} - {self.timestamp}"

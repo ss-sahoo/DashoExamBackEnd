@@ -70,32 +70,110 @@ class ExamListView(generics.ListCreateAPIView):
             return ExamCreateSerializer
         return ExamSerializer
 
+
+
+    def filter_queryset(self, queryset):
+        """
+        Apply filters to the queryset based on query parameters
+        """
+        # Search filter
+        search_query = self.request.query_params.get('search')
+        if search_query:
+            queryset = queryset.filter(
+                Q(title__icontains=search_query) |
+                Q(description__icontains=search_query)
+            )
+            
+        # Status filter
+        status_filter = self.request.query_params.get('status')
+        if status_filter and status_filter != 'All Status':
+            queryset = queryset.filter(status=status_filter)
+            
+        # Visibility scope filter
+        visibility_scope = self.request.query_params.get('visibility_scope')
+        if visibility_scope:
+            queryset = queryset.filter(visibility_scope=visibility_scope)
+            
+        # Center filter
+        center_id = self.request.query_params.get('center_id')
+        if center_id:
+            # Show exams that are either institute-wide OR assigned to this center
+            queryset = queryset.filter(
+                Q(visibility_scope='institute') |
+                Q(allowed_centers__id=center_id)
+            ).distinct()
+            
+        # Batch filter
+        batch_id = self.request.query_params.get('batch_id')
+        if batch_id:
+            # Show exams that are either institute-wide OR assigned to this batch
+            queryset = queryset.filter(
+                Q(visibility_scope='institute') |
+                Q(allowed_batches__id=batch_id)
+            ).distinct()
+            
+        return queryset
+
     def get_queryset(self):
         user = self.request.user
-        status_filter = self.request.query_params.get('status')
         
         queryset = Exam.objects.filter(institute=user.institute)
         
         if user.role == 'student':
-            # Students can only see published/active exams they're allowed to take
-            queryset = queryset.filter(
-                Q(is_public=True) | Q(allowed_users=user)
-            ).filter(status__in=['published', 'active'])
+            # Students can only see published/active exams based on visibility scope
+            base_filter = Q(status__in=['published', 'active'])
+            
+            # Build visibility scope filter
+            visibility_filter = Q()
+            
+            # Institute-wide exams are visible to all students in the institute
+            visibility_filter |= Q(visibility_scope='institute')
+            
+            # Center-specific exams - visible if student's center is in allowed_centers
+            student_center = getattr(user, 'center', None)
+            if student_center:
+                visibility_filter |= Q(visibility_scope='centers', allowed_centers=student_center)
+            
+            # Batch-specific exams - visible if student is in any of the allowed batches
+            student_batches = user.batches.all() if hasattr(user, 'batches') else []
+            if student_batches.exists():
+                visibility_filter |= Q(visibility_scope='batches', allowed_batches__in=student_batches)
+            
+            # Also allow explicitly allowed users
+            visibility_filter |= Q(allowed_users=user)
+            
+            queryset = queryset.filter(base_filter & visibility_filter).distinct()
+            
+            # Apply common filters for students too (e.g. search)
+            queryset = self.filter_queryset(queryset)
+            
         elif user.can_manage_exams():
-            # Admins can see all exams
-            if status_filter:
-                queryset = queryset.filter(status=status_filter)
+            # Admins can see all exams, apply filters
+            queryset = self.filter_queryset(queryset)
         
         return queryset.order_by('-created_at')
+
 
     def perform_create(self, serializer):
         user = self.request.user
         if not user.can_create_exams():
             raise permissions.PermissionDenied("You don't have permission to create exams")
         
-        serializer.save(
+        exam = serializer.save(
             institute=user.institute,
             created_by=user
+        )
+        
+        # Log activity
+        from accounts.utils import log_activity
+        log_activity(
+            institute=user.institute,
+            log_type='exam',
+            title='New Exam Created',
+            description=f'Exam "{exam.title}" was created by {user.get_full_name()}.',
+            user=user,
+            status='success',
+            request=self.request
         )
 
 
@@ -315,13 +393,15 @@ def start_exam(request):
     except Exam.DoesNotExist:
         return Response({'error': 'Exam not found'}, status=status.HTTP_404_NOT_FOUND)
     
-    # Check permissions
-    if not exam.is_public and user not in exam.allowed_users.all():
-        return Response({'error': 'You are not authorized to take this exam'}, status=status.HTTP_403_FORBIDDEN)
+    # Check visibility scope access
+    if user.role == 'student':
+        if not exam.can_student_access(user) and user not in exam.allowed_users.all():
+            return Response({'error': 'You are not authorized to take this exam'}, status=status.HTTP_403_FORBIDDEN)
     
     # Check if exam is active
     if not exam.is_active:
         return Response({'error': 'Exam is not currently active'}, status=status.HTTP_400_BAD_REQUEST)
+
     
     # Check existing attempts
     existing_attempts = ExamAttempt.objects.filter(exam=exam, student=user)
@@ -521,6 +601,19 @@ def log_violation(request, attempt_id):
         attempt.violations_count += 1
         attempt.save()
         
+        # Log activity
+        from accounts.utils import log_activity
+        log_activity(
+            institute=attempt.exam.institute,
+            log_type='violation',
+            title='Security Violation',
+            description=f'Student {attempt.student.get_full_name()} triggered a {violation.get_violation_type_display()} during "{attempt.exam.title}".',
+            user=attempt.student,
+            status='error',
+            request=request,
+            metadata={'violation_id': violation.id, 'attempt_id': attempt.id}
+        )
+
         # Check if max violations exceeded
         if attempt.violations_count >= attempt.max_violations_allowed:
             attempt.status = 'disqualified'

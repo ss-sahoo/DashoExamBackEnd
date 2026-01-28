@@ -24,6 +24,20 @@ class ExamSerializer(serializers.ModelSerializer):
     question_completion_percent = serializers.ReadOnlyField()
     is_question_complete = serializers.ReadOnlyField()
     share_url = serializers.SerializerMethodField()
+    
+    # Visibility scope fields
+    center_ids = serializers.ListField(child=serializers.CharField(), write_only=True, required=False)
+    batch_ids = serializers.ListField(child=serializers.CharField(), write_only=True, required=False)
+    allowed_centers_data = serializers.SerializerMethodField()
+    allowed_batches_data = serializers.SerializerMethodField()
+
+    def get_allowed_centers_data(self, obj):
+        """Get list of allowed center IDs and names"""
+        return [{'id': str(c.id), 'name': c.name} for c in obj.allowed_centers.all()]
+    
+    def get_allowed_batches_data(self, obj):
+        """Get list of allowed batch IDs and names"""
+        return [{'id': str(b.id), 'name': b.name, 'code': b.code} for b in obj.allowed_batches.all()]
 
     def get_pattern(self, obj):
         """Serialize pattern with exam_id context for section question counts"""
@@ -49,6 +63,9 @@ class ExamSerializer(serializers.ModelSerializer):
             'public_allowed_ip_ranges', 'public_allow_multiple_devices', 'public_link_created_at',
             'public_link_last_used_at', 'public_link_usage_count',
             'allowed_users', 'allowed_users_data',
+            # Visibility scope
+            'visibility_scope', 'center_ids', 'batch_ids',
+            'allowed_centers_data', 'allowed_batches_data',
             'created_by', 'created_by_name', 'is_active', 'total_questions', 'total_marks',
             'timezone', 'grace_period_minutes', 'buffer_time_minutes', 'auto_start', 'auto_end',
             'reschedule_allowed', 'max_reschedules', 'reschedule_deadline',
@@ -103,12 +120,34 @@ class ExamSerializer(serializers.ModelSerializer):
         return value
 
     def create(self, validated_data):
+        # Extract visibility scope related data
+        center_ids = validated_data.pop('center_ids', [])
+        batch_ids = validated_data.pop('batch_ids', [])
+        
         # Automatically set duration_minutes from the pattern
         pattern = validated_data['pattern']
         validated_data['duration_minutes'] = pattern.total_duration
-        return super().create(validated_data)
+        
+        exam = super().create(validated_data)
+        
+        # Handle visibility scope relationships
+        if center_ids and exam.visibility_scope == 'centers':
+            from accounts.models import Center
+            centers = Center.objects.filter(id__in=center_ids)
+            exam.allowed_centers.set(centers)
+        
+        if batch_ids and exam.visibility_scope == 'batches':
+            from accounts.models import Batch
+            batches = Batch.objects.filter(id__in=batch_ids)
+            exam.allowed_batches.set(batches)
+        
+        return exam
 
     def update(self, instance, validated_data):
+        # Extract visibility scope related data
+        center_ids = validated_data.pop('center_ids', None)
+        batch_ids = validated_data.pop('batch_ids', None)
+        
         # If pattern_id is provided, update the pattern and duration
         if 'pattern_id' in validated_data:
             pattern_id = validated_data.pop('pattern_id')
@@ -116,7 +155,21 @@ class ExamSerializer(serializers.ModelSerializer):
             pattern = ExamPattern.objects.get(id=pattern_id)
             validated_data['pattern'] = pattern
             validated_data['duration_minutes'] = pattern.total_duration
-        return super().update(instance, validated_data)
+        
+        exam = super().update(instance, validated_data)
+        
+        # Handle visibility scope relationships
+        if center_ids is not None and exam.visibility_scope == 'centers':
+            from accounts.models import Center
+            centers = Center.objects.filter(id__in=center_ids)
+            exam.allowed_centers.set(centers)
+        
+        if batch_ids is not None and exam.visibility_scope == 'batches':
+            from accounts.models import Batch
+            batches = Batch.objects.filter(id__in=batch_ids)
+            exam.allowed_batches.set(batches)
+        
+        return exam
 
     def get_share_url(self, obj):
         frontend_url = getattr(settings, 'FRONTEND_URL', '').rstrip('/')
@@ -137,6 +190,10 @@ class ExamCreateSerializer(serializers.ModelSerializer):
     public_link_usage_count = serializers.IntegerField(read_only=True)
     share_url = serializers.SerializerMethodField()
     
+    # Visibility scope fields
+    center_ids = serializers.ListField(child=serializers.CharField(), write_only=True, required=False)
+    batch_ids = serializers.ListField(child=serializers.CharField(), write_only=True, required=False)
+    
     class Meta:
         model = Exam
         fields = [
@@ -149,6 +206,8 @@ class ExamCreateSerializer(serializers.ModelSerializer):
             'shuffle_subjects', 'shuffle_options', 'shuffle_seed_per_student',
             # Access control
             'is_public', 'allowed_users',
+            # Visibility scope
+            'visibility_scope', 'center_ids', 'batch_ids',
             'status', 'timezone', 'grace_period_minutes', 'buffer_time_minutes', 'auto_start',
             'auto_end', 'reschedule_allowed', 'max_reschedules', 'reschedule_deadline',
             'public_access_token', 'public_token_expires_at', 'public_allowed_ip_ranges',
@@ -162,6 +221,10 @@ class ExamCreateSerializer(serializers.ModelSerializer):
         ]
 
     def create(self, validated_data):
+        # Extract visibility scope related data
+        center_ids = validated_data.pop('center_ids', [])
+        batch_ids = validated_data.pop('batch_ids', [])
+        
         # Get the pattern object and set duration_minutes from it
         pattern_id = validated_data.pop('pattern_id')
         from patterns.models import ExamPattern
@@ -172,7 +235,20 @@ class ExamCreateSerializer(serializers.ModelSerializer):
         # Set status to 'draft' until questions are added
         validated_data['status'] = 'draft'
         
-        return super().create(validated_data)
+        exam = super().create(validated_data)
+        
+        # Handle visibility scope relationships
+        if center_ids and exam.visibility_scope == 'centers':
+            from accounts.models import Center
+            centers = Center.objects.filter(id__in=center_ids)
+            exam.allowed_centers.set(centers)
+        
+        if batch_ids and exam.visibility_scope == 'batches':
+            from accounts.models import Batch
+            batches = Batch.objects.filter(id__in=batch_ids)
+            exam.allowed_batches.set(batches)
+        
+        return exam
 
     def get_share_url(self, obj):
         frontend_url = getattr(settings, 'FRONTEND_URL', '').rstrip('/')

@@ -75,4 +75,7 @@ urlpatterns = [
     path('logout-device/', logout_device_view, name='logout-device'),
     path('active-sessions/', active_sessions_view, name='active-sessions'),
     path('session/<str:fingerprint>/', delete_session_view, name='delete-session'),
+    
+    # Activity Logs
+    path('activity-logs/', views.ActivityLogListView.as_view(), name='activity-log-list'),
 ]

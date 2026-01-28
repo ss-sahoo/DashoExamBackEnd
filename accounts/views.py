@@ -10,11 +10,12 @@ from django.core.mail import send_mail
 from django.conf import settings
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
-from .models import User, Institute, UserPermission, InstituteSettings, InstituteInvitation
+from .models import User, Institute, UserPermission, InstituteSettings, InstituteInvitation, ActivityLog
 from .serializers import (
     UserRegistrationSerializer, UserSerializer, UserLoginSerializer,
     InstituteSerializer, InstituteCreateSerializer, UserPermissionSerializer, 
-    InstituteSettingsSerializer, ChangePasswordSerializer, InstituteInvitationSerializer
+    InstituteSettingsSerializer, ChangePasswordSerializer, InstituteInvitationSerializer,
+    ActivityLogSerializer
 )
 from .jwt_utils import get_tokens_for_user
 from rest_framework.exceptions import PermissionDenied
@@ -30,6 +31,19 @@ def user_registration_view(request):
     
     with transaction.atomic():
         user = serializer.save()
+        
+        # Log activity
+        from .utils import log_activity
+        log_activity(
+            institute=user.institute,
+            log_type='user',
+            title='New User Registered',
+            description=f'User {user.get_full_name()} ({user.email}) registered as {user.role}.',
+            user=user,
+            status='success',
+            request=request
+        ) if user.institute else None
+
         tokens = get_tokens_for_user(user)
         
         return Response({
@@ -97,12 +111,15 @@ def user_login_view(request):
             'detail': 'User account is disabled.'
         }, status=status.HTTP_403_FORBIDDEN)
     
-    # Check for device conflicts
+        # Check for device conflicts
     try:
         device_manager = DeviceSessionManager()
         has_conflict, conflict_info = device_manager.check_session_conflict(user, device_info)
         
-        if has_conflict:
+        # Check if force login is requested
+        force_login = request.data.get('force_login', False)
+        
+        if has_conflict and not force_login:
             # Return conflict information without creating tokens
             return Response(
                 {
@@ -113,8 +130,22 @@ def user_login_view(request):
                 status=status.HTTP_409_CONFLICT,
             )
         
-        # No conflict, create session
-        session = device_manager.create_session(user, device_info)
+        # No conflict OR force login, create session
+        # If force_login is True, it will invalidate other sessions
+        session = device_manager.create_session(user, device_info, force_logout_others=force_login)
+        
+        # Log activity
+        from .utils import log_activity
+        log_activity(
+            institute=user.institute,
+            log_type='login',
+            title='User Login',
+            description=f'User {user.get_full_name()} logged in from {device_info["browser"]} on {device_info["os"]}.',
+            user=user,
+            status='info',
+            request=request
+        ) if user.institute else None
+
     except Exception as e:
         # Log the error but don't block login
         import logging
@@ -754,3 +785,38 @@ def institute_search(request):
     
     serializer = InstituteSerializer(institutes, many=True)
     return Response(serializer.data)
+
+
+class ActivityLogListView(generics.ListAPIView):
+    """
+    List activity logs for an institute.
+    """
+    serializer_class = ActivityLogSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+        
+        # Only admins can view logs
+        if user.role not in ['super_admin', 'institute_admin', 'exam_admin']:
+            raise PermissionDenied("You do not have permission to view activity logs.")
+            
+        queryset = ActivityLog.objects.filter(institute=user.institute)
+        
+        # Filter by log type
+        log_type = self.request.query_params.get('log_type')
+        if log_type and log_type != 'all':
+            queryset = queryset.filter(log_type=log_type)
+            
+        # Filter by search term
+        search = self.request.query_params.get('search')
+        if search:
+            queryset = queryset.filter(
+                models.Q(title__icontains=search) |
+                models.Q(description__icontains=search) |
+                models.Q(user__first_name__icontains=search) |
+                models.Q(user__last_name__icontains=search) |
+                models.Q(user__email__icontains=search)
+            )
+            
+        return queryset

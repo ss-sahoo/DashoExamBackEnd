@@ -3,7 +3,7 @@ from django.contrib.auth import authenticate
 from django.contrib.auth.password_validation import validate_password
 from django.utils import timezone
 from datetime import timedelta
-from .models import User, Institute, UserPermission, InstituteSettings, InstituteInvitation, DeviceSession
+from .models import User, Institute, UserPermission, InstituteSettings, InstituteInvitation, DeviceSession, ActivityLog
 
 
 class InstituteSerializer(serializers.ModelSerializer):
@@ -308,3 +308,17 @@ class DeviceCheckResponseSerializer(serializers.Serializer):
 class LogoutDeviceRequestSerializer(serializers.Serializer):
     """Serializer for logout device request"""
     device_fingerprint = serializers.CharField()
+
+
+class ActivityLogSerializer(serializers.ModelSerializer):
+    user_name = serializers.CharField(source='user.get_full_name', read_only=True)
+    user_email = serializers.EmailField(source='user.email', read_only=True)
+    log_type_display = serializers.CharField(source='get_log_type_display', read_only=True)
+
+    class Meta:
+        model = ActivityLog
+        fields = [
+            'id', 'log_type', 'log_type_display', 'title', 'description', 
+            'timestamp', 'user', 'user_name', 'user_email', 'status', 
+            'metadata', 'ip_address'
+        ]
