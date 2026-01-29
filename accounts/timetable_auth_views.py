@@ -103,15 +103,18 @@ class BaseRoleLoginView(APIView):
         if self.allowed_roles:
             # Map roles for compatibility
             role_mapping = {
-                'super_admin': ['super_admin', 'SUPER_ADMIN'],
-                'SUPER_ADMIN': ['super_admin', 'SUPER_ADMIN'],
-                'ADMIN': ['ADMIN', 'institute_admin', 'super_admin'],
-                'institute_admin': ['ADMIN', 'institute_admin', 'super_admin'],
+                'super_admin': ['super_admin', 'SUPER_ADMIN', 'manager'],
+                'SUPER_ADMIN': ['super_admin', 'SUPER_ADMIN', 'manager'],
+                'ADMIN': ['ADMIN', 'admin', 'institute_admin', 'super_admin', 'SUPER_ADMIN'],
+                'admin': ['ADMIN', 'admin', 'institute_admin', 'super_admin', 'SUPER_ADMIN'],
+                'institute_admin': ['ADMIN', 'admin', 'institute_admin', 'super_admin', 'SUPER_ADMIN'],
                 'TEACHER': ['TEACHER', 'teacher'],
                 'teacher': ['TEACHER', 'teacher'],
                 'STUDENT': ['STUDENT', 'student'],
                 'student': ['STUDENT', 'student'],
-                'STAFF': ['STAFF'],
+                'STAFF': ['STAFF', 'staff'],
+                'staff': ['STAFF', 'staff'],
+                'manager': ['manager', 'super_admin', 'SUPER_ADMIN'],
             }
             
             user_allowed = False
@@ -189,35 +192,35 @@ class SuperAdminLoginView(BaseRoleLoginView):
     """
     Only users with role = SUPER_ADMIN or super_admin can login here.
     """
-    allowed_roles = ('SUPER_ADMIN', 'super_admin')
+    allowed_roles = ('super_admin',)
 
 
 class AdminLoginView(BaseRoleLoginView):
     """
     Admin login (center admins). We also allow SUPER_ADMIN here if desired.
     """
-    allowed_roles = ('ADMIN', 'institute_admin', 'SUPER_ADMIN', 'super_admin')
+    allowed_roles = ('admin', 'institute_admin', 'super_admin')
 
 
 class TeacherLoginView(BaseRoleLoginView):
     """
     Teacher login.
     """
-    allowed_roles = ('TEACHER', 'teacher')
+    allowed_roles = ('teacher',)
 
 
 class StudentLoginView(BaseRoleLoginView):
     """
     Student login.
     """
-    allowed_roles = ('STUDENT', 'student')
+    allowed_roles = ('student',)
 
 
 class StaffLoginView(BaseRoleLoginView):
     """
     Non-teaching staff login.
     """
-    allowed_roles = ('STAFF',)
+    allowed_roles = ('staff',)
 
 
 class ManagerLoginView(BaseRoleLoginView):
@@ -225,7 +228,7 @@ class ManagerLoginView(BaseRoleLoginView):
     Manager login - Company level management.
     Has access to all features across all institutes.
     """
-    allowed_roles = ('manager', 'super_admin', 'SUPER_ADMIN')
+    allowed_roles = ('manager', 'super_admin')
 
 
 @api_view(["POST"])
@@ -248,7 +251,7 @@ def change_password(request):
     user = request.user
     
     # Only Admin and Student can change their password via this API
-    if user.role not in ('ADMIN', 'institute_admin', 'STUDENT', 'student'):
+    if user.role not in ('admin', 'ADMIN', 'institute_admin', 'student', 'STUDENT'):
         return Response(
             {"detail": "Only Admin and Student can change password via this API."},
             status=status.HTTP_403_FORBIDDEN,

@@ -33,7 +33,7 @@ def list_centers(request):
     centers = Center.objects.select_related('institute').all()
     
     # Filter by role - Admins see only their center, Super Admins see all
-    if user.role in ['admin', 'institute_admin'] and user.center:
+    if user.role in ['admin', 'ADMIN', 'institute_admin'] and user.center:
         centers = centers.filter(id=user.center.id)
     
     # Query filters
@@ -55,9 +55,9 @@ def list_centers(request):
         # Count admins for this center (exclude super admins)
         admin_count = User.objects.filter(
             center=center,
-            role__in=['ADMIN', 'admin', 'institute_admin']
+            role__in=['admin', 'ADMIN', 'institute_admin']
         ).exclude(
-            role__in=['SUPER_ADMIN', 'super_admin']
+            role__in=['super_admin', 'SUPER_ADMIN']
         ).count()
         
         centers_data.append({
@@ -100,7 +100,7 @@ def get_center(request, center_id: str):
     
     # Check permissions - Admins can only access their center, Super Admins can access all
     user = request.user
-    if user.role in ['admin', 'institute_admin'] and user.center and user.center.id != center.id:
+    if user.role in ['admin', 'ADMIN', 'institute_admin'] and user.center and user.center.id != center.id:
         return Response(
             {"detail": "You can only access your own center."},
             status=status.HTTP_403_FORBIDDEN,
@@ -145,7 +145,7 @@ def list_center_programs(request, center_id: str):
     
     # Check permissions - Admins can only access their center, Super Admins can access all
     user = request.user
-    if user.role in ['admin', 'institute_admin'] and user.center and user.center.id != center.id:
+    if user.role in ['admin', 'ADMIN', 'institute_admin'] and user.center and user.center.id != center.id:
         return Response(
             {"detail": "You can only access your own center."},
             status=status.HTTP_403_FORBIDDEN,
@@ -210,7 +210,7 @@ def list_center_batches(request, center_id: str):
     
     # Check permissions - Admins can only access their center, Super Admins can access all
     user = request.user
-    if user.role in ['admin', 'institute_admin'] and user.center and user.center.id != center.id:
+    if user.role in ['admin', 'ADMIN', 'institute_admin'] and user.center and user.center.id != center.id:
         return Response(
             {"detail": "You can only access your own center."},
             status=status.HTTP_403_FORBIDDEN,
@@ -268,7 +268,7 @@ def list_center_users(request, center_id: str):
     List all users in a center.
     
     Query params:
-    - role: Filter by role (ADMIN, TEACHER, STUDENT, STAFF)
+    - role: Filter by role (admin, teacher, student, staff)
     - search: Search by username, email, or name
     """
     try:
@@ -281,7 +281,7 @@ def list_center_users(request, center_id: str):
     
     # Check permissions - Admins can only access their center, Super Admins can access all
     user = request.user
-    if user.role in ['admin', 'institute_admin'] and user.center and user.center.id != center.id:
+    if user.role in ['admin', 'ADMIN', 'institute_admin'] and user.center and user.center.id != center.id:
         return Response(
             {"detail": "You can only access your own center."},
             status=status.HTTP_403_FORBIDDEN,
@@ -322,13 +322,13 @@ def list_center_users(request, center_id: str):
         }
         
         # Add role-specific fields
-        if user_obj.role == 'teacher':
+        if user_obj.role in ['teacher', 'TEACHER']:
             user_data.update({
                 "teacher_code": user_obj.teacher_code,
                 "teacher_subjects": user_obj.teacher_subjects,
                 "teacher_employee_id": user_obj.teacher_employee_id,
             })
-        elif user_obj.role == 'student':
+        elif user_obj.role in ['student', 'STUDENT']:
             user_data.update({
                 "student_code": getattr(user_obj, 'student_code', None),
             })
@@ -369,7 +369,7 @@ def list_center_timetables(request, center_id: str):
     
     # Check permissions - Admins can only access their center, Super Admins can access all
     user = request.user
-    if user.role in ['admin', 'institute_admin'] and user.center and user.center.id != center.id:
+    if user.role in ['admin', 'ADMIN', 'institute_admin'] and user.center and user.center.id != center.id:
         return Response(
             {"detail": "You can only access your own center."},
             status=status.HTTP_403_FORBIDDEN,
@@ -400,12 +400,11 @@ def list_center_timetables(request, center_id: str):
     for timetable in timetables:
         timetables_data.append({
             "id": str(timetable.id),
+            "name": timetable.name,
+            "description": timetable.description,
             "from_date": str(timetable.from_date),
             "to_date": str(timetable.to_date),
-            "free_classes_count": timetable.free_classes_count,
             "is_active": timetable.is_active,
-            "description": timetable.description,
-            "day_slots_count": timetable.day_slots.count(),
             "created_at": timetable.created_at.isoformat() if hasattr(timetable, 'created_at') else None,
         })
     
@@ -418,4 +417,3 @@ def list_center_timetables(request, center_id: str):
         },
         status=status.HTTP_200_OK,
     )
-

@@ -24,10 +24,10 @@ def analyze_exam_session(request, attempt_id):
         user = request.user
         
         # Check permissions
-        if user.role == 'student' and attempt.student != user:
+        if user.role in ['student', 'STUDENT'] and attempt.student != user:
             return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
         
-        if user.role == 'student' and not user.can_view_exam(attempt.exam.id):
+        if user.role in ['student', 'STUDENT'] and not user.can_view_exam(attempt.exam.id):
             return Response({'error': 'Access denied to this exam'}, status=status.HTTP_403_FORBIDDEN)
         
         # Run AI analysis
@@ -53,7 +53,7 @@ def detect_real_time_violations(request, attempt_id):
         user = request.user
         
         # Check permissions
-        if user.role == 'student' and attempt.student != user:
+        if user.role in ['student', 'STUDENT'] and attempt.student != user:
             return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
         
         # Get event data from request
@@ -151,7 +151,7 @@ def get_student_proctoring_history(request, student_id):
         user = request.user
         
         # Check permissions
-        if user.role == 'student' and user.id != student_id:
+        if user.role in ['student', 'STUDENT'] and user.id != student_id:
             return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
         
         student = User.objects.get(id=student_id)
@@ -340,7 +340,7 @@ def record_proctoring_event(request, attempt_id):
         user = request.user
         
         # Check permissions
-        if user.role == 'student' and attempt.student != user:
+        if user.role in ['student', 'STUDENT'] and attempt.student != user:
             return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
         
         # Get or create proctoring record

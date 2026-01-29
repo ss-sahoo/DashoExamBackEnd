@@ -119,7 +119,7 @@ class ExamListView(generics.ListCreateAPIView):
         
         queryset = Exam.objects.filter(institute=user.institute)
         
-        if user.role == 'student':
+        if user.role in ['student', 'STUDENT']:
             # Students can only see published/active exams based on visibility scope
             base_filter = Q(status__in=['published', 'active'])
             
@@ -188,7 +188,7 @@ class ExamDetailView(generics.RetrieveUpdateDestroyAPIView):
         user = self.request.user
         if user.can_manage_exams():
             return Exam.objects.filter(institute=user.institute)
-        elif user.role == 'student':
+        elif user.role in ['student', 'STUDENT']:
             # Students can only see published/active exams they're allowed to take
             return Exam.objects.filter(institute=user.institute).filter(
                 Q(is_public=True) | Q(allowed_users=user)
@@ -247,7 +247,7 @@ class ExamAttemptListView(generics.ListCreateAPIView):
         user = self.request.user
         exam_id = self.kwargs.get('exam_id')
         
-        if user.role == 'student':
+        if user.role in ['student', 'STUDENT']:
             return ExamAttempt.objects.filter(exam_id=exam_id, student=user)
         else:
             return ExamAttempt.objects.filter(exam_id=exam_id)
@@ -375,7 +375,7 @@ class ExamAttemptDetailView(generics.RetrieveUpdateAPIView):
 
     def get_queryset(self):
         user = self.request.user
-        if user.role == 'student':
+        if user.role in ['student', 'STUDENT']:
             return ExamAttempt.objects.filter(student=user)
         return ExamAttempt.objects.filter(exam__institute=user.institute)
 
@@ -396,7 +396,7 @@ def start_exam(request):
         return Response({'error': 'Exam not found'}, status=status.HTTP_404_NOT_FOUND)
     
     # Check visibility scope access
-    if user.role == 'student':
+    if user.role in ['student', 'STUDENT']:
         if not exam.can_student_access(user) and user not in exam.allowed_users.all():
             return Response({'error': 'You are not authorized to take this exam'}, status=status.HTTP_403_FORBIDDEN)
     
@@ -676,7 +676,7 @@ def get_violations(request, attempt_id):
     """Get violation history for an exam attempt"""
     try:
         # Allow students to view their own violations, admins to view any violations
-        if request.user.role == 'student':
+        if request.user.role in ['student', 'STUDENT']:
             attempt = ExamAttempt.objects.get(id=attempt_id, student=request.user)
         else:
             attempt = ExamAttempt.objects.get(id=attempt_id)
@@ -884,11 +884,11 @@ def get_proctoring_snapshots(request, attempt_id):
     
     # Check permissions: student can see their own, admins can see any
     user = request.user
-    if user.role == 'student' and attempt.student != user:
+    if user.role in ['student', 'STUDENT'] and attempt.student != user:
         return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
     
     # Check if user has admin access to this exam
-    if user.role != 'student' and attempt.exam.institute != user.institute:
+    if user.role not in ['student', 'STUDENT'] and attempt.exam.institute != user.institute:
         return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
     
     try:
@@ -907,7 +907,7 @@ def get_proctoring_snapshots(request, attempt_id):
     # Students see all their snapshots
     filter_violations_only = request.query_params.get('violations_only', 'false').lower() == 'true'
     
-    if filter_violations_only and user.role != 'student':
+    if filter_violations_only and user.role not in ['student', 'STUDENT']:
         violation_snapshots = [
             s for s in snapshots 
             if s.get('stored_reason') == 'violation_detected' and s.get('image_data')
@@ -1022,7 +1022,7 @@ def get_exam_result(request, attempt_id):
     """Get exam results with progressive display"""
     try:
         # Allow students to view their own results, admins to view any results
-        if request.user.role == 'student':
+        if request.user.role in ['student', 'STUDENT']:
             attempt = ExamAttempt.objects.get(id=attempt_id, student=request.user)
         else:
             attempt = ExamAttempt.objects.get(id=attempt_id)
@@ -1145,21 +1145,21 @@ def get_exam_result(request, attempt_id):
 def get_answer_sheet_pdf(request, attempt_id):
     """Return (and optionally regenerate) the answer sheet PDF link for an attempt."""
     try:
-        if request.user.role == 'student':
+        if request.user.role in ['student', 'STUDENT']:
             attempt = ExamAttempt.objects.get(id=attempt_id, student=request.user)
         else:
             attempt = ExamAttempt.objects.get(id=attempt_id)
     except ExamAttempt.DoesNotExist:
         return Response({'error': 'Exam attempt not found'}, status=status.HTTP_404_NOT_FOUND)
 
-    if request.user.role != 'student' and request.user.role != 'super_admin':
-        if attempt.exam.institute != request.user.institute:
-            return Response({'error': 'Access denied'}, status=status.HTTP_403_FORBIDDEN)
+        if request.user.role not in ['student', 'STUDENT'] and request.user.role not in ['super_admin', 'SUPER_ADMIN']:
+            if attempt.exam.institute != request.user.institute:
+                return Response({'error': 'Access denied'}, status=status.HTTP_403_FORBIDDEN)
 
     regenerate_flag = str(request.query_params.get('regenerate', '')).lower() in ['1', 'true', 'yes']
     context = ensure_answer_sheet_pdf(
         attempt,
-        force_regenerate=regenerate_flag and request.user.role != 'student'
+        force_regenerate=regenerate_flag and request.user.role not in ['student', 'STUDENT']
     )
     if not context or not attempt.answer_sheet_pdf:
         return Response(
@@ -3289,7 +3289,7 @@ def export_exam_results_csv(request, exam_id):
         user = request.user
         
         # Check permissions
-        if user.role == 'student':
+        if user.role in ['student', 'STUDENT']:
             return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
         
         # Get all attempts for this exam
@@ -3341,7 +3341,7 @@ def export_exam_results_excel(request, exam_id):
         user = request.user
         
         # Check permissions
-        if user.role == 'student':
+        if user.role in ['student', 'STUDENT']:
             return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
         
         # Get all attempts for this exam
@@ -3419,7 +3419,7 @@ def export_exam_results_pdf(request, exam_id):
         user = request.user
         
         # Check permissions
-        if user.role == 'student':
+        if user.role in ['student', 'STUDENT']:
             return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
         
         # Get all attempts for this exam
@@ -3703,7 +3703,7 @@ def get_attempt_location(request, attempt_id):
     # Students can only view their own attempts
     # Admins can view any attempt from their institute
     user = request.user
-    if user.role == 'student':
+    if user.role in ['student', 'STUDENT']:
         if attempt.student != user:
             return Response(
                 {'error': 'You do not have permission to view this exam attempt'},

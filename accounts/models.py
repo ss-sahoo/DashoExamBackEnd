@@ -72,13 +72,13 @@ class Institute(models.Model):
     
     def get_admins(self):
         """Get all admin users in this institute"""
-        return self.users.filter(role__in=['institute_admin', 'super_admin', 'ADMIN', 'SUPER_ADMIN'])
+        return self.users.filter(role__in=['institute_admin', 'super_admin', 'admin', 'ADMIN', 'SUPER_ADMIN'])
     
     def can_be_managed_by(self, user):
         """Check if a user can manage this institute"""
         if user.role in ['super_admin', 'SUPER_ADMIN']:
             return True
-        return user.institute == self and user.role in ['institute_admin', 'super_admin', 'ADMIN', 'SUPER_ADMIN']
+        return user.institute == self and user.role in ['institute_admin', 'admin', 'ADMIN']
 
 
 class User(AbstractUser):
@@ -200,13 +200,13 @@ class User(AbstractUser):
     # EXAM SYSTEM METHODS
     # ===========
     def is_institute_admin(self):
-        return self.role in ['super_admin', 'institute_admin', 'SUPER_ADMIN', 'ADMIN']
+        return self.role in ['super_admin', 'SUPER_ADMIN', 'institute_admin', 'admin', 'ADMIN']
     
     def can_manage_exams(self):
-        return self.role in ['super_admin', 'institute_admin', 'exam_admin', 'teacher', 'ADMIN', 'TEACHER']
+        return self.role in ['super_admin', 'SUPER_ADMIN', 'institute_admin', 'exam_admin', 'teacher', 'TEACHER', 'admin', 'ADMIN']
     
     def can_create_exams(self):
-        return self.role in ['super_admin', 'institute_admin', 'exam_admin', 'ADMIN']
+        return self.role in ['super_admin', 'SUPER_ADMIN', 'institute_admin', 'exam_admin', 'admin', 'ADMIN']
     
     # ===========
     # CUSTOM SAVE METHOD

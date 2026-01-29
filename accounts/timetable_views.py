@@ -19,7 +19,7 @@ def _check_super_admin(request):
             {"detail": "Authentication required."},
             status=status.HTTP_401_UNAUTHORIZED,
         )
-    if request.user.role != 'super_admin':
+    if request.user.role not in ['super_admin', 'SUPER_ADMIN']:
         return False, Response(
             {"detail": "Only Super Admin can perform this action."},
             status=status.HTTP_403_FORBIDDEN,
@@ -328,7 +328,7 @@ def _check_admin_or_super(request):
         )
     user = request.user
     user_role = user.role.lower() if user.role else ''
-    is_super = user_role == 'super_admin'
+    is_super = user_role in ['super_admin', 'SUPER_ADMIN']
     is_admin = user_role in ['admin', 'institute_admin', 'exam_admin']
     
     if not (is_super or is_admin):

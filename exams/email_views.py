@@ -48,7 +48,7 @@ def send_exam_invitations(request, exam_id):
             for email in student_emails:
                 try:
                     # Check if student exists
-                    student = User.objects.filter(email=email, role='student').first()
+                    student = User.objects.filter(email=email, role__in=['student', 'STUDENT']).first()
                     if not student:
                         failed_invitations.append({
                             'email': email,
@@ -224,7 +224,7 @@ def decline_invitation(request, invitation_id):
 def get_student_invitations(request):
     """Get all invitations for the current student"""
     user = request.user
-    if user.role != 'student':
+    if user.role not in ['student', 'STUDENT']:
         return Response({'error': 'Only students can view their invitations'}, status=status.HTTP_403_FORBIDDEN)
     
     invitations = ExamInvitation.objects.filter(student=user).select_related('exam', 'invited_by')

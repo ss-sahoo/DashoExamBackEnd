@@ -104,29 +104,7 @@ class QuestionListView(generics.ListCreateAPIView):
         return queryset.order_by('-created_at')
 
     def perform_create(self, serializer):
-        # Check if a question with the same exam and question_number already exists
-        exam = serializer.validated_data.get('exam')
-        question_number = serializer.validated_data.get('question_number')
-        
-        if exam and question_number:
-            exam_id = exam.id if hasattr(exam, 'id') else exam
-            existing_question = Question.objects.filter(
-                exam_id=exam_id,
-                question_number=question_number,
-                institute=self.request.user.institute,
-                is_active=True
-            ).first()
-            
-            if existing_question:
-                # Update existing question instead of creating a duplicate
-                for field, value in serializer.validated_data.items():
-                    if field not in ['exam', 'institute', 'created_by']:
-                        setattr(existing_question, field, value)
-                existing_question.save()
-                # Update the serializer instance so the response returns the updated question
-                serializer.instance = existing_question
-                return
-        
+        # The logic to check for existing questions is now handled inside QuestionCreateSerializer.create()
         serializer.save(
             institute=self.request.user.institute,
             created_by=self.request.user
@@ -1306,6 +1284,100 @@ def fix_question_numbers(request):
         'sections_processed': sections_processed,
         'message': f'Fixed {total_fixed} question numbers across {len(sections_processed)} sections'
     })
+
+
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+def solve_question_with_ai(request):
+    """Use AI to solve a specific question and provide the answer and solution."""
+    user = request.user
+    if not user.can_manage_exams():
+        return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
+
+    payload = request.data
+    question_text = payload.get('question_text', '')
+    options = payload.get('options', [])
+    question_type = payload.get('question_type', 'mcq')
+    subject = payload.get('subject', '')
+
+    if not question_text:
+        return Response({'error': 'Question text is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+    if not configure_gemini():
+        return Response(
+            {'error': 'Gemini API is not configured on the server.'},
+            status=status.HTTP_503_SERVICE_UNAVAILABLE
+        )
+
+    # Build solve prompt
+    prompt = f"""
+Solve the following {subject} question accurately and provide a detailed step-by-step solution.
+
+Question:
+{question_text}
+
+Question Type: {question_type}
+"""
+    if options and len(options) > 0:
+        prompt += "\nOptions:\n"
+        for i, opt in enumerate(options):
+            prompt += f"{chr(65+i)}) {opt}\n"
+
+    prompt += """
+Return the result EXCLUSIVELY in the following JSON format:
+{
+  "correct_answer": "Provide the exact text of the correct option (for MCQs) or the specific numerical/short answer value.",
+  "solution": "Provide a detailed step-by-step worked solution using LaTeX for mathematical formulas or scientific notations.",
+  "explanation": "Provide a brief conceptual explanation."
+}
+
+Important:
+- Use LaTeX for all mathematical formulas, scientific notations, and chemical equations (e.g., $E=mc^2$).
+- If multiple options are correct for a 'multiple_mcq', return an array of strings in 'correct_answer'.
+- Do NOT include any text outside of the JSON object.
+"""
+
+    try:
+        if not GOOGLE_AI_AVAILABLE or genai is None:
+            return Response(
+                {"error": "Google AI (Gemini) is not available."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE
+            )
+        
+        model = genai.GenerativeModel('gemini-2.0-flash')
+        response = model.generate_content(
+            prompt,
+            generation_config={
+                "temperature": 0.2, # Lower temperature for higher accuracy in solving
+                "top_p": 0.9,
+                "max_output_tokens": 2048,
+            }
+        )
+
+        text = response.text.strip()
+        match = re.search(r'\{.*\}', text, re.DOTALL)
+        if match:
+            json_str = match.group(0)
+            try:
+                ai_data = json.loads(json_str)
+            except json.JSONDecodeError:
+                # Common issue: Gemini returns raw LaTeX backslashes which are invalid in JSON
+                # We need to escape backslashes that aren't followed by valid JSON escape chars
+                # This regex finds a backslash followed by any character EXCEPT the valid JSON escape set (up to \uXXXX)
+                # For simplicity, we'll double all backslashes that aren't already part of a valid escape
+                # Let's use a robust approach: replace backslashes that are not followed by " \ / b f n r t u
+                json_str_fixed = re.sub(r'\\(?![\\"/bfnrtu])', r'\\\\', json_str)
+                try:
+                    ai_data = json.loads(json_str_fixed)
+                except json.JSONDecodeError as e:
+                    return Response({'error': f'AI returned invalid JSON: {str(e)}', 'raw_text': text}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            
+            return Response(ai_data)
+        else:
+            return Response({'error': 'AI failed to return structured data.', 'raw_text': text}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    except Exception as e:
+        return Response({'error': f'AI solver error: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 @api_view(['GET'])

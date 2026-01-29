@@ -54,7 +54,7 @@ def get_exam_schedule_info(request, exam_id):
         user = request.user
         
         # Check permissions
-        if user.role == 'student' and not exam.is_public and user not in exam.allowed_users.all():
+        if user.role in ['student', 'STUDENT'] and not exam.is_public and user not in exam.allowed_users.all():
             return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
         
         # Get timezone-aware information
@@ -63,7 +63,7 @@ def get_exam_schedule_info(request, exam_id):
         
         # Get reschedule information if applicable
         reschedule_info = None
-        if exam.reschedule_allowed and user.role == 'student':
+        if exam.reschedule_allowed and user.role in ['student', 'STUDENT']:
             # Check if student has any pending reschedule requests
             pending_request = ExamReschedule.objects.filter(
                 exam=exam, student=user, status='pending'
@@ -119,7 +119,7 @@ def request_exam_reschedule(request, exam_id):
         user = request.user
         
         # Check if user is a student
-        if user.role != 'student':
+        if user.role not in ['student', 'STUDENT']:
             return Response({'error': 'Only students can request reschedules'}, status=status.HTTP_403_FORBIDDEN)
         
         # Check if rescheduling is allowed
@@ -181,7 +181,7 @@ def get_reschedule_requests(request, exam_id):
         user = request.user
         
         # Check permissions
-        if user.role == 'student':
+        if user.role in ['student', 'STUDENT']:
             return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
         
         # Get reschedule requests
@@ -206,7 +206,7 @@ def review_reschedule_request(request, reschedule_id):
         user = request.user
         
         # Check permissions
-        if user.role == 'student':
+        if user.role in ['student', 'STUDENT']:
             return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
         
         # Validate request data
@@ -245,7 +245,7 @@ def get_student_reschedule_requests(request):
     """Get reschedule requests for the current student"""
     user = request.user
     
-    if user.role != 'student':
+    if user.role not in ['student', 'STUDENT']:
         return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
     
     requests = ExamReschedule.objects.filter(student=user).order_by('-created_at')

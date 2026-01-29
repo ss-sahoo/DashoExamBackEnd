@@ -17,7 +17,7 @@ from accounts.models import User
 @permission_classes([IsAuthenticated])
 def student_analytics_overview(request):
     """Get comprehensive analytics overview for a student"""
-    if request.user.role != 'student':
+    if request.user.role not in ['student', 'STUDENT']:
         return Response({'error': 'Access denied'}, status=status.HTTP_403_FORBIDDEN)
     
     user = request.user
@@ -153,7 +153,7 @@ def student_analytics_overview(request):
 @permission_classes([IsAuthenticated])
 def student_exam_analytics(request, exam_id):
     """Get detailed analytics for a specific exam attempt"""
-    if request.user.role != 'student':
+    if request.user.role not in ['student', 'STUDENT']:
         return Response({'error': 'Access denied'}, status=status.HTTP_403_FORBIDDEN)
     
     try:
@@ -262,7 +262,7 @@ def student_exam_analytics(request, exam_id):
 @permission_classes([IsAuthenticated])
 def student_performance_trends(request):
     """Get performance trends over time for a student"""
-    if request.user.role != 'student':
+    if request.user.role not in ['student', 'STUDENT']:
         return Response({'error': 'Access denied'}, status=status.HTTP_403_FORBIDDEN)
     
     user = request.user
@@ -346,7 +346,7 @@ def student_performance_trends(request):
 @permission_classes([IsAuthenticated])
 def student_weak_areas(request):
     """Identify weak areas for a student"""
-    if request.user.role != 'student':
+    if request.user.role not in ['student', 'STUDENT']:
         return Response({'error': 'Access denied'}, status=status.HTTP_403_FORBIDDEN)
     
     user = request.user
@@ -491,7 +491,7 @@ def student_weak_areas(request):
 @permission_classes([IsAuthenticated])
 def student_achievements(request):
     """Get achievements and milestones for a student"""
-    if request.user.role != 'student':
+    if request.user.role not in ['student', 'STUDENT']:
         return Response({'error': 'Access denied'}, status=status.HTTP_403_FORBIDDEN)
     
     user = request.user

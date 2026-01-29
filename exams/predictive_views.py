@@ -25,10 +25,10 @@ def get_student_performance_prediction(request, student_id, exam_id):
         user = request.user
         
         # Check permissions
-        if user.role == 'student' and user.id != student_id:
+        if user.role in ['student', 'STUDENT'] and user.id != student_id:
             return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
         
-        if user.role == 'student' and not user.can_view_exam(exam_id):
+        if user.role in ['student', 'STUDENT'] and not user.can_view_exam(exam_id):
             return Response({'error': 'Access denied to this exam'}, status=status.HTTP_403_FORBIDDEN)
         
         # Get prediction
@@ -176,7 +176,7 @@ def get_student_analytics_dashboard(request, student_id):
         user = request.user
         
         # Check permissions
-        if user.role == 'student' and user.id != student_id:
+        if user.role in ['student', 'STUDENT'] and user.id != student_id:
             return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
         
         student = User.objects.get(id=student_id)

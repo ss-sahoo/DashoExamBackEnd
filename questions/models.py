@@ -95,7 +95,7 @@ class Question(models.Model):
 
     class Meta:
         ordering = ['question_number', 'created_at']
-        unique_together = ['exam', 'question_number']
+        unique_together = ['exam', 'pattern_section_id', 'question_number']
 
     def __str__(self):
         return f"Exam {self.exam_id} - Q{self.question_number}: {self.question_text[:50]}..."

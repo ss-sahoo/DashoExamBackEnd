@@ -28,13 +28,16 @@ def generate_user_code(role: str, center_code: str = None, batch_code: str = Non
     # Map exam roles to timetable roles for code generation
     role_mapping = {
         'super_admin': 'ADMIN',
+        'SUPER_ADMIN': 'ADMIN',
         'institute_admin': 'ADMIN',
         'exam_admin': 'ADMIN',
-        'teacher': 'TEACHER',
-        'student': 'STUDENT',
+        'admin': 'ADMIN',
         'ADMIN': 'ADMIN',
+        'teacher': 'TEACHER',
         'TEACHER': 'TEACHER',
+        'student': 'STUDENT',
         'STUDENT': 'STUDENT',
+        'staff': 'STAFF',
         'STAFF': 'STAFF',
     }
     
@@ -121,13 +124,16 @@ def generate_password(role: str, center_code: str = None, batch_code: str = None
     # Map exam roles to timetable roles for password generation
     role_mapping = {
         'super_admin': 'ADMIN',
+        'SUPER_ADMIN': 'ADMIN',
         'institute_admin': 'ADMIN',
         'exam_admin': 'ADMIN',
-        'teacher': 'TEACHER',
-        'student': 'STUDENT',
+        'admin': 'ADMIN',
         'ADMIN': 'ADMIN',
+        'teacher': 'TEACHER',
         'TEACHER': 'TEACHER',
+        'student': 'STUDENT',
         'STUDENT': 'STUDENT',
+        'staff': 'STAFF',
         'STAFF': 'STAFF',
     }
     
@@ -213,4 +219,3 @@ def log_activity(institute, log_type, title, description, user=None, status='inf
         metadata=metadata or {},
         ip_address=ip_address
     )
-

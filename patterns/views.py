@@ -20,7 +20,7 @@ class SubjectListView(generics.ListCreateAPIView):
 
     def get_queryset(self):
         user = self.request.user
-        if user.role in ['super_admin', 'institute_admin']:
+        if user.is_institute_admin():
             return Subject.objects.filter(institute=user.institute, is_active=True)
         return Subject.objects.none()
 
@@ -35,7 +35,7 @@ class SubjectDetailView(generics.RetrieveUpdateDestroyAPIView):
 
     def get_queryset(self):
         user = self.request.user
-        if user.role in ['super_admin', 'institute_admin']:
+        if user.is_institute_admin():
             return Subject.objects.filter(institute=user.institute)
         return Subject.objects.none()
 

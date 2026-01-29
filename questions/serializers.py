@@ -37,7 +37,7 @@ class QuestionSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = [
             'id', 'created_by', 'verified_by', 'verified_at', 'usage_count', 'success_rate',
-            'created_at', 'updated_at', 'question_number_in_pattern'
+            'created_at', 'updated_at'
         ]
 
 
@@ -104,6 +104,9 @@ class QuestionCreateSerializer(serializers.ModelSerializer):
             fallback_pattern_number = initial.get('question_number_in_pattern') or data.get('question_number')
             data['question_number_in_pattern'] = fallback_pattern_number
 
+        # Store and ensure pattern_section_id is in data
+        data['pattern_section_id'] = pattern_section_id
+
         # Auto-populate pattern section name if missing
         if pattern_section_id:
             try:
@@ -125,18 +128,20 @@ class QuestionCreateSerializer(serializers.ModelSerializer):
     
     def create(self, validated_data):
         """
-        Create or update a question. If a question with the same exam and question_number
+        Create or update a question. If a question with the same exam, section and question_number
         already exists, update it instead of creating a duplicate.
         """
         exam = validated_data.get('exam')
         question_number = validated_data.get('question_number')
-        institute = validated_data.get('institute')
+        pattern_section_id = validated_data.get('pattern_section_id')
+        institute = validated_data.get('institute') or (self.context['request'].user.institute if 'request' in self.context else None)
         
-        # Check for existing question with same exam and question_number
+        # Check for existing question with same exam, section and question_number
         if exam and question_number and institute:
             exam_id = exam.id if hasattr(exam, 'id') else exam
             existing_question = Question.objects.filter(
                 exam_id=exam_id,
+                pattern_section_id=pattern_section_id,
                 question_number=question_number,
                 institute=institute,
                 is_active=True
@@ -145,7 +150,7 @@ class QuestionCreateSerializer(serializers.ModelSerializer):
             if existing_question:
                 # Update existing question
                 for field, value in validated_data.items():
-                    if field not in ['institute', 'created_by']:
+                    if field not in ['institute', 'created_by', 'exam']:
                         setattr(existing_question, field, value)
                 existing_question.save()
                 return existing_question

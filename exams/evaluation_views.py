@@ -25,7 +25,7 @@ def evaluate_exam_attempt(request, attempt_id):
         
         # Check permissions
         user = request.user
-        if user.role == 'student' and attempt.student != user:
+        if user.role in ['student', 'STUDENT'] and attempt.student != user:
             return Response({'error': 'Access denied'}, status=status.HTTP_403_FORBIDDEN)
         
         if not user.can_manage_exams() and attempt.student != user:
@@ -93,7 +93,7 @@ def get_question_evaluations(request, attempt_id):
         
         # Check permissions
         user = request.user
-        if user.role == 'student' and attempt.student != user:
+        if user.role in ['student', 'STUDENT'] and attempt.student != user:
             return Response({'error': 'Access denied'}, status=status.HTTP_403_FORBIDDEN)
         
         if not user.can_manage_exams() and attempt.student != user:

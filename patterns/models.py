@@ -5,7 +5,7 @@ from accounts.models import Institute
 
 class Subject(models.Model):
     """Subject model for organizing exam sections"""
-    name = models.CharField(max_length=100, unique=True)
+    name = models.CharField(max_length=100)
     description = models.TextField(blank=True)
     institute = models.ForeignKey(Institute, on_delete=models.CASCADE, related_name='subjects')
     is_active = models.BooleanField(default=True)

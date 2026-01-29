@@ -475,7 +475,7 @@ def user_dashboard_view(request):
     }
     
     # Add role-specific data
-    if user.role == 'student':
+    if user.role in ['student', 'STUDENT']:
         dashboard_data['upcoming_exams'] = []
         dashboard_data['exam_history'] = []
     elif user.can_manage_exams():
@@ -492,7 +492,7 @@ class InstituteUpdateView(generics.UpdateAPIView):
     
     def get_queryset(self):
         user = self.request.user
-        if user.role == 'super_admin':
+        if user.role in ['super_admin', 'SUPER_ADMIN']:
             return Institute.objects.all()
         return Institute.objects.filter(users=user, users__role__in=['institute_admin', 'super_admin'])
 
@@ -506,7 +506,7 @@ class InstituteUserListView(generics.ListAPIView):
         user = self.request.user
         institute_id = self.kwargs.get('institute_id')
         
-        if user.role == 'super_admin':
+        if user.role in ['super_admin', 'SUPER_ADMIN']:
             return User.objects.filter(institute_id=institute_id)
         elif user.role in ['institute_admin', 'exam_admin'] and user.institute_id == institute_id:
             return User.objects.filter(institute_id=institute_id)
@@ -521,7 +521,7 @@ class InstituteInvitationListView(generics.ListCreateAPIView):
     
     def get_queryset(self):
         user = self.request.user
-        if user.role == 'super_admin':
+        if user.role in ['super_admin', 'SUPER_ADMIN']:
             return InstituteInvitation.objects.all()
         elif user.role in ['institute_admin', 'exam_admin']:
             return InstituteInvitation.objects.filter(institute=user.institute)
@@ -542,7 +542,7 @@ class InstituteInvitationDetailView(generics.RetrieveUpdateDestroyAPIView):
     
     def get_queryset(self):
         user = self.request.user
-        if user.role == 'super_admin':
+        if user.role in ['super_admin', 'SUPER_ADMIN']:
             return InstituteInvitation.objects.all()
         elif user.role in ['institute_admin', 'exam_admin']:
             return InstituteInvitation.objects.filter(institute=user.institute)
@@ -617,7 +617,7 @@ def leave_institute(request):
     """Leave current institute"""
     user = request.user
     
-    if user.role == 'super_admin':
+    if user.role in ['super_admin', 'SUPER_ADMIN']:
         return Response({'error': 'Super admins cannot leave institutes'}, status=status.HTTP_400_BAD_REQUEST)
     
     if not user.institute:
@@ -644,7 +644,7 @@ def all_people_view(request):
     Get all people with filters and role information.
     
     Query Parameters:
-    - role: Filter by role (e.g., 'teacher', 'student', 'ADMIN')
+    - role: Filter by role (e.g., 'teacher', 'student', 'admin', 'ADMIN')
     - search: Search by name, email, or username
     - is_active: Filter by active status ('true' or 'false')
     - center_id: Filter by center
@@ -714,8 +714,8 @@ def all_people_view(request):
         {'value': 'exam_admin', 'label': 'Exam Admin'},
         {'value': 'teacher', 'label': 'Teacher'},
         {'value': 'student', 'label': 'Student'},
-        {'value': 'ADMIN', 'label': 'Center Admin'},
-        {'value': 'STAFF', 'label': 'Staff'},
+        {'value': 'admin', 'label': 'Center Admin'},
+        {'value': 'staff', 'label': 'Staff'},
     ]
     
     # Get role counts
