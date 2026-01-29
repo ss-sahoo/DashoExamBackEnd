@@ -1044,66 +1044,83 @@ def get_exam_result(request, attempt_id):
         # For disqualified exams or exams without ExamResult, we'll build from evaluations
         pass
     
-    # Get section-wise results
+    # Get section-wise results and valid evaluations for detailed view
     section_results = {}
+    valid_evaluation_ids = set()
+    
     if pattern:
         for section in pattern.sections.all():
+            # Filter specifically by pattern_section_id to avoid subject overlap issues
             section_evaluations = QuestionEvaluation.objects.filter(
                 attempt=attempt,
-                question_number__gte=section.start_question,
-                question_number__lte=section.end_question
+                question__pattern_section_id=section.id
             )
             
+            # Fallback if pattern_section_id is not set (e.g. for some older questions or manual additions)
+            if not section_evaluations.exists():
+                section_evaluations = QuestionEvaluation.objects.filter(
+                    attempt=attempt,
+                    question__subject__iexact=section.subject,
+                    question_number__gte=section.start_question,
+                    question_number__lte=section.end_question
+                )
+            
+            # Record these as valid for the detailed list
+            for ev in section_evaluations:
+                valid_evaluation_ids.add(ev.id)
+                
             section_score = sum(eval.marks_obtained for eval in section_evaluations)
             max_marks = section.marks_per_question * (section.end_question - section.start_question + 1)
             
-            if section.question_type in ['mcq', 'single_mcq', 'multiple_mcq', 'numerical', 'true_false', 'fill_blank']:
-                section_results[str(section.id)] = {
-                    'section_name': section.name,
-                    'question_type': section.question_type,
-                    'score': section_score,
-                    'max_marks': max_marks,
-                    'status': 'available',
-                    'feedback': 'Immediate feedback available'
-                }
-            else:
-                section_results[str(section.id)] = {
-                    'section_name': section.name,
-                    'question_type': section.question_type,
-                    'score': section_score if section_evaluations.exists() else None,
-                    'max_marks': max_marks,
-                    'status': 'available' if section_evaluations.exists() else 'pending_review',
-                    'feedback': 'Graded' if section_evaluations.exists() else 'Under teacher review'
-                }
+            section_results[str(section.id)] = {
+                'section_name': section.name,
+                'subject': section.subject,
+                'question_type': section.question_type,
+                'score': float(section_score),
+                'max_marks': max_marks,
+                'status': 'available' if section_evaluations.exists() else 'pending_review',
+                'feedback': 'Graded' if section_evaluations.exists() else 'Under review'
+            }
     
-    # Get detailed answers with evaluation data
+    # Get detailed answers with evaluation data, filtered to only valid ones
     detailed_answers = {}
-    evaluations = QuestionEvaluation.objects.filter(attempt=attempt).order_by('question_number')
+    # If we have sections, only show evaluations that belong to a section
+    eval_filter = {'attempt': attempt}
+    if valid_evaluation_ids:
+        eval_filter['id__in'] = valid_evaluation_ids
+        
+    evaluations = QuestionEvaluation.objects.filter(**eval_filter).select_related('question').order_by('question_number', 'id')
+    
+    # Second-pass fallback: if no sections matched any evaluations, show all for this attempt
+    if not evaluations.exists():
+        evaluations = QuestionEvaluation.objects.filter(attempt=attempt).select_related('question').order_by('question_number', 'id')
     
     for evaluation in evaluations:
         question = evaluation.question
-        detailed_answers[str(evaluation.question_number)] = {
+        # Use a unique key (evaluation ID) to prevent overwriting when question numbers repeat (across sections)
+        detailed_answers[str(evaluation.id)] = {
+            'question_id': question.id,
+            'question_number': evaluation.question_number,
             'question_text': question.question_text,
             'question_type': question.question_type,
+            'subject': question.subject,
             'user_answer': evaluation.student_answer,
             'correct_answer': question.correct_answer if hasattr(question, 'correct_answer') else 'N/A',
             'is_correct': evaluation.is_correct,
-            'marks_obtained': evaluation.marks_obtained,
-            'max_marks': evaluation.max_marks,
-            'explanation': evaluation.evaluation_notes or 'No explanation available'
+            'marks_obtained': float(evaluation.marks_obtained),
+            'max_marks': float(evaluation.max_marks),
+            'explanation': evaluation.evaluation_notes or evaluation.ai_feedback or evaluation.manual_feedback or 'No explanation available'
         }
     
-    # Calculate aggregates from evaluations
-    evaluations_qs = QuestionEvaluation.objects.filter(attempt=attempt)
-    correct_answers_count = evaluations_qs.filter(is_correct=True).count()
-    attempted_questions = evaluations_qs.filter(is_answered=True).count()
-    marks_obtained = sum(eval.marks_obtained for eval in evaluations_qs)
-    total_marks_available = sum(eval.max_marks for eval in evaluations_qs) or exam.total_marks
+    # Calculate aggregates from filtered evaluations
+    evaluations_list = list(evaluations)
+    correct_answers_count = sum(1 for e in evaluations_list if e.is_correct)
+    attempted_questions = sum(1 for e in evaluations_list if e.is_answered)
+    marks_obtained = sum(e.marks_obtained for e in evaluations_list)
+    total_marks_available = sum(e.max_marks for e in evaluations_list) or exam.total_marks
     
-    # Determine total questions from pattern/exam definition
-    total_questions = exam.total_questions
-    if not total_questions:
-        total_questions = evaluations_qs.count() or Question.objects.filter(exam=exam).count() or (result.total_questions_attempted if result else 0)
+    # Use actual question count from sections if available
+    total_questions = exam.total_questions or len(evaluations_list)
     
     answer_sheet_payload = ensure_answer_sheet_pdf(attempt)
     answer_sheet_data = None
@@ -1258,28 +1275,49 @@ def student_dashboard_data(request):
             'disqualified_exams': []
         })
     
-    # Filter exams by student's institute only (simplified for now)
-    # Get available exams (published/active, within time window, not exceeded attempts)
-    available_exams = Exam.objects.filter(
+    # Get student's active batch IDs for batch-specific filtering
+    from accounts.models import Enrollment
+    student_batch_ids = list(Enrollment.objects.filter(
+        student=user, 
+        status='ACTIVE'
+    ).values_list('batch_id', flat=True))
+    
+    # Base query for exams in this institute that are published or active
+    base_exam_query = Exam.objects.filter(
         institute=user.institute,
-        status__in=['published', 'active'],
+        status__in=['published', 'active']
+    )
+    
+    # Build visibility filter:
+    # 1. Institute-wide visibility
+    # 2. Specific centers (if student center matches)
+    # 3. Specific batches (if student is in any allowed batch)
+    # 4. Explicitly allowed users
+    visibility_q = Q(visibility_scope='institute')
+    
+    if hasattr(user, 'center') and user.center:
+        visibility_q |= Q(visibility_scope='centers', allowed_centers=user.center)
+        
+    if student_batch_ids:
+        visibility_q |= Q(visibility_scope='batches', allowed_batches__in=student_batch_ids)
+        
+    visibility_q |= Q(allowed_users=user)
+    
+    # Filter available exams (within time window, not submitted yet)
+    available_exams = base_exam_query.filter(
+        visibility_q,
         start_date__lte=now,
         end_date__gte=now
-    ).filter(
-        Q(is_public=True) | Q(allowed_users=user)
     ).exclude(
         attempts__student=user,
         attempts__status__in=['submitted', 'auto_submitted']
     ).distinct()
     
-    # Get scheduled exams (future exams that students can see)
-    scheduled_exams = Exam.objects.filter(
-        institute=user.institute,
-        status__in=['published', 'active'],
+    # Filter scheduled exams (future exams)
+    scheduled_exams = base_exam_query.filter(
+        visibility_q,
         start_date__gt=now,
         end_date__gte=now
-    ).filter(
-        Q(is_public=True) | Q(allowed_users=user)
     ).distinct()
     
     # Get ongoing exams (started but not submitted)
@@ -1300,13 +1338,18 @@ def student_dashboard_data(request):
         status='disqualified'
     ).select_related('exam').order_by('-submitted_at')[:10]
     
-    # Calculate stats (exclude disqualified exams from average)
+    # Calculate stats
     total_attempts = ExamAttempt.objects.filter(student=user).count()
-    completed_count = completed_attempts.count()
+    
+    # Average score from completed attempts
     average_score = 0
-    if completed_count > 0:
-        total_score = sum(attempt.percentage or 0 for attempt in completed_attempts)
-        average_score = total_score / completed_count
+    if completed_attempts.exists():
+        # Get all completed attempts for better average
+        all_completed = ExamAttempt.objects.filter(
+            student=user, 
+            status__in=['submitted', 'auto_submitted']
+        ).aggregate(avg=Avg('percentage'))['avg'] or 0
+        average_score = all_completed
     
     total_violations = ExamAttempt.objects.filter(student=user).aggregate(
         total=Sum('violations_count')
@@ -3674,6 +3717,70 @@ def capture_location(request):
             {'error': f'Failed to capture geolocation: {str(e)}'},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
+
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def exam_eligible_students(request, exam_id):
+    """
+    Get list of students eligible for the exam with their attempt status.
+    Supports Institute-wide, Center-specific, and Batch-specific visibility scopes.
+    """
+    try:
+        exam = Exam.objects.get(id=exam_id)
+    except Exam.DoesNotExist:
+        return Response({'error': 'Exam not found'}, status=status.HTTP_404_NOT_FOUND)
+        
+    user = request.user
+    if not user.can_manage_exams() or exam.institute != user.institute:
+        return Response({'error': 'Access denied'}, status=status.HTTP_403_FORBIDDEN)
+        
+    # Get students based on visibility scope
+    students = AccountsUser.objects.filter(institute=exam.institute, role='student')
+    
+    if exam.visibility_scope == 'centers':
+        students = students.filter(center__in=exam.allowed_centers.all())
+    elif exam.visibility_scope == 'batches':
+        # Enrolled students in allowed batches
+        from accounts.models import Enrollment
+        active_enrollments = Enrollment.objects.filter(
+            batch__in=exam.allowed_batches.all(), 
+            status='ACTIVE'
+        )
+        students = students.filter(id__in=active_enrollments.values_list('student_id', flat=True))
+    
+    # DISTINCT to avoid duplicates
+    students = students.distinct().select_related('center')
+    
+    # Get all attempts for this exam
+    attempts = ExamAttempt.objects.filter(exam=exam).values(
+        'student_id', 'status', 'score', 'percentage', 'submitted_at', 'id'
+    )
+    attempt_map = {a['student_id']: a for a in attempts}
+    
+    students_data = []
+    for s in students:
+        attempt = attempt_map.get(s.id)
+        students_data.append({
+            'student_id': s.id,
+            'full_name': s.get_full_name(),
+            'email': s.email,
+            'center_name': s.center.name if s.center else 'N/A',
+            'status': attempt['status'] if attempt else 'not_started',
+            'attempt_id': attempt['id'] if attempt else None,
+            'score': float(attempt['score']) if attempt and attempt['score'] else None,
+            'percentage': float(attempt['percentage']) if attempt and attempt['percentage'] else None,
+            'submitted_at': attempt['submitted_at'] if attempt else None,
+        })
+        
+    return Response({
+        'visibility_scope': exam.visibility_scope,
+        'visibility_display': exam.get_visibility_scope_display(),
+        'allowed_centers': [{'id': str(c.id), 'name': c.name} for c in exam.allowed_centers.all()],
+        'allowed_batches': [{'id': str(b.id), 'name': b.name, 'code': b.code} for b in exam.allowed_batches.all()],
+        'total_eligible': len(students_data),
+        'students': students_data
+    })
 
 
 @api_view(['GET'])

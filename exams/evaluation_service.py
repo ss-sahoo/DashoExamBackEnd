@@ -178,6 +178,7 @@ class EvaluationService:
                     add_questions(
                         Question.objects.filter(
                             exam=self.exam,
+                            subject__iexact=section.subject,
                             question_number__gte=section.start_question,
                             question_number__lte=section.end_question
                         ).order_by('question_number', 'id')
