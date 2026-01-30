@@ -120,8 +120,9 @@ class ExamListView(generics.ListCreateAPIView):
         queryset = Exam.objects.filter(institute=user.institute)
         
         if user.role in ['student', 'STUDENT']:
-            # Students can only see published/active exams based on visibility scope
-            base_filter = Q(status__in=['published', 'active'])
+            # Students can only see published/active exams that haven't ended yet
+            now = timezone.now()
+            base_filter = Q(status__in=['published', 'active'], end_date__gte=now)
             
             # Build visibility scope filter
             visibility_filter = Q()
@@ -368,6 +369,65 @@ class AllExamAttemptsListView(generics.ListAPIView):
         return filter_all_exam_attempts(self.request)
 
 
+def auto_submit_attempt_if_expired(attempt):
+    """ Helper to auto-submit an attempt if its time has run out """
+    if attempt.status != 'in_progress':
+        return False
+        
+    now = timezone.now()
+    exam = attempt.exam
+    
+    # Check if absolute exam end date has passed (plus grace period)
+    # Using grace period for late submission flexibility
+    absolute_deadline = exam.end_date + timedelta(minutes=exam.grace_period_minutes)
+    
+    # Check if individual student duration has passed
+    if attempt.started_at:
+        individual_deadline = attempt.started_at + timedelta(minutes=exam.duration_minutes)
+    else:
+        individual_deadline = absolute_deadline
+        
+    is_expired = now > absolute_deadline or now > individual_deadline
+    
+    if is_expired:
+        with transaction.atomic():
+            # Calculate final time spent
+            if attempt.started_at:
+                time_spent = (now - attempt.started_at).total_seconds()
+                attempt.time_spent = int(time_spent)
+            
+            attempt.status = 'auto_submitted'
+            attempt.submitted_at = now
+            attempt.save()
+            
+            from .models import ExamResult
+            from .evaluation_service import EvaluationService
+            
+            final_answers = attempt.answers if attempt.answers else {}
+            
+            result, created = ExamResult.objects.get_or_create(
+                attempt=attempt,
+                defaults={
+                    'answers': final_answers,
+                    'total_questions_attempted': len([a for a in final_answers.values() if a])
+                }
+            )
+            
+            evaluation_service = EvaluationService(attempt)
+            evaluation_result = evaluation_service.evaluate_attempt(final_answers)
+            
+            result.total_correct_answers = evaluation_result['auto_evaluated']
+            result.total_wrong_answers = result.total_questions_attempted - evaluation_result['auto_evaluated']
+            result.total_unattempted = exam.total_questions - result.total_questions_attempted
+            result.save()
+            
+            attempt.score = evaluation_result['final_score']
+            attempt.percentage = (evaluation_result['final_score'] / exam.total_marks) * 100 if exam.total_marks > 0 else 0
+            attempt.save()
+            return True
+    return False
+
+
 class ExamAttemptDetailView(generics.RetrieveUpdateAPIView):
     """Get and update exam attempts"""
     serializer_class = ExamAttemptSerializer
@@ -378,6 +438,14 @@ class ExamAttemptDetailView(generics.RetrieveUpdateAPIView):
         if user.role in ['student', 'STUDENT']:
             return ExamAttempt.objects.filter(student=user)
         return ExamAttempt.objects.filter(exam__institute=user.institute)
+
+    def retrieve(self, request, *args, **kwargs):
+        instance = self.get_object()
+        if instance.status == 'in_progress' and auto_submit_attempt_if_expired(instance):
+            instance.refresh_from_db()
+        serializer = self.get_serializer(instance)
+        return Response(serializer.data)
+
 
 
 @api_view(['POST'])
@@ -616,23 +684,6 @@ def log_violation(request, attempt_id):
             metadata={'violation_id': violation.id, 'attempt_id': attempt.id}
         )
 
-        # Check if max violations exceeded
-        if attempt.violations_count >= attempt.max_violations_allowed:
-            attempt.status = 'disqualified'
-            attempt.save()
-            
-            # Create proctoring record if it doesn't exist
-            proctoring, created = ExamProctoring.objects.get_or_create(attempt=attempt)
-            proctoring.auto_disqualified = True
-            proctoring.save()
-            
-            return Response({
-                'violation_logged': True,
-                'violation_count': attempt.violations_count,
-                'auto_disqualified': True,
-                'message': 'Maximum violations exceeded. Exam disqualified.'
-            }, status=status.HTTP_200_OK)
-        
         return Response({
             'violation_logged': True,
             'violation_count': attempt.violations_count,
@@ -780,19 +831,11 @@ def upload_snapshot(request, attempt_id):
                 attempt.violations_count += 1
                 attempt.save()
                 
-                # Check for auto-disqualification
-                if attempt.violations_count >= attempt.max_violations_allowed:
-                    attempt.status = 'disqualified'
-                    attempt.save()
-                    proctoring.auto_disqualified = True
-                    proctoring.save()
-                    break
-        
         return Response({
             'snapshot_uploaded': True,
             'analysis': analysis,
             'violation_count': attempt.violations_count,
-            'auto_disqualified': attempt.status == 'disqualified',
+            'auto_disqualified': False,
             'storage_type': 'full' if has_violations else 'metadata_only'  # Indicates what was stored
         }, status=status.HTTP_200_OK)
     
@@ -856,17 +899,11 @@ def log_proctoring_incident(request, attempt_id):
         proctoring.save(update_fields=['total_violations'])
         violation_created = True
 
-        if attempt.violations_count >= attempt.max_violations_allowed:
-            attempt.status = 'disqualified'
-            attempt.save(update_fields=['status'])
-            proctoring.auto_disqualified = True
-            proctoring.save(update_fields=['auto_disqualified'])
-
     return Response({
         'incident_logged': True,
         'violation_created': violation_created,
         'violation_count': attempt.violations_count,
-        'auto_disqualified': attempt.status == 'disqualified'
+        'auto_disqualified': False
     }, status=status.HTTP_200_OK)
 
 
@@ -1383,7 +1420,11 @@ def student_dashboard_data(request):
     # Format ongoing exams
     ongoing_exams_data = []
     for attempt in ongoing_attempts:
-        time_remaining = attempt.exam.duration_minutes * 60 - attempt.time_spent
+        # Auto-submit if expired and skip from ongoing list
+        if auto_submit_attempt_if_expired(attempt):
+            continue
+            
+        time_remaining = attempt.time_remaining or 0
         ongoing_exams_data.append({
             'id': attempt.id,
             'attempt_id': attempt.id,

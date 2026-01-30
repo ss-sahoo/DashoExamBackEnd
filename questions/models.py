@@ -517,7 +517,7 @@ class ExtractionJob(models.Model):
     # AI metadata
     ai_model_used = models.CharField(
         max_length=100,
-        default='gemini-1.5-flash',
+        default='gemini-2.5-flash',
         help_text='AI model used for extraction'
     )
     tokens_used = models.IntegerField(

@@ -34,7 +34,7 @@ class Migration(migrations.Migration):
                 ('questions_extracted', models.IntegerField(default=0, help_text='Questions successfully extracted')),
                 ('questions_imported', models.IntegerField(default=0, help_text='Questions successfully imported to exam')),
                 ('questions_failed', models.IntegerField(default=0, help_text='Questions that failed extraction or import')),
-                ('ai_model_used', models.CharField(default='gemini-1.5-flash', help_text='AI model used for extraction', max_length=100)),
+                ('ai_model_used', models.CharField(default='gemini-2.5-flash', help_text='AI model used for extraction', max_length=100)),
                 ('tokens_used', models.IntegerField(default=0, help_text='Total tokens consumed by AI API')),
                 ('processing_time_seconds', models.FloatField(blank=True, help_text='Total processing time in seconds', null=True)),
                 ('error_message', models.TextField(blank=True, help_text='Error message if extraction failed')),

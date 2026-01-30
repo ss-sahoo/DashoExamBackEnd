@@ -141,12 +141,43 @@ TIME_ZONE = 'UTC'
 USE_I18N = True
 USE_TZ = True
 
-# Static files (CSS, JavaScript, Images)
-STATIC_URL = '/static/'
-STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
+# === DigitalOcean Spaces / S3-Compatible Storage Configuration ===
+ALWAYS_UPLOAD_FILES_TO_AWS = True  # Set to True to enable DigitalOcean Spaces upload
 
-MEDIA_URL = '/media/'
-MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
+# AWS Configuration (needed for both modes)
+AWS_ACCESS_KEY_ID = 'UCW66UXZOVY3QVYQLSEK'
+AWS_SECRET_ACCESS_KEY = 'TJi4SulSCtEU5RlHWsKkOpFoL0Qo/qVf5JB6Dcg8rWk'
+AWS_STORAGE_BUCKET_NAME = 'edrspace'
+AWS_S3_ENDPOINT_URL = 'https://sgp1.digitaloceanspaces.com'
+AWS_S3_OBJECT_PARAMETERS = {
+    'CacheControl': 'max-age=86400',
+}
+AWS_LOCATION = 'edrcontainer1'
+AWS_DEFAULT_ACL = 'public-read'
+AWS_S3_REGION_NAME = 'sgp1'
+AWS_S3_FILE_OVERWRITE = False
+AWS_QUERYSTRING_AUTH = False
+AWS_S3_VERIFY = False
+AWS_S3_ADDRESSING_STYLE = 'virtual'
+AWS_S3_SIGNATURE_VERSION = 's3v4'
+
+# This means you are uploading to AWS even when running locally
+if ALWAYS_UPLOAD_FILES_TO_AWS:    
+    # Media files configuration - pointing to DigitalOcean Space
+    MEDIA_URL = f'https://{AWS_STORAGE_BUCKET_NAME}.sgp1.digitaloceanspaces.com/{AWS_LOCATION}/media/'
+    MEDIA_ROOT = ''
+    
+    # Static files configuration - pointing to DigitalOcean Space
+    STATIC_URL = f'https://{AWS_STORAGE_BUCKET_NAME}.sgp1.digitaloceanspaces.com/{AWS_LOCATION}/static/'
+    STATICFILES_STORAGE = 'exam_flow_backend.storage.StaticStorage'
+    DEFAULT_FILE_STORAGE = 'exam_flow_backend.storage.MediaStorage'
+else:
+    # Static files (CSS, JavaScript, Images)
+    STATIC_URL = '/static/'
+    STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
+
+    MEDIA_URL = '/media/'
+    MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 
 # Default primary key field type
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'

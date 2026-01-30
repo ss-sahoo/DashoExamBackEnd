@@ -592,19 +592,43 @@ def generate_ai_question(request):
         if not text:
             raise ValueError(f"AI returned no content (finish reasons: {finish_reasons or 'unknown'}). Consider simplifying the prompt.")
 
-        match = re.search(r'\{.*\}', text, re.DOTALL)
-        if match:
-            ai_data = json.loads(match.group(0))
-        else:
-            # Attempt to parse full response as JSON array/object
+        # Robust JSON extraction
+        ai_data = None
+        
+        # Method 1: Direct parsing
+        try:
+            ai_data = json.loads(text)
+        except json.JSONDecodeError:
+            pass
+            
+        # Method 2: Regex find outermost braces
+        if not ai_data:
+            match = re.search(r'\{.*\}', text, re.DOTALL)
+            if match:
+                try:
+                    ai_data = json.loads(match.group(0))
+                except json.JSONDecodeError:
+                    pass
+                    
+        # Method 3: Clean markdown blocks and retry direct parsing
+        if not ai_data:
+            cleaned_text = re.sub(r'```json\s*|\s*```', '', text).strip()
             try:
-                ai_data = json.loads(text)
-                if isinstance(ai_data, list) and ai_data:
-                    ai_data = ai_data[0]
-                if not isinstance(ai_data, dict):
-                    raise ValueError("AI response JSON is not an object.")
-            except Exception:
-                raise ValueError("AI response did not contain a valid JSON object.")
+                ai_data = json.loads(cleaned_text)
+            except json.JSONDecodeError:
+                pass
+                
+        # Method 4: If text is an array, take the first item
+        if isinstance(ai_data, list) and ai_data:
+            ai_data = ai_data[0]
+            
+        if not isinstance(ai_data, dict):
+            # Final fallback: look for ANY JSON-like structure
+            if not ai_data:
+                # Try to see if it's just a string that didn't parse but looks like an object
+                raise ValueError(f"AI response did not contain a valid JSON object. Raw response was: {text[:200]}...")
+            else:
+                raise ValueError("AI response was parsed but is not a dictionary object.")
 
         question_text = ai_data.get('question_text', '').strip()
         options = ai_data.get('options', [])

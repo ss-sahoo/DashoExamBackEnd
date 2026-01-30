@@ -35,7 +35,7 @@ The `.env` file has been updated with the following configurations:
 - `GEMINI_API_KEY` - Your Google Gemini API key (already set)
 - `CELERY_BROKER_URL` - Redis URL for Celery (default: redis://localhost:6379/0)
 - `CELERY_RESULT_BACKEND` - Redis URL for task results
-- `GEMINI_MODEL` - Gemini model to use (default: gemini-1.5-flash)
+- `GEMINI_MODEL` - Gemini model to use (default: gemini-2.5-flash)
 
 ### 4. Start Celery Worker
 

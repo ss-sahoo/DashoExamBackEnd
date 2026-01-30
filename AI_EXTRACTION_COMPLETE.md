@@ -329,7 +329,7 @@ CELERY_RESULT_BACKEND = 'redis://localhost:6379/0'
 
 # Gemini AI
 GEMINI_API_KEY = 'your-api-key'
-GEMINI_MODEL = 'gemini-1.5-flash'
+GEMINI_MODEL = 'gemini-2.5-flash'
 GEMINI_TEMPERATURE = 0.7
 GEMINI_TOP_P = 0.95
 GEMINI_MAX_TOKENS = 8192

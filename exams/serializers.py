@@ -179,7 +179,7 @@ class ExamSerializer(serializers.ModelSerializer):
 
 
 class ExamCreateSerializer(serializers.ModelSerializer):
-    pattern_id = serializers.IntegerField(write_only=True)
+    copy_from_exam_id = serializers.IntegerField(write_only=True, required=False, allow_null=True)
     id = serializers.IntegerField(read_only=True)
     public_access_token = serializers.UUIDField(read_only=True)
     public_token_expires_at = serializers.DateTimeField(read_only=True)
@@ -197,7 +197,7 @@ class ExamCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Exam
         fields = [
-            'id', 'title', 'description', 'pattern_id', 'start_date', 'end_date',
+            'id', 'title', 'description', 'pattern_id', 'copy_from_exam_id', 'start_date', 'end_date',
             'max_attempts', 'allow_late_submission', 'late_submission_penalty',
             'require_fullscreen', 'disable_copy_paste', 'disable_right_click',
             'enable_webcam_proctoring', 'allow_tab_switching',
@@ -219,23 +219,52 @@ class ExamCreateSerializer(serializers.ModelSerializer):
             'public_allow_multiple_devices', 'public_link_created_at', 'public_link_last_used_at',
             'public_link_usage_count', 'share_url'
         ]
+        extra_kwargs = {
+            'pattern_id': {'required': False, 'allow_null': True}
+        }
 
     def create(self, validated_data):
         # Extract visibility scope related data
         center_ids = validated_data.pop('center_ids', [])
         batch_ids = validated_data.pop('batch_ids', [])
         
+        # Extract copy source if provided
+        copy_from_exam_id = validated_data.pop('copy_from_exam_id', None)
+        
         # Get the pattern object and set duration_minutes from it
-        pattern_id = validated_data.pop('pattern_id')
+        pattern_id = validated_data.pop('pattern_id', None)
         from patterns.models import ExamPattern
-        pattern = ExamPattern.objects.get(id=pattern_id)
+        
+        source_exam = None
+        if copy_from_exam_id:
+            try:
+                source_exam = Exam.objects.get(id=copy_from_exam_id)
+                # If pattern_id not provided, use source exam's pattern
+                if not pattern_id:
+                    pattern_id = source_exam.pattern_id
+            except Exam.DoesNotExist:
+                raise serializers.ValidationError({'copy_from_exam_id': 'Source exam not found'})
+        
+        if not pattern_id:
+            raise serializers.ValidationError({'pattern_id': 'Exam pattern or copy_from_exam_id is required'})
+
+        try:
+            pattern = ExamPattern.objects.get(id=pattern_id)
+        except ExamPattern.DoesNotExist:
+            raise serializers.ValidationError({'pattern_id': 'Exam pattern not found'})
+
         validated_data['pattern'] = pattern
         validated_data['duration_minutes'] = pattern.total_duration
         
-        # Set status to 'draft' until questions are added
+        # Set status to 'draft' until questions are added (or if copying, questions will be added)
         validated_data['status'] = 'draft'
         
         exam = super().create(validated_data)
+        
+        # Handle copying if requested
+        if source_exam:
+            from .copy_utils import clone_exam_assets
+            clone_exam_assets(source_exam, exam, user=self.context['request'].user)
         
         # Handle visibility scope relationships
         if center_ids and exam.visibility_scope == 'centers':
