@@ -352,9 +352,15 @@ def _build_branding_info(institute) -> Dict[str, Optional[str]]:
         try:
             if institute.logo and institute.logo.name:
                 if institute.logo.storage.exists(institute.logo.name):
-                    logo_path = institute.logo.path
+                    # For S3/DO Spaces, .path is not available. 
+                    # ReportLab Image can take a URL or we can omit path.
+                    # We'll rely on logo_url which can be a full S3 URL.
+                    try:
+                        logo_path = institute.logo.path
+                    except (NotImplementedError, AttributeError):
+                        logo_path = None
                     logo_url = institute.logo.url
-        except (ValueError, OSError):
+        except Exception:
             logo_path = None
             logo_url = None
 
