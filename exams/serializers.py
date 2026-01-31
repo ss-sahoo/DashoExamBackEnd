@@ -179,6 +179,7 @@ class ExamSerializer(serializers.ModelSerializer):
 
 
 class ExamCreateSerializer(serializers.ModelSerializer):
+    pattern_id = serializers.IntegerField(write_only=True, required=False, allow_null=True)
     copy_from_exam_id = serializers.IntegerField(write_only=True, required=False, allow_null=True)
     id = serializers.IntegerField(read_only=True)
     public_access_token = serializers.UUIDField(read_only=True)

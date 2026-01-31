@@ -13,9 +13,19 @@ def clone_exam_assets(source_exam, target_exam, user=None):
         new_pattern = None
 
         if source_pattern:
-            # We want to give it a unique name if possible to avoid conflicts
+            # Use the target exam title to make it clear why this pattern was cloned
+            pattern_name = f"{source_pattern.name} (for {target_exam.title})"
+            
+            # Ensure name is unique to avoid database errors
+            unique_name = pattern_name
+            counter = 1
+            while ExamPattern.objects.filter(name=unique_name, institute=target_exam.institute).exists():
+                suffix = f" ({counter})"
+                unique_name = pattern_name[:(255 - len(suffix))] + suffix
+                counter += 1
+                
             new_pattern = ExamPattern.objects.create(
-                name=f"{source_pattern.name} (Copy {target_exam.id})",
+                name=unique_name,
                 description=source_pattern.description,
                 institute=target_exam.institute,
                 total_questions=source_pattern.total_questions,

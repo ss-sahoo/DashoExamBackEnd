@@ -243,10 +243,8 @@ class User(AbstractUser):
     # ===========
     # PROPERTY HELPERS FOR COMPATIBILITY
     # ===========
-    @property
-    def center_id(self):
-        """Get center ID for API compatibility"""
-        return str(self.center.id) if self.center else None
+    # Removed shadowing center_id property to allow setting center_id directly
+    # Django provides center_id automatically for the center ForeignKey.
 
 
 class Center(TimeStampedModel):

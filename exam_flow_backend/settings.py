@@ -169,8 +169,15 @@ if ALWAYS_UPLOAD_FILES_TO_AWS:
     
     # Static files configuration - pointing to DigitalOcean Space
     STATIC_URL = f'https://{AWS_STORAGE_BUCKET_NAME}.sgp1.digitaloceanspaces.com/{AWS_LOCATION}/static/'
-    STATICFILES_STORAGE = 'exam_flow_backend.storage.StaticStorage'
-    DEFAULT_FILE_STORAGE = 'exam_flow_backend.storage.MediaStorage'
+    # Modern Django 4.2+ Storage Configuration
+    STORAGES = {
+        "default": {
+            "BACKEND": "exam_flow_backend.storage.MediaStorage",
+        },
+        "staticfiles": {
+            "BACKEND": "exam_flow_backend.storage.StaticStorage",
+        },
+    }
 else:
     # Static files (CSS, JavaScript, Images)
     STATIC_URL = '/static/'
@@ -178,6 +185,15 @@ else:
 
     MEDIA_URL = '/media/'
     MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
+
+    STORAGES = {
+        "default": {
+            "BACKEND": "django.core.files.storage.FileSystemStorage",
+        },
+        "staticfiles": {
+            "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
+        },
+    }
 
 # Default primary key field type
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'

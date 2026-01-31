@@ -94,13 +94,14 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, validators=[validate_password])
     password_confirm = serializers.CharField(write_only=True)
     institute_id = serializers.IntegerField(required=False, allow_null=True)
+    center_id = serializers.CharField(required=False, allow_null=True)
     role = serializers.CharField(required=False, allow_null=True)
 
     class Meta:
         model = User
         fields = [
             'email', 'username', 'first_name', 'last_name', 'password', 
-            'password_confirm', 'phone', 'institute_id', 'role'
+            'password_confirm', 'phone', 'institute_id', 'center_id', 'role'
         ]
 
     def validate(self, attrs):
@@ -110,17 +111,19 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         validated_data.pop('password_confirm')
-        # Extract institute_id and role if provided
+        # Extract institute_id, center_id and role if provided
         institute_id = validated_data.pop('institute_id', None)
+        center_id = validated_data.pop('center_id', None)
         role = validated_data.pop('role', 'student')  # Default to student (lowercase) if not provided
         
         # ALWAYS normalize role to lowercase to prevent uppercase roles
         role = role.lower() if role else 'student'
         
-        # Create user with institute and role
+        # Create user with institute, center and role
         user = User.objects.create_user(
             **validated_data,
             institute_id=institute_id,
+            center_id=center_id,
             role=role
         )
         return user
@@ -130,7 +133,7 @@ class UserSerializer(serializers.ModelSerializer):
     institute = InstituteSerializer(read_only=True)
     institute_id = serializers.IntegerField(read_only=True)  # Add institute_id for frontend
     full_name = serializers.CharField(source='get_full_name', read_only=True)
-    center_id = serializers.SerializerMethodField()
+    center_id = serializers.CharField(required=False, allow_null=True)
     center_name = serializers.SerializerMethodField()
 
     class Meta:
@@ -140,7 +143,7 @@ class UserSerializer(serializers.ModelSerializer):
             'role', 'institute', 'institute_id', 'center_id', 'center_name', 
             'phone', 'profile_picture', 'is_verified', 'is_active', 'created_at'
         ]
-        read_only_fields = ['id', 'email', 'created_at', 'institute_id', 'center_id', 'center_name']
+        read_only_fields = ['id', 'email', 'created_at', 'institute_id', 'center_name']
     
     def get_center_id(self, obj):
         """Get center ID - either from direct assignment or from admin_centers"""
@@ -161,6 +164,28 @@ class UserSerializer(serializers.ModelSerializer):
         if admin_center:
             return admin_center.name
         return None
+
+    def to_representation(self, instance):
+        """Ensure center_id and center_name are correctly populated in output"""
+        ret = super().to_representation(instance)
+        # Use our custom logic for center_id and center_name to handle fallbacks
+        ret['center_id'] = self.get_center_id(instance)
+        ret['center_name'] = self.get_center_name(instance)
+        return ret
+
+    def update(self, instance, validated_data):
+        """Allow updating center_id directly"""
+        # Capture center_id if it's in the data, even if it's None/empty
+        if 'center_id' in validated_data:
+            center_id = validated_data.pop('center_id')
+            instance.center_id = center_id if center_id else None
+        
+        # Update other fields
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+            
+        instance.save()
+        return instance
 
 
 class UserLoginSerializer(serializers.Serializer):
