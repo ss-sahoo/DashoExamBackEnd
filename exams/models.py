@@ -441,8 +441,19 @@ class ExamAttempt(models.Model):
     def time_remaining(self):
         if not self.started_at:
             return None
-        elapsed = dj_timezone.now() - self.started_at
-        remaining_seconds = (self.exam.duration_minutes * 60) - elapsed.total_seconds()
+        
+        now = dj_timezone.now()
+        elapsed = now - self.started_at
+        
+        # 1. Remaining time based on attempt duration
+        remaining_by_duration = (self.exam.duration_minutes * 60) - elapsed.total_seconds()
+        
+        # 2. Remaining time based on absolute exam end date
+        remaining_by_end_date = (self.exam.end_date - now).total_seconds()
+        
+        # Use the stricter (smaller) remaining time
+        remaining_seconds = min(remaining_by_duration, remaining_by_end_date)
+        
         return max(0, remaining_seconds)
 
 
@@ -501,7 +512,7 @@ class ExamProctoring(models.Model):
     """Proctoring data for exam attempts"""
     attempt = models.OneToOneField(ExamAttempt, on_delete=models.CASCADE, related_name='proctoring')
     webcam_enabled = models.BooleanField(default=False)
-    snapshots = models.JSONField(default=list, help_text="List of snapshot URLs with timestamps")
+    snapshots = models.JSONField(default=list, help_text="List of snapshot metadata with timestamps (Base64 images removed)")
     incidents = models.JSONField(default=list, help_text="Client-side proctoring incidents")
     face_verification_passed = models.BooleanField(default=False)
     total_violations = models.IntegerField(default=0)
@@ -512,6 +523,23 @@ class ExamProctoring(models.Model):
     
     def __str__(self):
         return f"Proctoring for {self.attempt}"
+
+
+class ProctoringSnapshot(models.Model):
+    """Separate model to store proctoring images as files in S3/Spaces"""
+    attempt = models.ForeignKey(ExamAttempt, on_delete=models.CASCADE, related_name='proctoring_snapshot_files')
+    image = models.ImageField(upload_to='proctoring_snapshots/')
+    timestamp = models.DateTimeField()
+    metadata = models.JSONField(default=dict)
+    analysis = models.JSONField(default=dict)
+    has_violations = models.BooleanField(default=False)
+    stored_reason = models.CharField(max_length=50, default='monitoring')
+    
+    class Meta:
+        ordering = ['-timestamp']
+
+    def __str__(self):
+        return f"Snapshot for {self.attempt} at {self.timestamp}"
 
 
 class ExamInvitation(models.Model):

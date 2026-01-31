@@ -8,10 +8,13 @@ from django.db.models.functions import Concat
 from django.contrib.auth import get_user_model
 from accounts.models import User as AccountsUser
 from django.conf import settings
+from django.core.files.base import ContentFile
 from django.shortcuts import get_object_or_404
 from django.http import HttpResponse, JsonResponse
 from decimal import Decimal
 import json
+import logging
+import base64
 import csv
 import io
 import uuid
@@ -35,6 +38,7 @@ from .models import (
     QuestionAnalytics,
     QuestionEvaluation,
     PublicExamAccessLog,
+    ProctoringSnapshot,
 )
 from questions.models import Question
 from .serializers import (
@@ -56,6 +60,7 @@ from .ai_proctoring import mediapipe_proctoring as proctoring_analyzer
 from .pdf_utils import ensure_answer_sheet_pdf
 
 # proctoring_analyzer is now the MediaPipe system
+logger = logging.getLogger(__name__)
 from accounts.jwt_utils import get_tokens_for_user
 
 User = get_user_model()
@@ -801,18 +806,60 @@ def upload_snapshot(request, attempt_id):
         )
         
         # ALWAYS store full snapshot with image for review purposes
-        # Store full snapshot info with image data
-        snapshot_info = {
-            'timestamp': serializer.validated_data['timestamp'].isoformat(),
-            'metadata': serializer.validated_data['metadata'],
-            'analysis': analysis,
-            'image_data': serializer.validated_data['image_data'],  # Always store image
-            'stored_reason': 'violation_detected' if has_violations else 'monitoring',
-            'has_violations': has_violations
-        }
-        proctoring.snapshots.append(snapshot_info)
-        
-        proctoring.save()
+        # Convert base64 to file and save to ProctoringSnapshot model
+        try:
+            # Prepare image file - find format and actual image data
+            image_input = serializer.validated_data['image_data']
+            if ';base64,' in image_input:
+                format_part, imgstr = image_input.split(';base64,')
+                ext = format_part.split('/')[-1]
+            else:
+                imgstr = image_input
+                ext = 'jpg'  # Default to jpg if format not provided
+            
+            # Construct filename: attempt_ID_timestamp.ext
+            filename = f"snapshot_{attempt.id}_{int(timezone.now().timestamp())}.{ext}"
+            image_file = ContentFile(base64.b64decode(imgstr), name=filename)
+            
+            # Create ProctroingSnapshot instance (This uploads to Cloud/Spaces)
+            snapshot_obj = ProctoringSnapshot.objects.create(
+                attempt=attempt,
+                image=image_file,
+                timestamp=serializer.validated_data['timestamp'],
+                metadata=serializer.validated_data['metadata'],
+                analysis=analysis,
+                has_violations=has_violations,
+                stored_reason='violation_detected' if has_violations else 'monitoring'
+            )
+            
+            # Store metadata only in the main proctoring JSON list (keep image_data empty to save DB space)
+            snapshot_info = {
+                'id': snapshot_obj.id,
+                'timestamp': serializer.validated_data['timestamp'].isoformat(),
+                'metadata': serializer.validated_data['metadata'],
+                'analysis': analysis,
+                'image_url': snapshot_obj.image.url,  # Store the Cloud URL instead of Base64
+                'stored_reason': snapshot_obj.stored_reason,
+                'has_violations': has_violations
+            }
+            proctoring.snapshots.append(snapshot_info)
+            proctoring.save()
+            
+        except Exception as e:
+            logger.error(f"Failed to process snapshot file: {e}")
+            # Fallback: just store metadata without image if file saving fails
+            snapshot_info = {
+                'timestamp': serializer.validated_data['timestamp'].isoformat(),
+                'metadata': serializer.validated_data['metadata'],
+                'analysis': analysis,
+                'image_url': None,
+                'has_image': False,
+                'error': f'File storage failed: {str(e)}',
+                'has_violations': has_violations,
+                'stored_reason': 'violation_detected' if has_violations else 'monitoring'
+            }
+            proctoring.snapshots.append(snapshot_info)
+            proctoring.save()
         
         # Log any violations found (only for proctoring snapshots, not identity verification)
         if has_violations:
@@ -938,43 +985,75 @@ def get_proctoring_snapshots(request, attempt_id):
             'metadata_only_snapshots': 0
         }, status=status.HTTP_200_OK)
     
-    snapshots = proctoring.snapshots or []
+    # Get legacy snapshots from JSONField
+    legacy_snapshots = proctoring.snapshots or []
     
-    # Filter to show only violation snapshots (with images) for admins
-    # Students see all their snapshots
+    # Get new snapshots from ProctoringSnapshot model
+    snapshot_files = ProctoringSnapshot.objects.filter(attempt=attempt)
+    
     filter_violations_only = request.query_params.get('violations_only', 'false').lower() == 'true'
     
     if filter_violations_only and user.role not in ['student', 'STUDENT']:
-        violation_snapshots = [
-            s for s in snapshots 
-            if s.get('stored_reason') == 'violation_detected' and s.get('image_data')
+        # Filter legacy
+        legacy_snapshots = [
+            s for s in legacy_snapshots 
+            if s.get('stored_reason') == 'violation_detected'
         ]
-        snapshots = violation_snapshots
+        # Filter new
+        snapshot_files = snapshot_files.filter(stored_reason='violation_detected')
     
-    # Format response with image data
+    seen_ids = set()
     formatted_snapshots = []
-    for snapshot in snapshots:
-        formatted = {
+
+    # 1. Add new model-based snapshots first (most accurate)
+    for snapshot in snapshot_files:
+        seen_ids.add(snapshot.id)
+        image_url = snapshot.image.url
+        if not image_url.startswith('http'):
+            image_url = request.build_absolute_uri(image_url)
+            
+        formatted_snapshots.append({
+            'id': snapshot.id,
+            'timestamp': snapshot.timestamp.isoformat(),
+            'stored_reason': snapshot.stored_reason,
+            'has_image': True,
+            'image_url': image_url,
+            'metadata': snapshot.metadata,
+            'analysis': snapshot.analysis,
+            'violations': snapshot.analysis.get('violations', []),
+            'faces_detected': snapshot.analysis.get('faces_detected', 0),
+            'source': 'file_storage'
+        })
+    
+    # 2. Add legacy snapshots from JSONField (deduplicate)
+    for snapshot in legacy_snapshots:
+        # Skip if already added via model
+        if snapshot.get('id') in seen_ids:
+            continue
+            
+        formatted_snapshots.append({
             'timestamp': snapshot.get('timestamp'),
             'stored_reason': snapshot.get('stored_reason', 'unknown'),
-            'has_image': bool(snapshot.get('image_data')),
-            'image_data': snapshot.get('image_data'),  # Base64 image (only for violations)
+            'has_image': bool(snapshot.get('image_data') or snapshot.get('image_url')),
+            'image_data': snapshot.get('image_data'),  # Base64 data
+            'image_url': snapshot.get('image_url'),    # Cloud URL
             'metadata': snapshot.get('metadata', {}),
             'analysis': snapshot.get('analysis', {}),
             'violations': snapshot.get('analysis', {}).get('violations', []),
-            'faces_detected': snapshot.get('analysis', {}).get('faces_detected', snapshot.get('faces_detected', 0))
-        }
-        formatted_snapshots.append(formatted)
+            'faces_detected': snapshot.get('analysis', {}).get('faces_detected', snapshot.get('faces_detected', 0)),
+            'source': 'legacy'
+        })
+    
+    # Sort by timestamp descending
+    formatted_snapshots.sort(key=lambda x: x['timestamp'], reverse=True)
     
     # Count statistics
-    violation_count = len([s for s in snapshots if s.get('stored_reason') == 'violation_detected'])
-    metadata_count = len([s for s in snapshots if s.get('stored_reason') == 'metadata_only'])
+    violation_count = len([s for s in formatted_snapshots if s.get('stored_reason') == 'violation_detected'])
     
     return Response({
         'snapshots': formatted_snapshots,
-        'total_count': len(snapshots),
+        'total_count': len(formatted_snapshots),
         'violation_snapshots': violation_count,
-        'metadata_only_snapshots': metadata_count,
         'attempt_id': attempt_id,
         'student_name': attempt.student.get_full_name() or attempt.student.email,
         'exam_title': attempt.exam.title
