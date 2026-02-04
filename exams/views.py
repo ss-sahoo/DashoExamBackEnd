@@ -551,12 +551,19 @@ def submit_exam(request):
         attempt.submitted_at = timezone.now()
         attempt.save()
         
-        # Create result record
-        result = ExamResult.objects.create(
+        # Create or update result record
+        result, created = ExamResult.objects.get_or_create(
             attempt=attempt,
-            answers=final_answers,
-            total_questions_attempted=len([a for a in final_answers.values() if a])
+            defaults={
+                'answers': final_answers,
+                'total_questions_attempted': len([a for a in final_answers.values() if a])
+            }
         )
+        
+        if not created:
+            result.answers = final_answers
+            result.total_questions_attempted = len([a for a in final_answers.values() if a])
+            result.save()
         
         # Use the new evaluation system
         from .evaluation_service import EvaluationService
@@ -1225,7 +1232,9 @@ def get_exam_result(request, attempt_id):
             'is_correct': evaluation.is_correct,
             'marks_obtained': float(evaluation.marks_obtained),
             'max_marks': float(evaluation.max_marks),
-            'explanation': evaluation.evaluation_notes or evaluation.ai_feedback or evaluation.manual_feedback or 'No explanation available'
+            'explanation': evaluation.evaluation_notes or evaluation.ai_feedback or evaluation.manual_feedback or 'No explanation available',
+            'evaluation_status': evaluation.evaluation_status,
+            'evaluation_type': evaluation.evaluation_type
         }
     
     # Calculate aggregates from filtered evaluations

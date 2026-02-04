@@ -22,7 +22,7 @@ class PatternSectionSerializer(serializers.ModelSerializer):
             'start_question', 'end_question', 'marks_per_question', 'negative_marking', 
             'min_questions_to_attempt', 'is_compulsory', 'order', 
             'total_questions_in_section', 'total_marks_in_section', 'marking_scheme',
-            'questions_added'
+            'questions_added', 'question_configurations'
         ]
 
     def get_questions_added(self, obj):
@@ -124,20 +124,23 @@ class ExamPatternSerializer(serializers.ModelSerializer):
         return attrs
 
 
-class PatternSectionCreateSerializer(serializers.Serializer):
+class PatternSectionCreateSerializer(serializers.ModelSerializer):
     """Serializer for creating sections with marking_scheme support"""
-    name = serializers.CharField(max_length=100)
-    subject = serializers.CharField(max_length=100)
-    question_type = serializers.CharField(max_length=100)
-    start_question = serializers.IntegerField(min_value=1)
-    end_question = serializers.IntegerField(min_value=1)
-    min_questions_to_attempt = serializers.IntegerField(default=0)
-    is_compulsory = serializers.BooleanField(default=True)
-    order = serializers.IntegerField(default=1)
-    marking_scheme = serializers.DictField(required=False)
-    # These will be populated from marking_scheme
-    marks_per_question = serializers.IntegerField(required=False)
-    negative_marking = serializers.DecimalField(max_digits=4, decimal_places=2, required=False)
+    marking_scheme = serializers.DictField(required=False, write_only=True)
+    question_type = serializers.CharField()  # Override to bypass choice validation before custom mapping
+    
+    class Meta:
+        model = PatternSection
+        fields = [
+            'name', 'subject', 'question_type', 'start_question', 'end_question',
+            'min_questions_to_attempt', 'is_compulsory', 'order', 'marking_scheme',
+            'marks_per_question', 'negative_marking', 'question_configurations'
+        ]
+        extra_kwargs = {
+            'marks_per_question': {'required': False},
+            'negative_marking': {'required': False},
+            'question_configurations': {'required': False, 'default': dict}
+        }
 
     def validate_question_type(self, value):
         """Convert frontend question type names to backend format"""
@@ -150,13 +153,13 @@ class PatternSectionCreateSerializer(serializers.Serializer):
             'Fill in the Blanks': 'fill_blank',
             'single_mcq': 'single_mcq',
             'multiple_mcq': 'multiple_mcq',
-            'mcq': 'single_mcq',  # Default to single MCQ for backward compatibility
+            'mcq': 'single_mcq',
             'numerical': 'numerical',
             'subjective': 'subjective',
             'true_false': 'true_false',
             'fill_blank': 'fill_blank'
         }
-        return type_mapping.get(value, 'single_mcq')
+        return type_mapping.get(value, value.lower() if hasattr(value, 'lower') else value)
 
     def validate(self, attrs):
         # Extract marking scheme and convert to flat fields

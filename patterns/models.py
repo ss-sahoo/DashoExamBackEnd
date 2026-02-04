@@ -85,6 +85,7 @@ class PatternSection(models.Model):
     fixed_questions = models.JSONField(default=list, blank=True, help_text='List of fixed question IDs for fixed sections')
     selection_criteria = models.JSONField(default=dict, blank=True, help_text='Criteria for question selection (difficulty, topic, etc.)')
     question_bank = models.ForeignKey('questions.QuestionBank', on_delete=models.SET_NULL, null=True, blank=True, related_name='pattern_sections')
+    question_configurations = models.JSONField(default=dict, blank=True, help_text='Per-question configuration overrides (e.g. nested structure for subjective questions)')
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

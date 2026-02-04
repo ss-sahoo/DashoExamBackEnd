@@ -44,9 +44,12 @@ class Question(models.Model):
     question_type = models.CharField(max_length=20, choices=QUESTION_TYPE_CHOICES)
     difficulty = models.CharField(max_length=10, choices=DIFFICULTY_CHOICES, default='medium')
     
+    # Structure for nested questions (internal choices, sub-parts)
+    structure = models.JSONField(default=dict, blank=True, help_text='Defines nested sub-questions or internal choices for complex questions')
+    
     # Options for MCQ
     options = models.JSONField(default=list, blank=True)
-    correct_answer = models.TextField()
+    correct_answer = models.TextField(blank=True)
     
     # Solution and explanation
     solution = models.TextField(blank=True)

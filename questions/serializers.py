@@ -28,7 +28,7 @@ class QuestionSerializer(serializers.ModelSerializer):
     class Meta:
         model = Question
         fields = [
-            'id', 'question_text', 'question_type', 'difficulty', 'options', 'correct_answer',
+            'id', 'question_text', 'question_type', 'difficulty', 'structure', 'options', 'correct_answer',
             'solution', 'explanation', 'marks', 'negative_marks', 'subject', 'topic', 'subtopic',
             'tags', 'question_bank', 'exam', 'exam_title', 'question_number', 'question_number_in_pattern',
             'pattern_section_id', 'pattern_section_name', 'institute', 'created_by', 'created_by_name',
@@ -45,7 +45,7 @@ class QuestionCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Question
         fields = [
-            'question_text', 'question_type', 'difficulty', 'options', 'correct_answer',
+            'question_text', 'question_type', 'difficulty', 'structure', 'options', 'correct_answer',
             'solution', 'explanation', 'marks', 'negative_marks', 'subject', 'topic',
             'subtopic', 'tags', 'question_bank', 'exam', 'question_number',
             'pattern_section_id', 'pattern_section_name', 'question_number_in_pattern'
@@ -56,6 +56,7 @@ class QuestionCreateSerializer(serializers.ModelSerializer):
             'pattern_section_id': {'required': False, 'allow_null': True},
             'pattern_section_name': {'required': False, 'allow_null': True},
             'question_number_in_pattern': {'required': False, 'allow_null': True},
+            'correct_answer': {'required': False, 'allow_blank': True},
         }
     
     def run_validators(self, value):
@@ -224,7 +225,10 @@ class BulkQuestionImportSerializer(serializers.Serializer):
             raise serializers.ValidationError("Questions data must be a list")
         
         for i, question in enumerate(value):
-            required_fields = ['question_text', 'question_type', 'correct_answer']
+            required_fields = ['question_text', 'question_type']
+            if question.get('question_type') != 'subjective':
+                required_fields.append('correct_answer')
+                
             for field in required_fields:
                 if field not in question:
                     raise serializers.ValidationError(f"Question {i+1} missing required field: {field}")

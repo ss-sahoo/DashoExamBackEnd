@@ -62,7 +62,7 @@ class ExamPatternListView(generics.ListCreateAPIView):
         )
 
     def create(self, request, *args, **kwargs):
-        """Override create to handle duplicate pattern names gracefully"""
+        """Override create to handle duplicate pattern names gracefully and return full serialized data"""
         pattern_name = request.data.get('name', '')
         user_institute = request.user.institute
         
@@ -78,7 +78,20 @@ class ExamPatternListView(generics.ListCreateAPIView):
             )
         
         try:
-            return super().create(request, *args, **kwargs)
+            # Use the prescribed create serializer for validation and creation
+            serializer = self.get_serializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            
+            # Save the instance
+            instance = serializer.save(
+                institute=self.request.user.institute,
+                created_by=self.request.user
+            )
+            
+            # Return full data using the detail serializer
+            response_serializer = ExamPatternSerializer(instance, context=self.get_serializer_context())
+            return Response(response_serializer.data, status=status.HTTP_201_CREATED)
+            
         except Exception as e:
             # Catch any other database errors
             return Response(

@@ -5,6 +5,14 @@ from typing import Dict, List, Tuple, Optional
 from django.utils import timezone
 from django.db import transaction
 from django.conf import settings
+import google.generativeai as genai
+import logging
+
+logger = logging.getLogger(__name__)
+
+# Configure Gemini
+if hasattr(settings, 'GEMINI_API_KEY') and settings.GEMINI_API_KEY:
+    genai.configure(api_key=settings.GEMINI_API_KEY)
 
 from .models import ExamAttempt, QuestionEvaluation, EvaluationBatch, EvaluationSettings, EvaluationProgress
 from questions.models import Question
@@ -25,7 +33,7 @@ class EvaluationService:
             defaults={
                 'enable_auto_evaluation': True,
                 'enable_manual_evaluation': True,
-                'enable_ai_evaluation': False,
+                'enable_ai_evaluation': True,
             }
         )
         return settings
@@ -69,6 +77,7 @@ class EvaluationService:
             # Process each question
             evaluation_results = []
             auto_evaluated_count = 0
+            ai_evaluated_count = 0
             manual_evaluation_required = []
             ai_evaluation_required = []
             
@@ -114,14 +123,22 @@ class EvaluationService:
                     q_eval.evaluation_status = 'pending'
                     manual_evaluation_required.append(q_eval)
                 elif eval_type == 'ai':
-                    q_eval.evaluation_status = 'pending'
-                    ai_evaluation_required.append(q_eval)
+                    # Perform immediate AI evaluation if requested
+                    result = self.evaluate_with_ai(q_eval)
+                    if result.get('success'):
+                        ai_evaluated_count += 1
+                        evaluation_results.append(result)
+                    else:
+                        q_eval.evaluation_status = 'pending'
+                        ai_evaluation_required.append(q_eval)
+                        evaluation_results.append(None)
                 
                 q_eval.save()
                 evaluation_results.append(result if eval_type == 'auto' else None)
             
             # Update progress
             progress.auto_evaluated = auto_evaluated_count
+            progress.ai_evaluated = ai_evaluated_count
             progress.pending_evaluation = len(manual_evaluation_required) + len(ai_evaluation_required)
             progress.save()
             
@@ -138,6 +155,7 @@ class EvaluationService:
             return {
                 'evaluation_results': evaluation_results,
                 'auto_evaluated': auto_evaluated_count,
+                'ai_evaluated': ai_evaluated_count,
                 'manual_required': len(manual_evaluation_required),
                 'ai_required': len(ai_evaluation_required),
                 'final_score': final_score,
@@ -205,9 +223,10 @@ class EvaluationService:
                 return 'auto'
         
         # Manual evaluation for subjective questions
+        # Manual/AI evaluation for subjective questions
         if question_type == 'subjective':
-            if self.settings.enable_ai_evaluation and self.settings.ai_fallback_to_manual:
-                return 'ai'  # Try AI first, fallback to manual
+            if self.settings.enable_ai_evaluation:
+                return 'ai'  # Try AI first
             elif self.settings.enable_manual_evaluation:
                 return 'manual'
         
@@ -391,50 +410,141 @@ class EvaluationService:
         return obtained_marks if total_marks > 0 else 0
     
     def evaluate_with_ai(self, question_evaluation: QuestionEvaluation) -> Dict:
-        """Evaluate subjective questions using AI"""
-        # This is a placeholder for AI evaluation
-        # In a real implementation, you would integrate with OpenAI, Claude, or other AI services
+        """Evaluate subjective questions using Google Gemini AI"""
+        if not hasattr(settings, 'GEMINI_API_KEY') or not settings.GEMINI_API_KEY:
+            logger.warning("Gemini API key not configured. Skipping AI evaluation.")
+            return {
+                'success': False,
+                'error': "Gemini API key not configured",
+                'fallback_to_manual': True
+            }
+
+        question = question_evaluation.question
+        student_raw_answer = question_evaluation.student_answer
+        
+        if not student_raw_answer or not student_raw_answer.strip():
+            return {
+                'success': True,
+                'marks_obtained': 0,
+                'is_correct': False,
+                'feedback': "Question not attempted."
+            }
+
+        # Handle structured answers (internal choices, parts)
+        processed_answer = student_raw_answer
+        selected_choice_context = ""
         
         try:
-            # Placeholder AI evaluation logic
-            # In practice, you would send the question and student answer to an AI service
+            # Check if it's a JSON string (our structured format)
+            if student_raw_answer.startswith('{'):
+                data = json.loads(student_raw_answer)
+                if isinstance(data, dict) and 'selected_choice' in data:
+                    selected_choice = data.get('selected_choice')
+                    text_content = data.get('text', '')
+                    parts_data = data.get('parts', {})
+                    
+                    selected_choice_context = f"The student chose to answer: {selected_choice}.\n"
+                    
+                    # If there are specific parts answered for this choice
+                    if parts_data and selected_choice in parts_data:
+                        parts = parts_data[selected_choice]
+                        if isinstance(parts, dict):
+                            parts_text = []
+                            for part_idx, content in parts.items():
+                                parts_text.append(f"Answer for Part {int(part_idx) + 1}: {content}")
+                            processed_answer = "\n".join(parts_text)
+                        else:
+                            processed_answer = str(parts)
+                    else:
+                        processed_answer = text_content
+        except Exception as e:
+            logger.debug(f"Error parsing structured answer for AI evaluation: {e}")
+            # Fall back to raw string if parsing fails
+            processed_answer = student_raw_answer
+
+        # Prepare evaluation criteria
+        criteria = question.explanation or question.solution or "Evaluate based on general knowledge and accuracy."
+        
+        # Prepare prompt
+        prompt = f"""
+        You are an expert academic examiner. Please evaluate the student's response to the following question.
+        
+        QUESTION:
+        {question.question_text}
+        
+        REFERENCE SOLUTION/CRITERIA:
+        {criteria}
+        
+        STUDENT RESPONSE CONTEXT:
+        {selected_choice_context}
+        
+        STUDENT ACTUAL ANSWER:
+        {processed_answer}
+        
+        MAXIMUM MARKS POSSIBLE: {question.marks}
+        
+        EVALUATION REQUIREMENTS:
+        1. Compare the student's answer against the reference solution/criteria.
+        2. Assign objective marks based on quality, accuracy, and completeness.
+        3. Provide brief, encouraging, yet critical feedback.
+        4. Be fair but strict with technical accuracy.
+        
+        OUTPUT FORMAT (Return strictly JSON):
+        {{
+            "marks_obtained": <float between 0 and {question.marks}>,
+            "is_correct": <boolean, true if marks >= 50% of max>,
+            "feedback": "<short string>",
+            "confidence": <float between 0 and 1>
+        }}
+        """
+
+        try:
+            # Use defined model or default to 1.5 Flash for speed and cost
+            model_name = getattr(settings, 'GEMINI_MODEL', 'gemini-1.5-flash')
+            model = genai.GenerativeModel(model_name)
             
-            # For now, return a mock evaluation
-            ai_confidence = 0.85  # Mock confidence score
-            ai_feedback = "AI evaluation completed. Please review for accuracy."
+            response = model.generate_content(prompt)
+            response_text = response.text.strip()
             
-            # Simple scoring based on answer length and keywords (placeholder logic)
-            answer_length = len(question_evaluation.student_answer)
-            max_marks = float(question_evaluation.max_marks)
+            # Clean JSON from markdown blocks if present
+            if response_text.startswith("```"):
+                response_text = re.sub(r'^```json\s*|\s*```$', '', response_text, flags=re.MULTILINE)
             
-            # Basic scoring logic (replace with actual AI evaluation)
-            if answer_length > 50:
-                marks_obtained = max_marks * 0.8
-            elif answer_length > 20:
-                marks_obtained = max_marks * 0.6
-            else:
-                marks_obtained = max_marks * 0.3
+            result = json.loads(response_text)
             
-            # Update question evaluation
-            question_evaluation.marks_obtained = Decimal(str(marks_obtained))
-            question_evaluation.is_correct = marks_obtained > (max_marks * 0.5)
+            # Extract and normalize values
+            marks = float(result.get('marks_obtained', 0))
+            is_correct = bool(result.get('is_correct', False))
+            feedback = result.get('feedback', 'Evaluated by AI.')
+            confidence = float(result.get('confidence', 0.9))
+            
+            # Clamp marks
+            marks = max(0, min(marks, float(question.marks)))
+            
+            # Update question evaluation record
+            question_evaluation.marks_obtained = Decimal(str(marks))
+            question_evaluation.is_correct = is_correct
             question_evaluation.evaluation_status = 'ai_evaluated'
             question_evaluation.evaluated_at = timezone.now()
-            question_evaluation.ai_confidence_score = Decimal(str(ai_confidence))
-            question_evaluation.ai_feedback = ai_feedback
+            question_evaluation.ai_confidence_score = Decimal(str(confidence))
+            question_evaluation.ai_feedback = feedback
             question_evaluation.save()
+            
+            logger.info(f"AI Evaluation successful for attempt {self.attempt.id}, question {question.id}. Score: {marks}")
             
             return {
                 'success': True,
-                'marks_obtained': marks_obtained,
-                'confidence': ai_confidence,
-                'feedback': ai_feedback
+                'is_correct': is_correct,
+                'marks_obtained': marks,
+                'feedback': feedback,
+                'confidence': confidence
             }
             
         except Exception as e:
+            logger.error(f"AI evaluation failed for question {question.id}: {str(e)}")
             # Fallback to manual evaluation if AI fails
             question_evaluation.evaluation_status = 'pending'
-            question_evaluation.evaluation_notes = f"AI evaluation failed: {str(e)}"
+            question_evaluation.evaluation_notes = f"AI Evaluation failed: {str(e)}"
             question_evaluation.save()
             
             return {
