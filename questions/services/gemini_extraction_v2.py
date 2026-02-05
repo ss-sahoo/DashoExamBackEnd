@@ -40,7 +40,7 @@ class GeminiExtractionServiceV2:
     def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None):
         """Initialize the enhanced extraction service"""
         self.api_key = api_key or getattr(settings, 'GEMINI_API_KEY', None)
-        self.model = model or getattr(settings, 'GEMINI_MODEL', 'gemini-2.5-flash')
+        self.model = model or getattr(settings, 'GEMINI_MODEL', 'gemini-2.0-flash')
         
         if not self.api_key:
             raise GeminiExtractionError("Gemini API key not configured")
@@ -815,30 +815,67 @@ Return a JSON array with all questions found:
     "question_text": "Full question text here without options",
     "question_type": "single_mcq",
     "options": ["Option A text", "Option B text", "Option C text", "Option D text"],
+    "is_nested": false,
+    "structure": {{}},
     "correct_answer": "C",
     "solution": "Solution explanation here",
     "detected_section": "Section A - Single Correct"
   }},
   {{
     "question_number": 2,
-    "question_text": "Another question text",
-    "question_type": "numerical",
-    "options": [],
-    "correct_answer": "42",
-    "solution": "Solution here",
-    "detected_section": "Numerical Type"
+    "question_text": "Answer the following questions:",
+    "question_type": "subjective",
+    "is_nested": true,
+    "structure": {{
+      "nested_parts": [
+        {{
+          "type": "compulsory",
+          "label": "a",
+          "text": "What happens when phenol reacts with",
+          "marks": 2,
+          "sub_parts": [
+            {{ "type": "compulsory", "label": "i", "text": "Br2/CS2", "marks": 1 }},
+            {{ "type": "compulsory", "label": "ii", "text": "Conc. HNO3", "marks": 1 }}
+          ]
+        }},
+        {{ "type": "compulsory", "label": "b", "text": "Why phenol does not undergo protonation?", "marks": 1 }},
+        {{
+          "type": "choice_group",
+          "label": "c",
+          "options": [
+            {{ 
+               "label": "c", "text": "Explain the following:", "marks": 2,
+               "sub_parts": [
+                 {{ "label": "i", "text": "Hyperconjugation", "marks": 1 }},
+                 {{ "label": "ii", "text": "Electromeric effect", "marks": 1 }}
+               ]
+            }},
+            {{ "label": "c", "text": "Write the IUPAC name of the product...", "marks": 1 }}
+          ]
+        }}
+      ]
+    }},
+    "correct_answer": "...",
+    "solution": "...",
+    "detected_section": "Descriptive"
   }}
 ]
 ```
 
 ## EXTRACTION RULES
 1. question_number: Sequential starting from 1
-2. question_text: Full question text WITHOUT the options
-3. question_type: One of the types listed above (use section info to determine)
-4. options: Array of option texts (empty array for numerical/subjective)
-5. correct_answer: Single letter A/B/C/D, multiple letters "A,C", or actual value
-6. solution: Text after "Solution:" or "Explanation:" (can be empty string "")
-7. detected_section: Which section this question belongs to (if known)
+2. question_text: The main prompt or lead-in text (e.g., "Answer the following:")
+3. question_type: One of the types listed above
+4. nested_parts: 
+   - Use `type: "compulsory"` for parts that must be answered.
+   - Use `type: "choice_group"` for parts that are alternatives (separated by "OR").
+   - `sub_parts` can be nested inside compulsory parts for deeper levels (i, ii, etc.).
+5. marks: Extract marks if indicated next to the part (e.g., "[2]" or "2 marks").
+6. correctly identify the hierarchy of parts (a, b, c) and sub-parts (i, ii).
+7. options: Array of option texts (empty array for numerical/subjective).
+8. correct_answer: Single letter, multiple letters "A,C", or actual values for sub-parts.
+9. solution: Text after "Solution:" or "Explanation:".
+10. detected_section: Which section this question belongs to.
 
 ## IMPORTANT
 - Return ONLY the JSON array, no other text
@@ -1154,6 +1191,7 @@ Return JSON array with all questions:
                 'has_latex': q.get('has_latex', False),
                 # NEW: Preserve detected section from AI response
                 'detected_section': str(q.get('detected_section', '')).strip(),
+                'structure': q.get('structure', {}) or {},
             }
             
             # Validate MCQ options

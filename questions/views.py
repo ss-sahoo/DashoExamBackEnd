@@ -513,6 +513,119 @@ Guidelines:
 """
 
 
+def _build_nested_ai_prompt(question_configuration: dict, nested_type: str, subject: str, topic: str, difficulty: str, instructions: str, marks: int):
+    """Build AI prompt for nested/multipart questions based on the question configuration."""
+    subject_line = f"Subject: {subject}" if subject else "Subject: General Knowledge"
+    topic_line = f"Topic: {topic}" if topic else "Topic: Mixed Concepts"
+    marks_line = f"This question carries {marks} mark(s) total." if marks else ""
+    instructions_line = instructions.strip() if instructions else "Create questions that test understanding at the appropriate difficulty level."
+    
+    # Build the structure description from the configuration
+    parts_description = []
+    structure_example = []
+    
+    options = question_configuration.get('options', []) or question_configuration.get('sub_questions', [])
+    
+    for part in options:
+        part_type = part.get('type', 'part')
+        label = part.get('label', '')
+        description = part.get('description', '')
+        part_marks = part.get('marks', 1)
+        
+        if part_type == 'choice_group':
+            # Handle OR choice groups
+            choice_options = part.get('options', [])
+            choice_descriptions = []
+            for choice in choice_options:
+                choice_label = choice.get('label', choice.get('description', ''))
+                choice_marks = choice.get('marks', 1)
+                sub_parts = choice.get('sub_parts', [])
+                
+                if sub_parts:
+                    sub_desc = ", ".join([f"({sp.get('label', '')})" for sp in sub_parts])
+                    choice_descriptions.append(f"  - Option {choice_label} ({choice_marks} marks) with sub-parts: {sub_desc}")
+                    # Add structure for choices with sub_parts
+                    structure_example.append({
+                        "label": choice_label,
+                        "text": f"Question text for choice {choice_label}",
+                        "sub_parts": [{"label": sp.get('label', ''), "text": f"Sub-part {sp.get('label', '')} question"} for sp in sub_parts]
+                    })
+                else:
+                    choice_descriptions.append(f"  - Option {choice_label} ({choice_marks} marks)")
+                    structure_example.append({
+                        "label": choice_label,
+                        "text": f"Question text for choice {choice_label}"
+                    })
+            
+            parts_description.append(f"CHOICE GROUP (student picks ONE):\n" + "\n".join(choice_descriptions))
+        else:
+            # Regular part
+            sub_parts = part.get('sub_parts', []) or part.get('parts', [])
+            if sub_parts:
+                sub_desc = ", ".join([f"({sp.get('label', '')})" for sp in sub_parts])
+                parts_description.append(f"Part {label} ({part_marks} marks) with sub-parts: {sub_desc}")
+                structure_example.append({
+                    "label": label,
+                    "text": f"Introduction or context for part {label}",
+                    "sub_parts": [{"label": sp.get('label', ''), "text": f"Sub-part {sp.get('label', '')} question"} for sp in sub_parts]
+                })
+            else:
+                parts_description.append(f"Part {label} ({part_marks} marks)")
+                structure_example.append({
+                    "label": label,
+                    "text": f"Question text for part {label}"
+                })
+    
+    structure_desc = "\n".join([f"  - {p}" for p in parts_description])
+    
+    # Determine type description
+    if nested_type == 'internal_choice':
+        type_desc = "an OR/CHOICE question where the student must answer ONE of the given options"
+    elif nested_type == 'mixed':
+        type_desc = "a MIXED question with both required parts AND choice options"
+    else:
+        type_desc = "a MULTI-PART question with sequential parts (a), (b), (c), etc."
+    
+    import json
+    example_json = json.dumps({
+        "question_text": "Answer the following:",
+        "structure": {
+            "nested_parts": structure_example[:3]  # Show first 3 parts as example
+        },
+        "difficulty": difficulty,
+        "topic": topic or "Relevant Topic"
+    }, indent=2)
+    
+    return f"""
+You are an expert assessment designer. Generate {type_desc}.
+{subject_line}
+{topic_line}
+{marks_line}
+Difficulty: {difficulty}
+
+The question MUST have this EXACT structure:
+{structure_desc}
+
+Additional author instructions:
+{instructions_line}
+
+IMPORTANT: Generate content for EACH part according to the structure above.
+- For regular parts: Provide a specific question or task
+- For choice groups: Provide DIFFERENT but equally valid questions for each option
+- For sub-parts: Each sub-part should be a distinct, specific question
+
+Output must be a single JSON object with this format:
+{example_json}
+
+Guidelines:
+- Generate unique, pedagogically sound content for EVERY part and sub-part
+- Each part should test different aspects of the topic
+- Ensure factual accuracy
+- Do NOT include any text outside of the JSON object
+- Do NOT include markdown fences or commentary
+"""
+
+
 @api_view(['POST'])
 @permission_classes([permissions.IsAuthenticated])
 def generate_ai_question(request):
@@ -530,6 +643,11 @@ def generate_ai_question(request):
     marks = payload.get('marks') or 1
     pattern_section_name = payload.get('pattern_section_name', '')
     question_number = payload.get('question_number') or 0
+    
+    # New: Handle nested questions
+    is_nested = payload.get('is_nested', False)
+    nested_type = payload.get('nested_type', '')
+    question_configuration = payload.get('question_configuration')
 
     if difficulty not in ['easy', 'medium', 'hard']:
         difficulty = 'medium'
@@ -540,16 +658,28 @@ def generate_ai_question(request):
             status=status.HTTP_503_SERVICE_UNAVAILABLE
         )
 
-    prompt = _build_ai_prompt(
-        question_type=question_type,
-        subject=subject,
-        topic=topic,
-        difficulty=difficulty,
-        instructions=instructions,
-        marks=marks,
-        pattern_section=pattern_section_name,
-        question_number=question_number
-    )
+    # Build appropriate prompt based on question type
+    if is_nested and question_configuration:
+        prompt = _build_nested_ai_prompt(
+            question_configuration=question_configuration,
+            nested_type=nested_type,
+            subject=subject,
+            topic=topic,
+            difficulty=difficulty,
+            instructions=instructions,
+            marks=marks,
+        )
+    else:
+        prompt = _build_ai_prompt(
+            question_type=question_type,
+            subject=subject,
+            topic=topic,
+            difficulty=difficulty,
+            instructions=instructions,
+            marks=marks,
+            pattern_section=pattern_section_name,
+            question_number=question_number
+        )
 
     try:
         if not GOOGLE_AI_AVAILABLE or genai is None:
@@ -689,6 +819,11 @@ def generate_ai_question(request):
             'topic': ai_topic,
             'tags': tags,
         }
+        
+        # Include structure for nested questions
+        ai_structure = ai_data.get('structure')
+        if ai_structure and ai_structure.get('nested_parts'):
+            question_payload['structure'] = ai_structure
 
         return Response({
             'question': question_payload,

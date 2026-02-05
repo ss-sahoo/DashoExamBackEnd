@@ -207,6 +207,7 @@ class BulkImportService:
             question_type=extracted_q.question_type,
             difficulty=extracted_q.difficulty,
             options=extracted_q.options,
+            structure=extracted_q.structure,
             correct_answer=extracted_q.correct_answer,
             solution=extracted_q.solution,
             explanation=extracted_q.explanation,

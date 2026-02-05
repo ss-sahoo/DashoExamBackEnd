@@ -39,6 +39,13 @@ class MathpixService:
     POLL_INTERVAL = 3  # seconds between status checks
     MAX_WAIT_TIME = 300  # 5 minutes max wait
     
+    @staticmethod
+    def is_configured() -> bool:
+        """Check if Mathpix credentials are configured"""
+        app_id = getattr(settings, 'MATHPIX_APP_ID', None) or os.environ.get('MATHPIX_APP_ID')
+        app_key = getattr(settings, 'MATHPIX_APP_KEY', None) or os.environ.get('MATHPIX_APP_KEY')
+        return bool(app_id and app_key)
+
     def __init__(self, app_id: Optional[str] = None, app_key: Optional[str] = None):
         """Initialize Mathpix service with credentials"""
         self.app_id = app_id or getattr(settings, 'MATHPIX_APP_ID', None) or os.environ.get('MATHPIX_APP_ID')

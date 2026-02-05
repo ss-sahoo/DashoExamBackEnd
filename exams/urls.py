@@ -11,6 +11,7 @@ urlpatterns = [
     # Exams
     path('exams/', views.ExamListView.as_view(), name='exam-list'),
     path('exams/<int:pk>/', views.ExamDetailView.as_view(), name='exam-detail'),
+    path('exams/<int:pk>/question-paper/', views.download_question_paper, name='download-question-paper'),
     path('exams/<int:exam_id>/dashboard/', views.exam_dashboard, name='exam-dashboard'),
     path('exams/<int:exam_id>/eligible-students/', views.exam_eligible_students, name='exam-eligible-students'),
     

@@ -521,3 +521,478 @@ def _grade_for_percentage(percentage: Optional[float]) -> (str, str):
         return "C", "Satisfactory but improvement needed"
     return "F", "Below expectations - review required"
 
+
+def generate_question_paper_pdf(exam) -> BytesIO:
+    """
+    Generate a board-exam style PDF for an exam.
+    """
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        leftMargin=0.75 * inch,
+        rightMargin=0.75 * inch,
+        topMargin=0.75 * inch,
+        bottomMargin=0.75 * inch,
+    )
+
+    styles = getSampleStyleSheet()
+    
+    # Board Exam Style - B&W, Serif if possible, otherwise clean Sans
+    board_header = ParagraphStyle("BoardHeader", parent=styles["Heading1"], fontSize=16, alignment=1, spaceAfter=6, fontName="Helvetica-Bold")
+    board_sub_header = ParagraphStyle("BoardSubHeader", parent=styles["Heading2"], fontSize=12, alignment=1, spaceAfter=12, fontName="Helvetica")
+    board_instruction = ParagraphStyle("BoardInstruction", parent=styles["Normal"], fontSize=10, alignment=0, spaceAfter=10, fontName="Helvetica-Oblique")
+    board_section = ParagraphStyle("BoardSection", parent=styles["Heading3"], fontSize=12, alignment=1, spaceBefore=15, spaceAfter=8, fontName="Helvetica-Bold", borderPadding=3, borderWidth=1, borderColor=colors.black)
+    board_question = ParagraphStyle("BoardQuestion", parent=styles["Normal"], fontSize=11, leading=14, spaceBefore=10, fontName="Helvetica")
+    board_option = ParagraphStyle("BoardOption", parent=styles["Normal"], fontSize=10, leftIndent=20, leading=14, fontName="Helvetica")
+    board_marks = ParagraphStyle("BoardMarks", parent=styles["Normal"], fontSize=10, alignment=2, fontName="Helvetica-Bold")
+    
+    # Table-specific styles (no indentation to prevent layout errors)
+    board_table_text = ParagraphStyle("BoardTableText", parent=styles["Normal"], fontSize=10, leftIndent=0, leading=14, fontName="Helvetica")
+    board_table_label = ParagraphStyle("BoardTableLabel", parent=styles["Normal"], fontSize=10, leftIndent=0, leading=14, fontName="Helvetica-Bold")
+
+    # Helper function to sanitize text for PDF rendering
+    def sanitize_pdf_text(text):
+        """Clean text so it can be rendered in ReportLab Paragraphs."""
+        if text is None:
+            return ""
+        # Convert to string and strip null bytes
+        text = str(text).replace('\x00', '').strip()
+        if not text:
+            return " "
+            
+        import html
+        import re
+        
+        # 1. First, unescape any existing HTML entities to avoid double escaping
+        text = html.unescape(text)
+        
+        # 2. Clean up common LaTeX "text" wrappers which cause brace confusion
+        # Handle \text{...} or \mathrm{...}
+        text = re.sub(r'\\(?:text|mathrm|mathbf|mathit)\{([^}]*)\}', r'\1', text)
+        
+        # 3. Convert common LaTeX symbols to Unicode equivalents
+        symbols = {
+            '\\circ': '°', '\\times': '×', '\\div': '÷',
+            '\\alpha': 'α', '\\beta': 'β', '\\gamma': 'γ', '\\delta': 'δ',
+            '\\lambda': 'λ', '\\pi': 'π', '\\sigma': 'σ', '\\omega': 'ω',
+            '\\theta': 'θ', '\\pm': '±', '\\neq': '≠', '\\approx': '≈',
+            '\\geq': '≥', '\\leq': '≤', '\\infty': '∞', '\\to': '→',
+            '\\rightarrow': '→', '\\leftrightarrow': '↔', '\\Rightarrow': '⇒',
+        }
+        for lat, sym in symbols.items():
+            text = text.replace(lat, sym)
+            
+        # 4. Handle braced subscripts/superscripts (INNERMOST FIRST)
+        # Use a loop to handle nested cases like _{X^{2+}}
+        for _ in range(5):  # Max 5 levels of nesting
+            # Match only innermost groups (containing no other { or })
+            new_text = re.sub(r'\_\{([^{}]*)\}', r'<sub>\1</sub>', text)
+            new_text = re.sub(r'\^\{([^{}]*)\}', r'<sup>\1</sup>', new_text)
+            if new_text == text:
+                break
+            text = new_text
+            
+        # 5. Handle single-character subscripts/superscripts
+        # Only if NOT followed by { (already handled) and NOT part of an existing tag
+        # Use a more constrained char set to avoid matching part of tags like <sub>
+        text = re.sub(r'(?<![a-zA-Z0-9])\_([a-zA-Z0-9°α-ωΑ-Ω])', r'<sub>\1</sub>', text)
+        text = re.sub(r'(?<![a-zA-Z0-9])\^([a-zA-Z0-9°α-ωΑ-Ω])', r'<sup>\1</sup>', text)
+        # Fallback for simple cases like H_2O (no word boundary needed)
+        text = re.sub(r'([a-zA-Z])\_([0-9])', r'\1<sub>\2</sub>', text)
+        text = re.sub(r'([a-zA-Z])\^([0-9])', r'\1<sup>\2</sup>', text)
+
+        # 6. Remove remaining $ delimiters
+        text = text.replace('$', '')
+        
+        # 7. XML Escaping for ReportLab (must come AFTER conversions but BEFORE restoring tags)
+        from xml.sax.saxutils import escape as xml_escape
+        text = xml_escape(text)
+        
+        # 8. Unescape allowed ReportLab tags
+        text = text.replace('&lt;b&gt;', '<b>').replace('&lt;/b&gt;', '</b>')
+        text = text.replace('&lt;i&gt;', '<i>').replace('&lt;/i&gt;', '</i>')
+        text = text.replace('&lt;u&gt;', '<u>').replace('&lt;/u&gt;', '</u>')
+        text = text.replace('&lt;br/&gt;', '<br/>').replace('&lt;br&gt;', '<br/>')
+        text = text.replace('&lt;sub&gt;', '<sub>').replace('&lt;/sub&gt;', '</sub>')
+        text = text.replace('&lt;sup&gt;', '<sup>').replace('&lt;/sup&gt;', '</sup>')
+        
+        # Limit length to prevent memory issues
+        if len(text) > 10000:
+            text = text[:10000] + '...'
+        return text
+
+    def to_roman(n):
+        """Convert integer to lowercase roman numeral."""
+        try:
+            n = int(n)
+            romans = {1: 'i', 2: 'ii', 3: 'iii', 4: 'iv', 5: 'v', 6: 'vi', 7: 'vii', 8: 'viii', 9: 'ix', 10: 'x'}
+            return romans.get(n, str(n))
+        except:
+            return str(n)
+
+    story = []
+
+    # 1. Header Information
+    institute = exam.institute
+    story.append(Paragraph(f"<b>{institute.name.upper()}</b>", board_header))
+    story.append(Paragraph(f"<b>{exam.title.upper()}</b>", board_sub_header))
+    
+    info_table_data = [
+        [f"Time Allowed: {exam.duration_minutes} Minutes", f"Maximum Marks: {exam.total_marks}"]
+    ]
+    info_table = Table(info_table_data, colWidths=[3.25 * inch, 3.25 * inch])
+    info_table.setStyle(TableStyle([
+        ('ALIGN', (0,0), (0,0), 'LEFT'),
+        ('ALIGN', (1,0), (1,0), 'RIGHT'),
+        ('FONTNAME', (0,0), (-1,-1), 'Helvetica-Bold'),
+        ('LINEBELOW', (0,0), (-1,-1), 1, colors.black),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 5),
+    ]))
+    story.append(info_table)
+    story.append(Spacer(1, 15))
+
+    # 2. General Instructions
+    story.append(Paragraph("<b>GENERAL INSTRUCTIONS:</b>", board_instruction))
+    instructions = [
+        "1. All questions are compulsory.",
+        "2. The question paper consists of multiple sections as defined below.",
+        "3. Read each question carefully before attempting.",
+        "4. Marks for each question are indicated against it."
+    ]
+    for instr in instructions:
+        story.append(Paragraph(instr, board_instruction))
+    story.append(Spacer(1, 15))
+
+    # 3. Questions by Section
+    sections = exam.pattern.sections.all().order_by('order', 'start_question')
+    
+    # Get all active questions for the exam
+    questions = exam.questions.filter(is_active=True).order_by('question_number')
+    
+    for section in sections:
+        story.append(Paragraph(sanitize_pdf_text(f"SECTION - {section.name.upper()} ({section.subject})"), board_section))
+        story.append(Paragraph(sanitize_pdf_text(f"<i>(This section consists of questions {section.start_question} to {section.end_question}. Each question carries {section.marks_per_question} marks.)</i>"), board_instruction))
+        
+        section_questions = questions.filter(
+            question_number__gte=section.start_question,
+            question_number__lte=section.end_question
+        )
+        
+        # 3. Questions by Section
+        for q in section_questions:
+            # Check for pattern-level question configuration (internal choices, nested parts)
+            # The config is keyed by the pattern-relative question number (1,2,3 within section)
+            pattern_q_num = getattr(q, 'question_number_in_pattern', None) or q.question_number
+            q_config = section.question_configurations.get(str(pattern_q_num))
+            # Fallback: also try the absolute question number (for compatibility)
+            if not q_config:
+                q_config = section.question_configurations.get(str(q.question_number))
+            
+            # Get saved question structure (contains the actual content)
+            q_structure = getattr(q, 'structure', None) or {}
+            saved_parts = q_structure.get('parts', []) or q_structure.get('nested_parts', [])
+            
+            # Debug: Log saved structure for troubleshooting
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.info(f"PDF Gen Q{q.question_number}: q_config={bool(q_config)}, is_nested={q_config.get('is_nested') if q_config else False}")
+            logger.info(f"PDF Gen Q{q.question_number}: q_structure keys={list(q_structure.keys())}, saved_parts count={len(saved_parts)}")
+            if saved_parts:
+                logger.info(f"PDF Gen Q{q.question_number}: saved_parts[0]={saved_parts[0] if saved_parts else 'none'}")
+            
+            if q_config and q_config.get('is_nested'):
+                # Handle Nested / Internal Choice Question
+                nested_type = q_config.get('nested_type')
+                options = q_config.get('options', [])
+                
+                # Render the main question text first
+                q_text = f"Q.{q.question_number}  {q.question_text}"
+                story.append(Table([[Paragraph(sanitize_pdf_text(q_text), board_question), Paragraph(sanitize_pdf_text(f"[{section.marks_per_question}]"), board_marks)]], colWidths=[5.8 * inch, 0.7 * inch], style=TableStyle([('VALIGN', (0,0), (-1,-1), 'TOP'), ('LEFTPADDING', (0,0), (-1,-1), 0), ('RIGHTPADDING', (0,0), (-1,-1), 0)])))
+                
+                # Helper to find saved content for a part (by label or index fallback)
+                def find_saved_part(label, saved_list, index=None):
+                    if not saved_list: return None
+                    label_str = str(label).lower().strip()
+                    # Only match by label if label is non-empty to avoid false positives on empty labels
+                    if label_str:
+                        for sp in saved_list:
+                            if str(sp.get('label', '')).lower().strip() == label_str:
+                                return sp
+                    # Fallback to index if labels don't match OR label is empty
+                    if index is not None and index < len(saved_list):
+                        return saved_list[index]
+                    return None
+                
+                # Render options (Parts / Choices) - prioritize saved parts count
+                render_options_list = saved_parts if len(saved_parts) > len(options) else options
+                for i, opt in enumerate(render_options_list):
+                    opt_type = opt.get('type', 'part')
+                    
+                    if i > 0 and nested_type == 'internal_choice':
+                        story.append(Paragraph("<b>OR</b>", ParagraphStyle("OrStyle", parent=board_question, alignment=1, spaceBefore=4, spaceAfter=4)))
+                    
+                    # Handle choice_group type (internal OR within a part like c)
+                    if opt_type == 'choice_group':
+                        # Find saved choice_group data
+                        opt_label = str(opt.get('label', ''))
+                        saved_choice_group = find_saved_part(opt_label, saved_parts)
+                        saved_choice_options = []
+                        if saved_choice_group:
+                            saved_choice_options = saved_choice_group.get('options', [])
+                            
+                        config_choice_options = opt.get('options', [])
+                        # Ensure we don't miss any choices the user added
+                        choices_to_render = saved_choice_options if len(saved_choice_options) > len(config_choice_options) else config_choice_options
+                        
+                        for ci, choice in enumerate(choices_to_render):
+                            if ci > 0:
+                                story.append(Paragraph("<b>OR</b>", ParagraphStyle("OrStyle2", parent=board_question, alignment=1, spaceBefore=3, spaceAfter=3)))
+                            
+                            choice_label = str(choice.get('label', ''))
+                            # Find saved content for this choice
+                            saved_choice = find_saved_part(choice_label, saved_choice_options, ci)
+                            choice_text = ''
+                            if saved_choice:
+                                choice_text = saved_choice.get('question_text', saved_choice.get('text', ''))
+                            if not choice_text:
+                                choice_text = choice.get('text', choice.get('description', ''))
+                            
+                            choice_marks_val = choice.get('marks')
+                            choice_marks = f"[{choice_marks_val}]" if choice_marks_val else ""
+                            
+                            if choice_label and not (choice_label.startswith('(') and choice_label.endswith(')')):
+                                full_choice_label = f"({choice_label})"
+                            else:
+                                full_choice_label = choice_label
+                            
+                            full_choice_text = f"<b>{full_choice_label}</b>"
+                            if choice_text:
+                                full_choice_text += f" {choice_text}"
+                            
+                            choice_table = Table([
+                                [Paragraph(sanitize_pdf_text(full_choice_text), board_table_text), Paragraph(sanitize_pdf_text(choice_marks), board_marks)]
+                            ], colWidths=[5.8*inch, 0.7*inch], style=TableStyle([
+                                ('VALIGN', (0,0), (-1,-1), 'TOP'),
+                                ('LEFTPADDING', (0,0), (-1,-1), 0),
+                                ('BOTTOMPADDING', (0,0), (-1,-1), 2),
+                            ]))
+                            story.append(choice_table)
+                            
+                            # Handle choice_group sub-parts if they exist - prioritize saved count
+                            config_choice_sub_parts = choice.get('sub_parts', []) or choice.get('parts', [])
+                            saved_choice_sub_parts = []
+                            if saved_choice:
+                                saved_choice_sub_parts = saved_choice.get('sub_parts', []) or saved_choice.get('parts', [])
+                            
+                            # Ensure we render all sub-parts if user added more
+                            render_csubs = saved_choice_sub_parts if len(saved_choice_sub_parts) > len(config_choice_sub_parts) else config_choice_sub_parts
+                            
+                            # Check if we should use Roman numerals (i, ii) vs (1, 2)
+                            # Favor Roman if pattern suggests it or if it's a numeric sub-part
+                            use_roman_labels = any(str(p.get('label', '')).lower() in ['i', 'ii', 'iii', 'iv'] for p in config_choice_sub_parts)
+                            if not use_roman_labels and len(render_csubs) > 0:
+                                # Default to Roman for sub-parts if they are digit-based
+                                use_roman_labels = True
+                            
+                            for csi, csub in enumerate(render_csubs):
+                                csub_label = str(csub.get('label', ''))
+                                # If label is a digit, convert to Roman
+                                if csub_label.isdigit():
+                                    csub_label = to_roman(int(csub_label))
+                                elif not csub_label:
+                                    csub_label = to_roman(csi + 1)
+                                    
+                                saved_csub = find_saved_part(csub_label, saved_choice_sub_parts, csi)
+                                csub_text = ''
+                                if saved_csub:
+                                    csub_text = saved_csub.get('question_text', saved_csub.get('text', ''))
+                                if not csub_text:
+                                    csub_text = csub.get('text', csub.get('description', ''))
+                                if not csub_text:
+                                    csub_text = '...........................................................................'
+                                
+                                csub_marks_val = csub.get('marks')
+                                csub_marks = f"[{csub_marks_val}]" if csub_marks_val else ""
+                                
+                                if csub_label and not (csub_label.startswith('(') and csub_label.endswith(')')):
+                                    full_csub_label = f"({csub_label})"
+                                else:
+                                    full_csub_label = csub_label
+                                
+                                csub_table = Table([
+                                    [Paragraph(sanitize_pdf_text(full_csub_label), board_table_label), Paragraph(sanitize_pdf_text(csub_text), board_table_text), Paragraph(sanitize_pdf_text(csub_marks), board_marks)]
+                                ], colWidths=[0.8*inch, 5.0*inch, 0.7*inch], style=TableStyle([
+                                    ('VALIGN', (0,0), (-1,-1), 'TOP'),
+                                    ('LEFTPADDING', (0,0), (-1,-1), 0),
+                                ]))
+                                story.append(csub_table)
+                        continue  # Skip the normal option rendering for choice_groups
+                    
+                    # Get saved content for this part
+                    opt_label = str(opt.get('label', ''))
+                    saved_opt = find_saved_part(opt_label, saved_parts, i)
+                    
+                    # Use saved question_text if available, fallback to config text/description
+                    opt_text = ''
+                    if saved_opt:
+                        opt_text = saved_opt.get('question_text', saved_opt.get('text', ''))
+                    if not opt_text:
+                        opt_text = opt.get('text', opt.get('description', ''))
+                    
+                    opt_marks_val = opt.get('marks')
+                    opt_marks = f"[{opt_marks_val}]" if opt_marks_val is not None and str(opt_marks_val).strip() != "" else ""
+                    
+                    # Ensure label is wrapped in parens if not already
+                    if opt_label and not (opt_label.startswith('(') and opt_label.endswith(')')):
+                        full_opt_label = f"({opt_label})"
+                    else:
+                        full_opt_label = opt_label
+
+                    full_opt_text = f"<b>{full_opt_label}</b>"
+                    if opt_text:
+                        full_opt_text += f" {opt_text}"
+                    
+                    # Render Part (a, b, c) or Choice with marks on right
+                    p_table = Table([
+                        [Paragraph(sanitize_pdf_text(full_opt_text), board_table_text), Paragraph(sanitize_pdf_text(opt_marks), board_marks)]
+                    ], colWidths=[5.8*inch, 0.7*inch], style=TableStyle([
+                        ('VALIGN', (0,0), (-1,-1), 'TOP'),
+                        ('LEFTPADDING', (0,0), (-1,-1), 0),
+                        ('BOTTOMPADDING', (0,0), (-1,-1), 2),
+                    ]))
+                    story.append(p_table)
+                    
+                    config_sub_parts = opt.get('parts', []) or opt.get('sub_parts', [])
+                    saved_sub_parts = []
+                    if saved_opt:
+                        saved_sub_parts = saved_opt.get('sub_parts', []) or saved_opt.get('parts', [])
+                    
+                    # Ensure we render all sub-parts if user added more during extraction
+                    render_sub_list = saved_sub_parts if len(saved_sub_parts) > len(config_sub_parts) else config_sub_parts
+
+                    # Check if we should use Roman numerals
+                    # Favor Roman for sub-parts (Level 3 nesting)
+                    use_roman_sub = any(str(p.get('label', '')).lower() in ['i', 'ii', 'iii', 'iv'] for p in config_sub_parts)
+                    if not use_roman_sub and len(render_sub_list) > 0:
+                        use_roman_sub = True
+
+                    for j, part in enumerate(render_sub_list):
+                        p_label = str(part.get('label', ''))
+                        
+                        # Convert digit labels to Roman
+                        if p_label.isdigit():
+                            p_label = to_roman(int(p_label))
+                        elif not p_label:
+                            p_label = to_roman(j + 1)
+
+                        # Find saved content for this sub-part (try label then index fallback)
+                        saved_sub = find_saved_part(p_label, saved_sub_parts, j)
+                        p_text = ''
+                        if saved_sub:
+                            p_text = saved_sub.get('question_text', saved_sub.get('text', ''))
+                        if not p_text:
+                            p_text = part.get('text', part.get('description', ''))
+                        if not p_text:
+                            p_text = '...........................................................................'
+                        
+                        part_marks_val = part.get('marks')
+                        p_marks = f"[{part_marks_val}]" if part_marks_val is not None and str(part_marks_val).strip() != "" else ""
+                        
+                        # Ensure sub-label is wrapped in parens
+                        if p_label and not (p_label.startswith('(') and p_label.endswith(')')):
+                            full_p_label = f"({p_label})"
+                        else:
+                            full_p_label = p_label
+
+                        # Extra indentation for sub-parts (i, ii) using first column width instead of padding
+                        sub_p_table = Table([
+                            [Paragraph(sanitize_pdf_text(full_p_label), board_table_label), Paragraph(sanitize_pdf_text(p_text), board_table_text), Paragraph(sanitize_pdf_text(p_marks), board_marks)]
+                        ], colWidths=[0.8*inch, 5.0*inch, 0.7*inch], style=TableStyle([
+                            ('VALIGN', (0,0), (-1,-1), 'TOP'),
+                            ('LEFTPADDING', (0,0), (-1,-1), 0),
+                        ]))
+                        story.append(sub_p_table)
+                
+                # Global Sub-questions (i, ii, iii) - Only render from config to avoid duplication in nested questions
+                sub_questions = q_config.get('sub_questions', [])
+                for si, sub_q in enumerate(sub_questions):
+                    sq_label = str(sub_q.get('label', ''))
+                    
+                    # Find saved content for this sub-question
+                    saved_sq = find_saved_part(sq_label, saved_parts, si)
+                    sq_text = ''
+                    if saved_sq:
+                        sq_text = saved_sq.get('question_text', saved_sq.get('text', ''))
+                    if not sq_text:
+                        sq_text = sub_q.get('text', sub_q.get('description', ''))
+                    if not sq_text:
+                        sq_text = '...........................................................................'
+                    
+                    sq_marks_val = sub_q.get('marks')
+                    sq_marks = f"[{sq_marks_val}]" if sq_marks_val is not None and str(sq_marks_val).strip() != "" else ""
+                    
+                    if sq_label and not (sq_label.startswith('(') and sq_label.endswith(')')):
+                        full_sq_label = f"({sq_label})"
+                    else:
+                        full_sq_label = sq_label
+
+                    sq_table = Table([
+                        [Paragraph(sanitize_pdf_text(full_sq_label), board_table_label), Paragraph(sanitize_pdf_text(sq_text), board_table_text), Paragraph(sanitize_pdf_text(sq_marks), board_marks)]
+                    ], colWidths=[0.8*inch, 5.0*inch, 0.7*inch], style=TableStyle([
+                        ('VALIGN', (0,0), (-1,-1), 'TOP'),
+                        ('LEFTPADDING', (0,0), (-1,-1), 0),
+                    ]))
+                    story.append(sq_table)
+
+            else:
+                # Standard Question Rendering
+                q_text = f"Q.{q.question_number}  {q.question_text}"
+                q_marks = f"[{section.marks_per_question}]"
+                
+                q_table_data = [
+                    [Paragraph(sanitize_pdf_text(q_text), board_question), Paragraph(sanitize_pdf_text(q_marks), board_marks)]
+                ]
+                q_table = Table(q_table_data, colWidths=[5.8 * inch, 0.7 * inch])
+                q_table.setStyle(TableStyle([
+                    ('VALIGN', (0,0), (-1,-1), 'TOP'),
+                    ('LEFTPADDING', (0,0), (-1,-1), 0),
+                    ('RIGHTPADDING', (0,0), (-1,-1), 0),
+                    ('BOTTOMPADDING', (0,0), (-1,-1), 0),
+                ]))
+                story.append(q_table)
+
+                # Draw options for MCQs
+                if q.question_type in ['single_mcq', 'multiple_mcq'] and q.options:
+                    option_labels = ['(a)', '(b)', '(c)', '(d)', '(e)', '(f)']
+                    
+                    if len(q.options) <= 4:
+                        opt_data = []
+                        for i in range(0, len(q.options), 2):
+                            row = []
+                            row.append(Paragraph(sanitize_pdf_text(f"{option_labels[i]} {q.options[i]}"), board_option))
+                            if i + 1 < len(q.options):
+                                row.append(Paragraph(sanitize_pdf_text(f"{option_labels[i+1]} {q.options[i+1]}"), board_option))
+                            else:
+                                row.append("")
+                            opt_data.append(row)
+                        
+                        opt_table = Table(opt_data, colWidths=[3.25 * inch, 3.25 * inch])
+                        opt_table.setStyle(TableStyle([
+                            ('LEFTPADDING', (0,0), (-1,-1), 20),
+                            ('VALIGN', (0,0), (-1,-1), 'TOP'),
+                        ]))
+                        story.append(opt_table)
+                    else:
+                        for i, opt in enumerate(q.options):
+                            story.append(Paragraph(sanitize_pdf_text(f"{option_labels[i]} {opt}"), board_option))
+            
+            story.append(Spacer(1, 10))
+
+    # Footer
+    story.append(Spacer(1, 30))
+    story.append(Paragraph(sanitize_pdf_text("--- END OF QUESTION PAPER ---"), board_sub_header))
+
+    doc.build(story)
+    buffer.seek(0)
+    return buffer
