@@ -315,15 +315,15 @@ class SectionMapper:
         """Get list of question types compatible with a section type"""
         # Mapping of section type to list of compatible question types
         compatibility = {
-            'subjective': ['subjective', 'multipart', 'internal_choice', 'mixed', 'numerical'],
-            'single_mcq': ['single_mcq'],
+            'subjective': ['subjective', 'single_mcq', 'multipart', 'internal_choice', 'mixed', 'numerical'],
+            'single_mcq': ['single_mcq', 'subjective'],
             'multiple_mcq': ['multiple_mcq', 'single_mcq'],
             'numerical': ['numerical', 'subjective'],
             'true_false': ['true_false'],
             'fill_blank': ['fill_blank'],
-            'multipart': ['multipart', 'mixed', 'subjective'],
-            'mixed': ['mixed', 'multipart', 'internal_choice', 'subjective'],
-            'internal_choice': ['internal_choice', 'mixed', 'subjective'],
+            'multipart': ['multipart', 'mixed', 'subjective', 'single_mcq'],
+            'mixed': ['mixed', 'multipart', 'internal_choice', 'subjective', 'single_mcq'],
+            'internal_choice': ['internal_choice', 'mixed', 'subjective', 'single_mcq'],
         }
         
         # Always include the type itself

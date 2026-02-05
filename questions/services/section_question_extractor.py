@@ -134,18 +134,20 @@ class SectionQuestionExtractor:
                 for q in section_questions:
                     # Use section type if question type doesn't match or is unclear
                     detected_type = q.get('question_type', 'single_mcq')
+                    is_nested = q.get('is_nested', False)
                     
                     # Define which types are compatible or should not be overridden
                     nested_types = ['multipart', 'internal_choice', 'mixed']
                     
-                    if section_type != 'mixed' and detected_type != section_type:
-                        # If section is 'subjective', we allow specialized nested types to persist
-                        # since they are essentially more detailed subjective questions
+                    # NEW: NEVER override if it is a nested/structured question
+                    if is_nested or detected_type in nested_types:
+                        logger.info(f"Preserving specialized type '{detected_type}' for nested question")
+                        pass
+                    elif section_type != 'mixed' and detected_type != section_type:
+                        # For plain questions, allow section type to guide
                         if section_type == 'subjective' and detected_type in nested_types:
-                            logger.info(f"Preserving specialized nested type '{detected_type}' for subjective section")
-                            pass
+                            pass # Already handled by is_nested but for safety
                         else:
-                            # Trust the section type hint if it's specific
                             logger.debug(f"Overriding question type {detected_type} with section type {section_type}")
                             q['question_type'] = section_type
                     
@@ -454,64 +456,57 @@ Match the type and labels (a, b, c, i, ii etc.) defined below:
 {count_instruction}
 {hint_instruction}
 
-**OBJECTIVE**: Extract questions from the content and format them as a JSON array. 
+**OBJECTIVE**: Extract questions and format them as a JSON array. 
 
-**STRICT RULES FOR NESTED QUESTIONS**:
-1. **question_text**: ONLY the preamble/context (e.g., "Phenols undergo..."). 
-   - **CRITICAL**: If there is NO preamble (the question starts directly with (a)), use a generic header like "Answer the parts below:" or "(a) State the following:". DO NOT leave this field empty.
-2. **is_nested**: Set to `true` for any question with sub-parts or internal choices.
-3. **structure**: This field is mandatory for nested questions. Use the format below:
-   - `nested_parts`: A list of objects for compulsory parts like (a), (b).
-   - `sub_parts`: Inside a part, if there are sub-levels like (i), (ii), put them in a `sub_parts` array.
-   - `choice_group`: Use this for "OR" conditions between two options.
-   - `text`: High-quality extracted text. REMOVE the labels (a), (b), (i) from the text, as they are stored in the `label` field.
+**STRICT RULES FOR ORDERING**:
+1. **question_number**: Assign 1, 2, 3, 4, 5 in the **EXACT ORDER** they appear in the source. 
+   - PDF Q1 MUST be Slot 1, Q2 MUST be Slot 2, etc.
+
+**STRICT RULES FOR NESTED STRUCTURE**:
+1. **question_text**: This MUST contain ONLY the preamble/passage (e.g., "Phenols undergo...").
+2. **is_nested**: Set to `true` for any question with parts (a), (b), (c) or OR choices.
+3. **structure**: This field is MANDATORY for nested questions. Use this EXACT schema:
+   {{
+     "parts": [
+       {{
+         "label": "a", 
+         "question_text": "Text for part a", 
+         "marks": 2,
+         "sub_parts": [
+            {{ "label": "i", "question_text": "Sub-part text", "marks": 1 }}
+         ]
+       }},
+       {{
+         "type": "choice_group",
+         "label": "OR Group",
+         "options": [
+            {{ "label": "1", "question_text": "Choice 1 text", "marks": 2 }},
+            {{ "label": "2", "question_text": "Choice 2 text", "marks": 2 }}
+         ]
+       }}
+     ],
+     "is_nested": true,
+     "nested_type": "mixed" 
+   }}
+   - **CRITICAL**: Use `parts` (NOT `options`) at the top level of `structure`.
+   - **CRITICAL**: Use `question_text` (NOT `text`) for the content within parts.
+   - **CLEANING**: Remove text like "(a)", "(i)", "OR", "-------------------" from all text fields.
 
 **QUESTION TYPES**:
-- `single_mcq`: Multiple choice with options.
-- `subjective`: Single statement deskriptive question.
-- `multipart`: Multiple compulsory parts (a, b, c).
-- `internal_choice`: EITHER/OR choice between two versions of a question.
-- `mixed`: Contains both compulsory parts AND an OR choice group.
+- `single_mcq`: Use ONLY for standard Multiple Choice Questions with choices.
+- `subjective`: Use for ANY question that is NOT a Multiple Choice Question. This includes all passages, structured questions, and multipart questions.
+- `multipart`, `internal_choice`, `mixed`: Use these as the `nested_type` INSIDE the `structure` object. The top-level `question_type` should still be `subjective` for these.
 
-**LATEX**:
-Use LaTeX for ALL chemistry formulas and math (e.g., $HNO_{{3}}$, $E^{{\circ}}$, $Zn^{{2+}}$).
+**MARKS**:
+- The total marks for each question in this section is provided in the hints.
+- For nested questions, you MUST distribute these total marks among the sub-parts/parts so that their SUM equals the total marks for the question.
 
-**OUTPUT FORMAT (JSON array):**
-```json
-[
-  {{
-    "question_number": 1,
-    "question_text": "Main intro text...",
-    "question_type": "mixed",
-    "is_nested": true,
-    "structure": {{
-      "nested_parts": [
-        {{
-          "label": "a",
-          "text": "Part A text",
-          "marks": 2,
-          "sub_parts": [
-            {{ "label": "i", "text": "Sub-part text", "marks": 1 }}
-          ]
-        }},
-        {{
-          "type": "choice_group",
-          "label": "OR Group",
-          "options": [
-            {{ "label": "b", "text": "Choice 1 text", "marks": 2 }},
-            {{ "label": "b", "text": "Choice 2 text", "marks": 2 }}
-          ]
-        }}
-      ]
-    }},
-    "marks": 4
-  }}
-]
-```
+**LATEX**: Use LaTeX for formulas (e.g., $HNO_{{3}}$).
+
 **CONTENT TO EXTRACT FROM:**
 {content}
 
-**Return ONLY the JSON array.**"""
+**Return ONLY a JSON array of question objects.**"""
 
     def _parse_ai_response(self, response: str, original_content: str, subject: str) -> List[Dict]:
         """Parse AI response to extract questions"""
@@ -533,8 +528,46 @@ Use LaTeX for ALL chemistry formulas and math (e.g., $HNO_{{3}}$, $E^{{\circ}}$,
             
             validated = []
             for q in questions:
-                if not q.get('question_text', '').strip():
+                if not q.get('question_text', '').strip() and not q.get('is_nested'):
                     continue
+                
+                # Standardize nested structure if present
+                structure = q.get('structure', {})
+                is_nested_type = q.get('question_type') in ['multipart', 'internal_choice', 'mixed']
+                
+                if structure or is_nested_type:
+                    q['is_nested'] = True
+                    if not structure:
+                        structure = {'parts': [], 'nested_type': q.get('question_type', 'mixed'), 'is_nested': True}
+                    
+                    # Ensure is_nested is consistent
+                    structure['is_nested'] = True
+                    if 'nested_type' not in structure:
+                        structure['nested_type'] = q.get('question_type', 'mixed')
+
+                    # Migration: Map 'options' or 'nested_parts' to 'parts' if AI used them
+                    if 'options' in structure and 'parts' not in structure:
+                        structure['parts'] = structure.pop('options')
+                    if 'nested_parts' in structure and 'parts' not in structure:
+                        structure['parts'] = structure.pop('nested_parts')
+                    
+                    # Migration: Map 'text' to 'question_text' recursively
+                    def migrate_text_fields(obj):
+                        if isinstance(obj, list):
+                            for item in obj: migrate_text_fields(item)
+                        elif isinstance(obj, dict):
+                            if 'text' in obj and 'question_text' not in obj:
+                                obj['question_text'] = obj.pop('text')
+                            # Handle common part names
+                            if 'parts' in obj: migrate_text_fields(obj['parts'])
+                            if 'sub_parts' in obj: migrate_text_fields(obj['sub_parts'])
+                            if 'options' in obj: migrate_text_fields(obj['options'])
+                    
+                    migrate_text_fields(structure.get('parts', []))
+                    
+                    q['structure'] = structure
+                    # Force subjective type for frontend compatibility with nested questions
+                    q['question_type'] = 'subjective'
                 
                 q.setdefault('question_type', 'single_mcq')
                 q.setdefault('options', [])
@@ -543,8 +576,14 @@ Use LaTeX for ALL chemistry formulas and math (e.g., $HNO_{{3}}$, $E^{{\circ}}$,
                 q.setdefault('confidence', 0.85)
                 
                 q['question_type'] = self._normalize_type(q['question_type'])
+
+                # CRITICAL: Re-force subjective for nested structures AFTER normalization
+                if q.get('is_nested') or structure:
+                    q['question_type'] = 'subjective'
+                    
                 validated.append(q)
             
+            logger.info(f"Successfully validated {len(validated)} questions. Types: {set(q['question_type'] for q in validated)}")
             return validated
             
         except json.JSONDecodeError as e:

@@ -1813,13 +1813,43 @@ def confirm_section_import(request):
                         question_text = ''
                     question_text = str(question_text).strip()
                     
+                    # Capture structure and check if nested
+                    structure = q_data.get('structure', {})
+                    is_nested = bool(structure and structure.get('options'))
+                    
                     if not question_text:
                         # Try to get text from other fields
                         question_text = q_data.get('text', '') or q_data.get('question', '') or ''
                         question_text = str(question_text).strip()
                     
-                    if not question_text:
-                        raise ValueError(f"Question text is empty. Data: {list(q_data.keys())}")
+                    if not question_text and not is_nested:
+                        raise ValueError(f"Question text is empty and not a structured question. Data: {list(q_data.keys())}")
+
+                    # NEW: Robust structure migration at import time
+                    if is_nested:
+                        # 1. Map 'options' or 'nested_parts' to 'parts' at top level
+                        if 'options' in structure and 'parts' not in structure:
+                            structure['parts'] = structure.pop('options')
+                        if 'nested_parts' in structure and 'parts' not in structure:
+                            structure['parts'] = structure.pop('nested_parts')
+                        
+                        # 2. Add required flags
+                        structure['is_nested'] = True
+                        if 'nested_type' not in structure:
+                            structure['nested_type'] = q_data.get('question_type', 'mixed')
+                        
+                        # 3. Recursive text field migration (text -> question_text)
+                        def migrate_nested(obj):
+                            if isinstance(obj, list):
+                                for item in obj: migrate_nested(item)
+                            elif isinstance(obj, dict):
+                                if 'text' in obj and 'question_text' not in obj:
+                                    obj['question_text'] = obj.pop('text')
+                                for k in ['parts', 'sub_parts', 'options']:
+                                    if k in obj: migrate_nested(obj[k])
+                        
+                        if 'parts' in structure:
+                            migrate_nested(structure['parts'])
                     
                     # Get correct_answer - handle different formats
                     correct_answer = q_data.get('correct_answer', '') or q_data.get('answer', '') or ''
@@ -1835,12 +1865,30 @@ def confirm_section_import(request):
                     if not isinstance(options, list):
                         options = []
                     
-                    # Validate question_type
-                    question_type = q_data.get('question_type', 'single_mcq')
-                    valid_types = ['single_mcq', 'multiple_mcq', 'numerical', 'subjective', 'true_false', 'fill_blank']
+                    # Validate and preserve question_type
+                    question_type = q_data.get('question_type', 'subjective')
+                    valid_types = [
+                        'single_mcq', 'multiple_mcq', 'numerical', 'subjective', 
+                        'true_false', 'fill_blank', 'multipart', 'internal_choice', 'mixed'
+                    ]
+                    
+                    # If it has a structure, trust the specialized type (mixed/multipart)
+                    if not is_nested and section:
+                        # For simple questions, we might want to align with section
+                        if section.question_type == 'subjective' and question_type not in valid_types:
+                             question_type = 'subjective'
+                    
                     if question_type not in valid_types:
-                        logger.warning(f"Invalid question_type '{question_type}', defaulting to 'single_mcq'")
-                        question_type = 'single_mcq'
+                        question_type = 'subjective'
+
+                    # CRITICAL: Force subjective type for nested questions to enable correct frontend rendering
+                    if is_nested:
+                        question_type = 'subjective'
+                    
+                    # If section is subjective and no top-level options were provided, default to subjective
+                    if section and section.question_type == 'subjective' and not options:
+                        question_type = 'subjective'
+
                     
                     # Calculate question_number based on section's question range
                     # question_number should be within section.start_question to section.end_question
@@ -1870,6 +1918,7 @@ def confirm_section_import(request):
                         question_type=question_type,
                         difficulty=q_data.get('difficulty', 'medium'),
                         options=options,
+                        structure=structure,
                         correct_answer=correct_answer,
                         solution=str(q_data.get('solution', '') or ''),
                         explanation=str(q_data.get('explanation', '') or ''),
