@@ -30,7 +30,7 @@ class QuestionStructureParser:
     def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None):
         """Initialize the parser"""
         self.api_key = api_key or getattr(settings, 'GEMINI_API_KEY', None)
-        self.model = model or getattr(settings, 'GEMINI_MODEL', 'gemini-2.5-flash')
+        self.model = model or getattr(settings, 'GEMINI_MODEL', 'gemini-2.0-flash')
         
         if not self.api_key:
             raise QuestionStructureParseError("Gemini API key not configured")
@@ -110,67 +110,193 @@ class QuestionStructureParser:
         """Build prompt for Gemini to parse question structure"""
         return f"""You are an expert at parsing exam questions from OCR-extracted text.
 
-Analyze the following text extracted from an image and extract the question structure intelligently.
+**YOUR TASK:**
+Parse the question and identify if it has multiple parts (a), (b), (c) or sub-parts (i), (ii).
+
+**FOR MULTI-PART QUESTIONS:**
+If you detect parts like (a), (b), (c) or (A), (B), OR choice:
+- Set is_nested = true
+- Put each part's text in structure.nested_parts array
+- Each part needs: label, text, and optional sub_parts array
+
+**EXAMPLE:**
+Input: "23. (a) State the following: (i) Kohlrausch law (ii) Faraday's law (b) Using E values..."
+
+Correct Output:
+{{
+  "question_text": "",
+  "is_nested": true,
+  "question_type": "subjective",
+  "structure": {{
+    "nested_parts": [
+      {{
+        "label": "a", 
+        "text": "State the following:",
+        "sub_parts": [
+          {{"label": "i", "text": "Kohlrausch law of independent migration of ions"}},
+          {{"label": "ii", "text": "Faraday's first law of electrolysis"}}
+        ]
+      }},
+      {{
+        "label": "b", 
+        "text": "Using E values of X and Y given below, predict which is better for coating the surface of iron to prevent corrosion and why?"
+      }}
+    ]
+  }},
+  "confidence": 0.9
+}}
+
+**RULES:**
+1. Remove question numbers (23., 30., Q1.) from all text
+2. Remove marks (2, 3, [2 marks]) from all text  
+3. For parts, don't include the label (a), (b) in the text field
 
 **TASK:**
-Parse the text and identify:
-1. Question text - The main question statement/problem
-2. Options - Multiple choice options (if present, typically labeled A, B, C, D or 1, 2, 3, 4)
-3. Correct answer - The correct option letter/number or answer value
-4. Solution/Explanation - Step-by-step solution or explanation (if present)
+Parse the question and detect its structure type:
 
-**IMPORTANT INSTRUCTIONS:**
+**TYPE 1: Simple Question (MCQ or single answer)**
+- Has options A, B, C, D or similar
+- Output as regular MCQ with options array
 
-1. **Preserve LaTeX formatting**: Keep all mathematical equations in LaTeX format (with $ delimiters)
-   - Example: "$x^2 + y^2 = z^2$" or "$$\\int_0^1 x dx$$"
+**TYPE 2: Multi-part Question (a), (b), (c)**
+- Has parts labeled (a), (b), (c) that are ALL required
+- May have sub-parts (i), (ii) within each part
+- question_text should be EMPTY unless there's a context paragraph
+- Output with is_nested=true and structure.nested_parts array
 
-2. **Handle various formats**:
-   - Options may be labeled: (A), A), A., a), 1), (1), etc.
-   - Answer may be: "Answer: A", "Ans: (B)", "Correct Answer: C", "Answer (1)", etc.
-   - Solution may start with: "Solution:", "Explanation:", "Sol:", "Hint:", etc.
+**TYPE 3: OR/Choice Question (A) OR (B)**
+- Has "OR" keyword separating choices
+- Student can choose between options
+- question_text should be EMPTY
+- Output with type="choice_group" for the OR choices
 
-3. **Question types**:
-   - If options are present, it's likely MCQ (multiple choice question)
-   - If no options but answer is a number, it's numerical
-   - If answer is True/False, it's true_false type
-
-4. **Extraction rules**:
-   - Question text should be the main problem statement (everything before options)
-   - Options should be extracted as an array of strings (remove labels like A), B), etc.)
-   - Correct answer should be the option letter/number OR the actual answer value
-   - Solution should include all explanation text after "Solution:" or similar markers
-
-5. **Edge cases**:
-   - If no options found, return empty array for options
-   - If no answer found, leave correct_answer empty
-   - If no solution found, leave solution empty
-   - If text is just question without structure, extract what you can
+**TYPE 4: Mixed (parts + OR)**
+- Combination of required parts AND OR choices
+- Example: (a), (b) required, then (c) OR (c) choice
 
 **INPUT TEXT:**
 {text}
 
 **OUTPUT FORMAT:**
-Return ONLY a valid JSON object (no markdown, no code blocks, just pure JSON) with this structure:
+Return ONLY valid JSON. Choose the appropriate structure:
 
+For TYPE 1 (MCQ):
 {{
-    "question_text": "The main question statement with LaTeX preserved",
-    "options": ["Option 1 text", "Option 2 text", "Option 3 text", "Option 4 text"],
-    "correct_answer": "A" or "Option text" or "42" or "True" depending on question type,
-    "solution": "Step-by-step solution if present, empty string otherwise",
-    "question_type": "single_mcq" or "numerical" or "true_false" or "subjective",
-    "confidence": 0.0 to 1.0 (your confidence in the parsing)
+    "question_text": "Question without number or marks",
+    "options": ["option A", "option B", "option C", "option D"],
+    "correct_answer": "",
+    "solution": "",
+    "question_type": "single_mcq",
+    "is_nested": false,
+    "confidence": 0.9
 }}
 
-**CRITICAL JSON FORMATTING RULES:**
-1. ALL backslashes in LaTeX must be escaped as double backslashes in JSON strings
-   - LaTeX command like \\lambda must become \\\\lambda in the JSON string value
-   - Example: "$x^2$" is fine (no backslashes), but "$\\frac{{a}}{{b}}$" must be "$\\\\frac{{a}}{{b}}$" in JSON
-2. All string values must be properly escaped for JSON (quotes, backslashes, etc.)
-3. Return ONLY the JSON object, no other text before or after it
-4. Ensure all special characters are properly escaped
+For TYPE 2 (Multi-part - question_text is EMPTY):
+{{
+    "question_text": "",
+    "options": [],
+    "correct_answer": "",
+    "solution": "",
+    "question_type": "subjective",
+    "is_nested": true,
+    "structure": {{
+        "nested_parts": [
+            {{
+                "label": "a",
+                "text": "Part a question text",
+                "sub_parts": [
+                    {{ "label": "i", "text": "Sub-part i text" }},
+                    {{ "label": "ii", "text": "Sub-part ii text" }}
+                ]
+            }},
+            {{
+                "label": "b", 
+                "text": "Part b question text",
+                "sub_parts": []
+            }},
+            {{
+                "label": "c",
+                "text": "Part c question text",
+                "sub_parts": []
+            }}
+        ]
+    }},
+    "confidence": 0.9
+}}
 
-Example of correct JSON with LaTeX (showing proper escaping):
-{{"question_text": "Find $\\\\lambda$ such that $\\\\lambda x = y$", "options": ["Option 1", "Option 2"], "correct_answer": "A", "solution": "", "question_type": "single_mcq", "confidence": 0.9}}"""
+For TYPE 3 (Pure OR choice like image shows (A) OR (B)):
+{{
+    "question_text": "",
+    "options": [],
+    "correct_answer": "",
+    "solution": "",
+    "question_type": "subjective",
+    "is_nested": true,
+    "structure": {{
+        "nested_parts": [
+            {{
+                "type": "choice_group",
+                "label": "OR",
+                "options": [
+                    {{
+                        "label": "A",
+                        "text": "First choice main text",
+                        "sub_parts": [
+                            {{ "label": "a", "text": "Sub-part a of choice A" }},
+                            {{ "label": "b", "text": "Sub-part b of choice A" }}
+                        ]
+                    }},
+                    {{
+                        "label": "B",
+                        "text": "Second choice text (the OR alternative)"
+                    }}
+                ]
+            }}
+        ]
+    }},
+    "confidence": 0.9
+}}
+
+For TYPE 4 (Mixed - parts + OR):
+{{
+    "question_text": "Context passage if any",
+    "options": [],
+    "correct_answer": "",
+    "solution": "",
+    "question_type": "subjective",
+    "is_nested": true,
+    "structure": {{
+        "nested_parts": [
+            {{
+                "label": "a",
+                "text": "Required part a text",
+                "sub_parts": []
+            }},
+            {{
+                "label": "b",
+                "text": "Required part b text", 
+                "sub_parts": []
+            }},
+            {{
+                "type": "choice_group",
+                "label": "c",
+                "options": [
+                    {{ "label": "c", "text": "First option for c" }},
+                    {{ "label": "c", "text": "Second option for c (after OR)" }}
+                ]
+            }}
+        ]
+    }},
+    "confidence": 0.9
+}}
+
+**REMEMBER:**
+1. NEVER include question numbers (17., 30., Q1., etc.)
+2. NEVER include marks numbers (2, 1, (1+1=2), etc.) 
+3. Put context/passage in question_text (clean, no numbers)
+4. Put each part's actual question in its "text" field
+5. Detect "OR" keyword to identify choice_group
+6. Return ONLY JSON, no markdown code blocks"""
     
     def _parse_ai_response(self, response_text: str) -> Dict:
         """Parse Gemini's JSON response"""
@@ -247,6 +373,12 @@ Example of correct JSON with LaTeX (showing proper escaping):
             'confidence': float(structure.get('confidence', 0.8))
         }
         
+        # IMPORTANT: Preserve is_nested and structure fields for multi-part questions
+        if structure.get('is_nested'):
+            result['is_nested'] = True
+            if structure.get('structure'):
+                result['structure'] = structure['structure']
+        
         # Validate options is a list
         if not isinstance(result['options'], list):
             result['options'] = []
@@ -255,7 +387,7 @@ Example of correct JSON with LaTeX (showing proper escaping):
         result['options'] = [opt.strip() for opt in result['options'] if opt and opt.strip()]
         
         # If no question text extracted, use original text as fallback
-        if not result['question_text']:
+        if not result['question_text'] and not result.get('is_nested'):
             logger.warning("No question text extracted, using original text")
             result['question_text'] = original_text[:500]  # Limit length
         
@@ -264,7 +396,9 @@ Example of correct JSON with LaTeX (showing proper escaping):
         valid_types = ['single_mcq', 'multiple_mcq', 'numerical', 'true_false', 'subjective', 'fill_blank']
         if q_type not in valid_types:
             # Infer from structure
-            if len(result['options']) >= 2:
+            if result.get('is_nested'):
+                result['question_type'] = 'subjective'
+            elif len(result['options']) >= 2:
                 result['question_type'] = 'single_mcq'
             elif result['correct_answer'] and result['correct_answer'].replace('.', '').replace('-', '').isdigit():
                 result['question_type'] = 'numerical'

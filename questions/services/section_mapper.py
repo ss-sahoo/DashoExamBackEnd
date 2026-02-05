@@ -152,9 +152,17 @@ class SectionMapper:
             current = current_counts.get(pattern_section.id, 0)
             remaining_capacity = max(0, required - current)
             
-            # Get extracted questions for this type
-            extracted_questions = extracted_by_type.get(section_type, [])
+            # Get compatible types for this section
+            compatible_types = self._get_compatible_types(section_type)
             
+            # Get extracted questions for these types
+            extracted_questions = []
+            for t in compatible_types:
+                extracted_questions.extend(extracted_by_type.get(t, []))
+            
+            # Filter out already assigned questions
+            extracted_questions = [q for q in extracted_questions if id(q) not in assigned_question_ids]
+                
             # Track if we're using fallback (for correct counting)
             using_fallback = False
             
@@ -302,6 +310,27 @@ class SectionMapper:
         
         logger.info(f"Grouped questions by type: {{{', '.join(f'{k}: {len(v)}' for k, v in by_type.items())}}}")
         return by_type
+
+    def _get_compatible_types(self, section_type: str) -> List[str]:
+        """Get list of question types compatible with a section type"""
+        # Mapping of section type to list of compatible question types
+        compatibility = {
+            'subjective': ['subjective', 'single_mcq', 'multipart', 'internal_choice', 'mixed', 'numerical'],
+            'single_mcq': ['single_mcq', 'subjective'],
+            'multiple_mcq': ['multiple_mcq', 'single_mcq'],
+            'numerical': ['numerical', 'subjective'],
+            'true_false': ['true_false'],
+            'fill_blank': ['fill_blank'],
+            'multipart': ['multipart', 'mixed', 'subjective', 'single_mcq'],
+            'mixed': ['mixed', 'multipart', 'internal_choice', 'subjective', 'single_mcq'],
+            'internal_choice': ['internal_choice', 'mixed', 'subjective', 'single_mcq'],
+        }
+        
+        # Always include the type itself
+        types = compatibility.get(section_type, [section_type])
+        if section_type not in types:
+            types.append(section_type)
+        return types
     
     def _create_empty_preview(
         self,

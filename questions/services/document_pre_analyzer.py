@@ -79,7 +79,7 @@ class DocumentPreAnalyzer:
     def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None):
         """Initialize the document pre-analyzer"""
         self.api_key = api_key or getattr(settings, 'GEMINI_API_KEY', None)
-        self.model = model or getattr(settings, 'GEMINI_MODEL', 'gemini-2.5-flash')
+        self.model = model or getattr(settings, 'GEMINI_MODEL', 'gemini-2.0-flash')
         
         if not self.api_key:
             raise DocumentPreAnalysisError("Gemini API key not configured")
@@ -252,8 +252,19 @@ class DocumentPreAnalyzer:
                         'instructions': general_instructions
                     }
                 }
+            elif len(pattern_subjects) == 1:
+                # If nothing matched but pattern ONLY has one subject, assume it belongs there
+                # This handles cases where the document text doesn't explicitly name the subject
+                subject = pattern_subjects[0]
+                logger.info(f"No direct subject match, but pattern only has one subject ({subject}). Assigning all content to it.")
+                separated_content = {
+                    subject: {
+                        'content': text_content,
+                        'instructions': general_instructions
+                    }
+                }
             elif len(subject_result['detected_subjects']) > 0:
-                # Use detected subjects even if not matched
+                # Use detected subjects even if not matched against pattern
                 separated_content = self.separate_by_subject(
                     text_content,
                     subject_result['detected_subjects']
@@ -305,6 +316,12 @@ class DocumentPreAnalyzer:
             # ENSURE UNIQUE subjects before returning (safety net)
             unique_detected = list(dict.fromkeys(subject_result['detected_subjects']))
             unique_matched = list(dict.fromkeys(subject_result['matched_subjects']))
+            
+            # If we performed a single-subject fallback, ensure it's in unique_matched
+            for subject in separated_content.keys():
+                if subject != 'General' and subject not in unique_matched:
+                    unique_matched.append(subject)
+            
             unique_unmatched = list(dict.fromkeys(subject_result['unmatched_subjects']))
             
             logger.info(f"Final subjects - detected: {unique_detected}, matched: {unique_matched}")

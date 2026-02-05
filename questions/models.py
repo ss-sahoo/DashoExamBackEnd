@@ -623,6 +623,11 @@ class ExtractedQuestion(models.Model):
         blank=True,
         help_text='Answer options for MCQ questions'
     )
+    structure = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text='Defines nested sub-questions or internal choices for complex questions'
+    )
     correct_answer = models.TextField(help_text='Correct answer or solution')
     solution = models.TextField(
         blank=True,
@@ -720,11 +725,15 @@ class ExtractedQuestion(models.Model):
         errors = []
         
         # Check required fields
+        is_nested = self.structure and self.structure.get('nested_parts')
         if not self.question_text or not self.question_text.strip():
-            errors.append("Question text is required")
+            if not is_nested:
+                errors.append("Question text is required")
         
         if not self.correct_answer or not self.correct_answer.strip():
-            errors.append("Correct answer is required")
+            # Allow empty correct answer for nested questions (handled per-part)
+            if not is_nested:
+                errors.append("Correct answer is required")
         
         # Validate MCQ questions
         if self.question_type in ['single_mcq', 'multiple_mcq']:

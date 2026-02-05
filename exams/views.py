@@ -57,7 +57,7 @@ from .evaluation_views import (
     update_evaluation_settings, get_pending_evaluations, batch_ai_evaluate
 )
 from .ai_proctoring import mediapipe_proctoring as proctoring_analyzer
-from .pdf_utils import ensure_answer_sheet_pdf
+from .pdf_utils import ensure_answer_sheet_pdf, generate_question_paper_pdf
 
 # proctoring_analyzer is now the MediaPipe system
 logger = logging.getLogger(__name__)
@@ -3977,3 +3977,32 @@ def get_attempt_location(request, attempt_id):
             {'error': f'Failed to retrieve geolocation: {str(e)}'},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def download_question_paper(request, pk):
+    """
+    Generate and download the board-exam style question paper PDF.
+    """
+    user = request.user
+    exam = get_object_or_404(Exam, pk=pk)
+    
+    # Permission check: Only staff or students allowed for this exam can download
+    if user.role not in ['student', 'STUDENT']:
+        # Admin check
+        if exam.institute != user.institute or not user.can_manage_exams():
+             return Response({'error': 'You do not have permission to download this question paper'}, status=status.HTTP_403_FORBIDDEN)
+    else:
+        # Student check
+        if not exam.can_student_access(user):
+             return Response({'error': 'You do not have permission to download this question paper'}, status=status.HTTP_403_FORBIDDEN)
+
+    try:
+        pdf_buffer = generate_question_paper_pdf(exam)
+        response = HttpResponse(pdf_buffer.read(), content_type='application/pdf')
+        filename = f"Question_Paper_{exam.title.replace(' ', '_')}.pdf"
+        response['Content-Disposition'] = f'attachment; filename="{filename}"'
+        return response
+    except Exception as e:
+        logger.error(f"Error generating question paper: {str(e)}")
+        return Response({'error': f'Failed to generate question paper: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

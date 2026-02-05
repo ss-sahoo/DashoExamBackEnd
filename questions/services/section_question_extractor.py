@@ -45,12 +45,15 @@ class SectionQuestionExtractor:
         'true_false': 'True/False - Answer is True or False',
         'fill_blank': 'Fill in the Blank - Complete the sentence',
         'subjective': 'Subjective - Long answer/essay type',
+        'multipart': 'Multipart - Question with multiple compulsory parts (a, b, c)',
+        'internal_choice': 'Internal Choice - Question with EITHER/OR options between parts',
+        'mixed': 'Mixed Nested - Complex question with both compulsory parts and OR choices',
     }
     
     def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None):
         """Initialize the extractor"""
         self.api_key = api_key or getattr(settings, 'GEMINI_API_KEY', None)
-        self.model = model or getattr(settings, 'GEMINI_MODEL', 'gemini-2.5-flash')
+        self.model = model or getattr(settings, 'GEMINI_MODEL', 'gemini-2.0-flash')
         
         if not self.api_key:
             raise SectionExtractionError("Gemini API key not configured")
@@ -69,7 +72,8 @@ class SectionQuestionExtractor:
         text_content: str,
         document_structure: Dict,
         subject: str,
-        expected_question_count: int = 0,  # NEW: Expected count from pre-analysis
+        expected_question_count: int = 0,
+        pattern_hint: Optional[Dict] = None,  # NEW: Target slots from pattern
         progress_callback: Optional[callable] = None
     ) -> Dict:
         """Extract questions section by section using detected document structure."""
@@ -116,20 +120,37 @@ class SectionQuestionExtractor:
                 
                 # Extract questions from this section
                 if expected_count > 0:
-                    section_questions = self._ai_extract_and_classify(section_content, subject, expected_count)
+                    section_questions = self._ai_extract_and_classify(
+                        section_content, subject, expected_count, pattern_hint
+                    )
                 else:
                     # Count questions in this section
                     section_expected = self._count_questions_in_content(section_content)
-                    section_questions = self._ai_extract_and_classify(section_content, subject, section_expected)
+                    section_questions = self._ai_extract_and_classify(
+                        section_content, subject, section_expected, pattern_hint
+                    )
                 
                 # Ensure question type matches section type
                 for q in section_questions:
                     # Use section type if question type doesn't match or is unclear
                     detected_type = q.get('question_type', 'single_mcq')
-                    if section_type != 'mixed' and detected_type != section_type:
-                        # Trust the section type hint if it's specific
-                        logger.debug(f"Overriding question type {detected_type} with section type {section_type}")
-                        q['question_type'] = section_type
+                    is_nested = q.get('is_nested', False)
+                    
+                    # Define which types are compatible or should not be overridden
+                    nested_types = ['multipart', 'internal_choice', 'mixed']
+                    
+                    # NEW: NEVER override if it is a nested/structured question
+                    if is_nested or detected_type in nested_types:
+                        logger.info(f"Preserving specialized type '{detected_type}' for nested question")
+                        pass
+                    elif section_type != 'mixed' and detected_type != section_type:
+                        # For plain questions, allow section type to guide
+                        if section_type == 'subjective' and detected_type in nested_types:
+                            pass # Already handled by is_nested but for safety
+                        else:
+                            logger.debug(f"Overriding question type {detected_type} with section type {section_type}")
+                            q['question_type'] = section_type
+                    
                     all_types_found.add(q.get('question_type', section_type))
                 
                 result = SectionQuestionResult(
@@ -331,13 +352,13 @@ class SectionQuestionExtractor:
         logger.info(f"Counted {max_count} questions in content ({len(content)} chars)")
         return max_count
     
-    def _ai_extract_and_classify(self, content: str, subject: str, expected_count: int = 0) -> List[Dict]:
+    def _ai_extract_and_classify(self, content: str, subject: str, expected_count: int = 0, pattern_hint: Optional[Dict] = None) -> List[Dict]:
         """Use AI to extract all questions and classify each by type"""
         max_chunk_size = 40000
         if len(content) > max_chunk_size:
-            return self._extract_in_chunks(content, subject, max_chunk_size)
+            return self._extract_in_chunks(content, subject, max_chunk_size, pattern_hint)
         
-        prompt = self._build_extraction_prompt(content, subject, expected_count)
+        prompt = self._build_extraction_prompt(content, subject, expected_count, pattern_hint)
         
         try:
             response = self.client.generate_content(
@@ -363,21 +384,20 @@ class SectionQuestionExtractor:
             logger.error(f"AI call failed: {e}")
             return self._fallback_extraction(content, subject)
     
-    def _extract_in_chunks(self, content: str, subject: str, chunk_size: int) -> List[Dict]:
+    def _extract_in_chunks(self, content: str, subject: str, chunk_size: int, pattern_hint: Optional[Dict] = None) -> List[Dict]:
         """Extract from large content in chunks"""
         all_questions = []
         chunks = self._smart_split(content, chunk_size)
         
         # Estimate questions per chunk
         total_expected = self._count_questions_in_content(content)
-        questions_per_chunk = max(1, total_expected // len(chunks)) if chunks else 0
         
         for i, chunk in enumerate(chunks):
             logger.info(f"Processing chunk {i+1}/{len(chunks)}")
             try:
                 # Count questions in this chunk for accurate extraction
                 chunk_expected = self._count_questions_in_content(chunk)
-                questions = self._ai_extract_and_classify(chunk, subject, chunk_expected)
+                questions = self._ai_extract_and_classify(chunk, subject, chunk_expected, pattern_hint)
                 for q in questions:
                     q['question_number'] = len(all_questions) + 1
                     all_questions.append(q)
@@ -415,72 +435,78 @@ class SectionQuestionExtractor:
             
             chunks.append(content[current_pos:end_pos])
             current_pos = end_pos
-        
         return chunks
 
-    def _build_extraction_prompt(self, content: str, subject: str, expected_count: int = 0) -> str:
-        """Build the AI extraction prompt with expected question count"""
+    def _build_extraction_prompt(self, content: str, subject: str, expected_count: int = 0, pattern_hint: Optional[Dict] = None) -> str:
+        """Build a comprehensive AI extraction prompt with strict slot matching."""
         count_instruction = ""
         if expected_count > 0:
-            count_instruction = f"""
-**CRITICAL: This content contains EXACTLY {expected_count} questions for {subject}.**
-You MUST extract exactly {expected_count} questions - no more, no less.
-DO NOT hallucinate or invent questions that don't exist in the content.
-"""
+            count_instruction = f"This content contains EXACTLY {expected_count} questions. Extract all {expected_count}."
         
-        return f"""You are an expert question extractor. Extract ALL questions from this {subject} content.
+        hint_instruction = ""
+        if pattern_hint:
+            hint_instruction = f"""
+**TARGET SLOTS (PATTERN HINT):**
+You MUST map the extracted content to these Slot IDs (1, 2, 3...). 
+Match the type and labels (a, b, c, i, ii etc.) defined below:
+{json.dumps(pattern_hint, indent=2)}
+"""
+
+        return f"""You are an expert Question Extractor.
 {count_instruction}
-**CRITICAL: DETECT QUESTION TYPE FROM SECTION HEADERS AND CONTENT**
+{hint_instruction}
 
-The document has DIFFERENT SECTIONS with different question types. Look for section headers like:
-- "Section A", "SECTION A", "Section A - MCQ" -> single_mcq
-- "Section B", "SECTION B", "Numerical" -> numerical  
-- "Section C", "SECTION C", "True/False", "True or False" -> true_false
-- "Section D", "SECTION D", "Fill in the blank", "Fill-Ups" -> fill_blank
+**OBJECTIVE**: Extract questions and format them as a JSON array. 
 
-**QUESTION TYPE RULES:**
+**STRICT RULES FOR ORDERING**:
+1. **question_number**: Assign 1, 2, 3, 4, 5 in the **EXACT ORDER** they appear in the source. 
+   - PDF Q1 MUST be Slot 1, Q2 MUST be Slot 2, etc.
 
-1. **single_mcq** - Has options A/B/C/D with ONE correct answer (letter)
-   - Answer format: "A", "B", "C", or "D"
-   - Usually in "Section A" or "MCQ" sections
+**STRICT RULES FOR NESTED STRUCTURE**:
+1. **question_text**: This MUST contain ONLY the preamble/passage (e.g., "Phenols undergo...").
+2. **is_nested**: Set to `true` for any question with parts (a), (b), (c) or OR choices.
+3. **structure**: This field is MANDATORY for nested questions. Use this EXACT schema:
+   {{
+     "parts": [
+       {{
+         "label": "a", 
+         "question_text": "Text for part a", 
+         "marks": 2,
+         "sub_parts": [
+            {{ "label": "i", "question_text": "Sub-part text", "marks": 1 }}
+         ]
+       }},
+       {{
+         "type": "choice_group",
+         "label": "OR Group",
+         "options": [
+            {{ "label": "1", "question_text": "Choice 1 text", "marks": 2 }},
+            {{ "label": "2", "question_text": "Choice 2 text", "marks": 2 }}
+         ]
+       }}
+     ],
+     "is_nested": true,
+     "nested_type": "mixed" 
+   }}
+   - **CRITICAL**: Use `parts` (NOT `options`) at the top level of `structure`.
+   - **CRITICAL**: Use `question_text` (NOT `text`) for the content within parts.
+   - **CLEANING**: Remove text like "(a)", "(i)", "OR", "-------------------" from all text fields.
 
-2. **numerical** - Answer is a NUMBER, not a letter
-   - Answer format: "5", "3.14", "42", "100 m/s"
-   - Usually in "Section B" or "Numerical" sections
-   - NO options A/B/C/D, just a numeric answer
+**QUESTION TYPES**:
+- `single_mcq`: Use ONLY for standard Multiple Choice Questions with choices.
+- `subjective`: Use for ANY question that is NOT a Multiple Choice Question. This includes all passages, structured questions, and multipart questions.
+- `multipart`, `internal_choice`, `mixed`: Use these as the `nested_type` INSIDE the `structure` object. The top-level `question_type` should still be `subjective` for these.
 
-3. **true_false** - Answer is True or False
-   - Answer format: "True", "False", "T", "F"
-   - Usually in "Section C" or "True/False" sections
-   - Questions are statements to verify
+**MARKS**:
+- The total marks for each question in this section is provided in the hints.
+- For nested questions, you MUST distribute these total marks among the sub-parts/parts so that their SUM equals the total marks for the question.
 
-4. **fill_blank** - Has blanks (_____ or ______) to fill
-   - Answer is a word or phrase that fills the blank
-   - Usually in "Section D" or "Fill in the blank" sections
-
-**OUTPUT FORMAT (JSON array):**
-```json
-[
-  {{"question_number": 1, "question_text": "What is the acceleration?", "options": ["2 m/s", "5 m/s", "10 m/s", "20 m/s"], "correct_answer": "B", "solution": "a = F/m", "question_type": "single_mcq"}},
-  {{"question_number": 31, "question_text": "Calculate the velocity.", "options": [], "correct_answer": "20", "solution": "v = sqrt(2gh)", "question_type": "numerical"}},
-  {{"question_number": 61, "question_text": "Gravity is constant everywhere.", "options": [], "correct_answer": "False", "solution": "Varies with altitude", "question_type": "true_false"}},
-  {{"question_number": 91, "question_text": "The SI unit of force is ______.", "options": [], "correct_answer": "Newton", "solution": "", "question_type": "fill_blank"}}
-]
-```
-
-**CRITICAL RULES:**
-1. LOOK AT SECTION HEADERS to determine question type
-2. Questions 1-30 are usually MCQ (single_mcq)
-3. Questions 31-60 are usually Numerical (numerical)
-4. Questions 61-90 are usually True/False (true_false)
-5. Questions 91-100 are usually Fill in the blank (fill_blank)
-6. Extract EVERY question that EXISTS - don't invent or skip any
-{f"7. TOTAL EXPECTED: {expected_count} questions - verify your count!" if expected_count > 0 else ""}
+**LATEX**: Use LaTeX for formulas (e.g., $HNO_{{3}}$).
 
 **CONTENT TO EXTRACT FROM:**
 {content}
 
-**Return ONLY the JSON array:**"""
+**Return ONLY a JSON array of question objects.**"""
 
     def _parse_ai_response(self, response: str, original_content: str, subject: str) -> List[Dict]:
         """Parse AI response to extract questions"""
@@ -502,8 +528,46 @@ The document has DIFFERENT SECTIONS with different question types. Look for sect
             
             validated = []
             for q in questions:
-                if not q.get('question_text', '').strip():
+                if not q.get('question_text', '').strip() and not q.get('is_nested'):
                     continue
+                
+                # Standardize nested structure if present
+                structure = q.get('structure', {})
+                is_nested_type = q.get('question_type') in ['multipart', 'internal_choice', 'mixed']
+                
+                if structure or is_nested_type:
+                    q['is_nested'] = True
+                    if not structure:
+                        structure = {'parts': [], 'nested_type': q.get('question_type', 'mixed'), 'is_nested': True}
+                    
+                    # Ensure is_nested is consistent
+                    structure['is_nested'] = True
+                    if 'nested_type' not in structure:
+                        structure['nested_type'] = q.get('question_type', 'mixed')
+
+                    # Migration: Map 'options' or 'nested_parts' to 'parts' if AI used them
+                    if 'options' in structure and 'parts' not in structure:
+                        structure['parts'] = structure.pop('options')
+                    if 'nested_parts' in structure and 'parts' not in structure:
+                        structure['parts'] = structure.pop('nested_parts')
+                    
+                    # Migration: Map 'text' to 'question_text' recursively
+                    def migrate_text_fields(obj):
+                        if isinstance(obj, list):
+                            for item in obj: migrate_text_fields(item)
+                        elif isinstance(obj, dict):
+                            if 'text' in obj and 'question_text' not in obj:
+                                obj['question_text'] = obj.pop('text')
+                            # Handle common part names
+                            if 'parts' in obj: migrate_text_fields(obj['parts'])
+                            if 'sub_parts' in obj: migrate_text_fields(obj['sub_parts'])
+                            if 'options' in obj: migrate_text_fields(obj['options'])
+                    
+                    migrate_text_fields(structure.get('parts', []))
+                    
+                    q['structure'] = structure
+                    # Force subjective type for frontend compatibility with nested questions
+                    q['question_type'] = 'subjective'
                 
                 q.setdefault('question_type', 'single_mcq')
                 q.setdefault('options', [])
@@ -512,8 +576,14 @@ The document has DIFFERENT SECTIONS with different question types. Look for sect
                 q.setdefault('confidence', 0.85)
                 
                 q['question_type'] = self._normalize_type(q['question_type'])
+
+                # CRITICAL: Re-force subjective for nested structures AFTER normalization
+                if q.get('is_nested') or structure:
+                    q['question_type'] = 'subjective'
+                    
                 validated.append(q)
             
+            logger.info(f"Successfully validated {len(validated)} questions. Types: {set(q['question_type'] for q in validated)}")
             return validated
             
         except json.JSONDecodeError as e:
@@ -541,7 +611,10 @@ The document has DIFFERENT SECTIONS with different question types. Look for sect
             'fill_blank': 'fill_blank',
             'fill in the blank': 'fill_blank',
             'fill': 'fill_blank',
-            'subjective': 'subjective',
+            'multipart': 'multipart',
+            'internal_choice': 'internal_choice',
+            'mixed': 'mixed',
+            'descriptive': 'subjective',
         }
         
         return type_mapping.get(q_type, 'single_mcq')

@@ -13,7 +13,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.parsers import MultiPartParser, FormParser
 
-from questions.models import ExtractionJob, ExtractedQuestion
+from questions.models import ExtractionJob, ExtractedQuestion, PreAnalysisJob
 from questions.extraction_serializers import (
     ExtractionJobSerializer,
     ExtractedQuestionSerializer,
@@ -639,7 +639,7 @@ def download_extracted_questions(request, job_id):
 # Document Pre-Analysis Endpoints
 # ===========================
 
-from questions.models import PreAnalysisJob
+
 from questions.services.document_pre_analyzer import DocumentPreAnalyzer, DocumentPreAnalysisError
 from questions.services.file_parser import FileParserService
 
@@ -1331,10 +1331,24 @@ def extract_questions_by_section(request):
             )
         
         if not subject:
-            return Response(
-                {'error': 'subject is required'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            # Fallback for robustness: if job only has one subject, use it
+            try:
+                job = PreAnalysisJob.objects.get(id=pre_analysis_job_id)
+                subjects = list(job.subject_separated_content.keys())
+                if len(subjects) == 1:
+                    subject = subjects[0]
+                    logger.info(f"Subject not provided, but only one subject '{subject}' exists in job. Using it.")
+                else:
+                    return Response(
+                        {'error': 'subject is required and multiple subjects exist in job'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+            except Exception as e:
+                logger.error(f"Fallback subject detection failed: {e}")
+                return Response(
+                    {'error': 'subject is required'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
         
         # Get pre-analysis job
         try:
@@ -1411,13 +1425,37 @@ def extract_questions_by_section(request):
         expected_count = job.subject_question_counts.get(subject, 0)
         logger.info(f"Expected question count for {subject}: {expected_count}")
         
+        # NEW: Build pattern hints for accurate slot matching
+        pattern_hint = {}
+        try:
+            from patterns.models import PatternSection
+            sections = PatternSection.objects.filter(
+                pattern=job.pattern,
+                subject__iexact=subject
+            ).order_by('order')
+            
+            for s in sections:
+                if s.question_configurations:
+                    for q_num, config in s.question_configurations.items():
+                        # Enrich config with section metadata
+                        enriched_config = config.copy()
+                        enriched_config['section_name'] = s.name
+                        enriched_config['target_question_type'] = s.question_type
+                        pattern_hint[q_num] = enriched_config
+            
+            if pattern_hint:
+                logger.info(f"Generated pattern hints for {len(pattern_hint)} question slots in {subject}")
+        except Exception as pe:
+            logger.warning(f"Could not generate pattern hints: {pe}")
+
         # Extract questions by section
         extractor = SectionQuestionExtractor()
         result = extractor.extract_questions_by_sections(
             subject_content,
             document_structure,
             subject,
-            expected_question_count=expected_count  # Pass expected count
+            expected_question_count=expected_count,
+            pattern_hint=pattern_hint  # Pass hints to AI
         )
         
         # Convert dataclass results to dicts
@@ -1775,13 +1813,43 @@ def confirm_section_import(request):
                         question_text = ''
                     question_text = str(question_text).strip()
                     
+                    # Capture structure and check if nested
+                    structure = q_data.get('structure', {})
+                    is_nested = bool(structure and structure.get('options'))
+                    
                     if not question_text:
                         # Try to get text from other fields
                         question_text = q_data.get('text', '') or q_data.get('question', '') or ''
                         question_text = str(question_text).strip()
                     
-                    if not question_text:
-                        raise ValueError(f"Question text is empty. Data: {list(q_data.keys())}")
+                    if not question_text and not is_nested:
+                        raise ValueError(f"Question text is empty and not a structured question. Data: {list(q_data.keys())}")
+
+                    # NEW: Robust structure migration at import time
+                    if is_nested:
+                        # 1. Map 'options' or 'nested_parts' to 'parts' at top level
+                        if 'options' in structure and 'parts' not in structure:
+                            structure['parts'] = structure.pop('options')
+                        if 'nested_parts' in structure and 'parts' not in structure:
+                            structure['parts'] = structure.pop('nested_parts')
+                        
+                        # 2. Add required flags
+                        structure['is_nested'] = True
+                        if 'nested_type' not in structure:
+                            structure['nested_type'] = q_data.get('question_type', 'mixed')
+                        
+                        # 3. Recursive text field migration (text -> question_text)
+                        def migrate_nested(obj):
+                            if isinstance(obj, list):
+                                for item in obj: migrate_nested(item)
+                            elif isinstance(obj, dict):
+                                if 'text' in obj and 'question_text' not in obj:
+                                    obj['question_text'] = obj.pop('text')
+                                for k in ['parts', 'sub_parts', 'options']:
+                                    if k in obj: migrate_nested(obj[k])
+                        
+                        if 'parts' in structure:
+                            migrate_nested(structure['parts'])
                     
                     # Get correct_answer - handle different formats
                     correct_answer = q_data.get('correct_answer', '') or q_data.get('answer', '') or ''
@@ -1797,12 +1865,30 @@ def confirm_section_import(request):
                     if not isinstance(options, list):
                         options = []
                     
-                    # Validate question_type
-                    question_type = q_data.get('question_type', 'single_mcq')
-                    valid_types = ['single_mcq', 'multiple_mcq', 'numerical', 'subjective', 'true_false', 'fill_blank']
+                    # Validate and preserve question_type
+                    question_type = q_data.get('question_type', 'subjective')
+                    valid_types = [
+                        'single_mcq', 'multiple_mcq', 'numerical', 'subjective', 
+                        'true_false', 'fill_blank', 'multipart', 'internal_choice', 'mixed'
+                    ]
+                    
+                    # If it has a structure, trust the specialized type (mixed/multipart)
+                    if not is_nested and section:
+                        # For simple questions, we might want to align with section
+                        if section.question_type == 'subjective' and question_type not in valid_types:
+                             question_type = 'subjective'
+                    
                     if question_type not in valid_types:
-                        logger.warning(f"Invalid question_type '{question_type}', defaulting to 'single_mcq'")
-                        question_type = 'single_mcq'
+                        question_type = 'subjective'
+
+                    # CRITICAL: Force subjective type for nested questions to enable correct frontend rendering
+                    if is_nested:
+                        question_type = 'subjective'
+                    
+                    # If section is subjective and no top-level options were provided, default to subjective
+                    if section and section.question_type == 'subjective' and not options:
+                        question_type = 'subjective'
+
                     
                     # Calculate question_number based on section's question range
                     # question_number should be within section.start_question to section.end_question
@@ -1832,6 +1918,7 @@ def confirm_section_import(request):
                         question_type=question_type,
                         difficulty=q_data.get('difficulty', 'medium'),
                         options=options,
+                        structure=structure,
                         correct_answer=correct_answer,
                         solution=str(q_data.get('solution', '') or ''),
                         explanation=str(q_data.get('explanation', '') or ''),
@@ -2115,11 +2202,41 @@ def extract_text_from_image(request):
                 destination.write(chunk)
         
         try:
-            # Extract text using Mathpix
+            # Try Mathpix first if configured
             from questions.services.mathpix_service import MathpixService, MathpixError
+            from questions.services.gemini_ocr_service import GeminiOCRService, GeminiOCRError
             
-            mathpix = MathpixService()
-            extracted_text = mathpix.extract_image(file_path)
+            extracted_text = ""
+            method_used = ""
+            
+            if MathpixService.is_configured():
+                try:
+                    logger.info("Using Mathpix for image extraction")
+                    mathpix = MathpixService()
+                    extracted_text = mathpix.extract_image(file_path)
+                    method_used = "mathpix"
+                except MathpixError as e:
+                    logger.warning(f"Mathpix extraction failed, falling back to Gemini: {e}")
+            
+            # Fallback to Gemini if Mathpix failed or not configured
+            if not extracted_text:
+                if GeminiOCRService.is_configured():
+                    try:
+                        logger.info("Using Gemini for image extraction")
+                        gemini_ocr = GeminiOCRService()
+                        extracted_text = gemini_ocr.extract_image(file_path)
+                        method_used = "gemini"
+                    except GeminiOCRError as e:
+                        logger.error(f"Gemini OCR also failed: {e}")
+                        return Response(
+                            {'error': f'Extraction failed: {str(e)}'},
+                            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                        )
+                else:
+                    return Response(
+                        {'error': 'No OCR service configured. Please set MATHPIX or GEMINI credentials.'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
             
             # Check if text contains LaTeX
             has_latex = '$' in extracted_text or '\\' in extracted_text
@@ -2130,26 +2247,34 @@ def extract_text_from_image(request):
             except:
                 pass
             
-            logger.info(f"Successfully extracted {len(extracted_text)} chars from image via Mathpix")
+            logger.info(f"Successfully extracted {len(extracted_text)} chars from image via {method_used}")
             
             # Parse question structure using Gemini AI
             parsed_structure = None
             parsing_error = None
+            
+            # Import outside try block to ensure exception classes are available for except clause
             try:
                 from questions.services.question_structure_parser import QuestionStructureParser, QuestionStructureParseError
-                
-                logger.info(f"Attempting to parse question structure from {len(extracted_text)} characters of text")
-                parser = QuestionStructureParser()
-                parsed_structure = parser.parse_question_structure(extracted_text)
-                logger.info("Successfully parsed question structure using Gemini AI")
-            except QuestionStructureParseError as e:
-                parsing_error = str(e)
-                logger.warning(f"Failed to parse question structure: {parsing_error}. Returning raw text only.", exc_info=True)
-                # Continue without parsed structure - backward compatible
-            except Exception as e:
-                parsing_error = str(e)
-                logger.error(f"Unexpected error during question structure parsing: {parsing_error}", exc_info=True)
-                # Continue without parsed structure - backward compatible
+            except ImportError as e:
+                logger.warning(f"Could not import question structure parser: {e}")
+                QuestionStructureParser = None
+                QuestionStructureParseError = Exception  # Fallback to base Exception
+            
+            if QuestionStructureParser:
+                try:
+                    logger.info(f"Attempting to parse question structure from {len(extracted_text)} characters of text")
+                    parser = QuestionStructureParser()
+                    parsed_structure = parser.parse_question_structure(extracted_text)
+                    logger.info("Successfully parsed question structure using Gemini AI")
+                except QuestionStructureParseError as e:
+                    parsing_error = str(e)
+                    logger.warning(f"Failed to parse question structure: {parsing_error}. Returning raw text only.", exc_info=True)
+                    # Continue without parsed structure - backward compatible
+                except Exception as e:
+                    parsing_error = str(e)
+                    logger.error(f"Unexpected error during question structure parsing: {parsing_error}", exc_info=True)
+                    # Continue without parsed structure - backward compatible
             
             # Build response
             response_data = {
@@ -2157,7 +2282,8 @@ def extract_text_from_image(request):
                 'extracted_text': extracted_text,
                 'has_latex': has_latex,
                 'confidence': 0.95,
-                'message': 'Successfully extracted text from image'
+                'method': method_used,
+                'message': f'Successfully extracted text from image using {method_used}'
             }
             
             # Add parsed structure if available
