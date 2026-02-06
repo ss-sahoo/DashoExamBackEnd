@@ -13,7 +13,7 @@ from questions.models import ExtractionJob, ExtractedQuestion
 from questions.services.file_parser import FileParserService, FileParsingError
 from questions.services.gemini_extraction_v2 import GeminiExtractionServiceV2, GeminiExtractionError
 from questions.services.question_validation import QuestionValidationService
-from questions.services.pre_analyzer import PreAnalyzer
+from questions.services.document_pre_analyzer import DocumentPreAnalyzer
 from questions.services.question_type_classifier import QuestionTypeClassifier
 from questions.services.subject_categorizer import SubjectCategorizer, SubjectCategorizationError
 
@@ -36,7 +36,7 @@ class ExtractionPipelineV2:
         self.ai_extractor = None  # Lazy initialization
         self.subject_categorizer = None  # Lazy initialization
         self.validator = QuestionValidationService()
-        self.pre_analyzer = PreAnalyzer()
+        self.doc_pre_analyzer = DocumentPreAnalyzer()
         self.type_classifier = QuestionTypeClassifier()
     
     def process_file(
@@ -324,149 +324,142 @@ class ExtractionPipelineV2:
         progress_callback: Optional[callable]
     ) -> Dict:
         """
-        Process extraction without pre-analysis (legacy flow).
+        Process extraction without existing pre-analysis job.
         
-        This is the FALLBACK path - used when no pre-analysis is available.
-        Subjects are guessed after extraction using AI categorization.
-        
-        Args:
-            job: Extraction job
-            start_time: Start time for processing duration calculation
-            progress_callback: Progress callback
-            
-        Returns:
-            Extraction result summary
+        ENHANCED: Uses DocumentPreAnalyzer to perform ad-hoc pre-analysis and separation
+        before extraction. This ensures we ALWAYS follow the "Analyze -> Separate -> Extract" flow
+        requested by the user, even if the UI skipped the explicit pre-analysis step.
         """
-        logger.info("Using standard extraction flow (no pre-analysis)")
+        logger.info("Using ad-hoc pre-analysis flow (backend enforcement of multi-step process)")
         
-        # Step 1: Parse file (5-15%)
+        # Step 1: Parse file (5-10%)
         logger.info("Step 1: Parsing file")
         text_content, is_image = self._parse_file(job)
-        self._update_progress(job, 15, "File parsed", progress_callback)
+        self._update_progress(job, 10, "File parsed", progress_callback)
         
-        # Step 2: Pre-analyze content (15-25%)
-        logger.info("Step 2: Pre-analyzing content")
-        analysis = self.pre_analyzer.analyze_file(text_content)
-        expected_count = analysis['estimated_question_count']
+        if is_image:
+            # Images can't be easily text-analyzed/separated yet, use standard flow
+            logger.info("Image file detected - using standard single-pass extraction")
+            return self._process_standard_flow(job, text_content, is_image, start_time, progress_callback)
+            
+        # Step 2: Run DocumentPreAnalyzer (10-25%)
+        logger.info("Step 2: AI Pre-Analysis and Separation")
+        self._update_progress(job, 15, "Analyzing document structure...", progress_callback)
         
-        # Store pre-analysis results
-        job.total_questions_found = expected_count
-        job.save(update_fields=['total_questions_found'])
+        # Get subjects from pattern
+        pattern = job.pattern
+        pattern_subjects = list(set(s.subject for s in pattern.sections.all()))
         
-        self._update_progress(
-            job, 25, 
-            f"Found ~{expected_count} questions", 
-            progress_callback
-        )
+        try:
+            # Perform robust analysis
+            analysis_result = self.doc_pre_analyzer.analyze_document(
+                text_content, 
+                pattern_subjects
+            )
+            
+            # Use the separation capability
+            if analysis_result.is_valid and analysis_result.subject_separated_content:
+                logger.info(f"Analysis successful! Separated into subjects: {list(analysis_result.subject_separated_content.keys())}")
+                
+                # Mock a pre-analysis object to reuse the logic
+                class MockPreAnalysis:
+                    def __init__(self, result):
+                        self.subject_separated_content = result.subject_separated_content
+                        self.subject_question_counts = result.subject_question_counts
+                        self.total_estimated_questions = result.total_estimated_questions
+                        self.document_structure = result.document_structure
+                
+                mock_pa = MockPreAnalysis(analysis_result)
+                
+                # Delegate to the separated content processor
+                return self._process_with_pre_analysis(
+                    job, mock_pa, start_time, progress_callback
+                )
+            else:
+                logger.warning("Pre-analysis valid but no separation returned. Falling back to standard flow.")
+                return self._process_standard_flow(job, text_content, False, start_time, progress_callback)
+                
+        except Exception as e:
+            logger.error(f"Ad-hoc pre-analysis failed: {e}. Falling back to standard flow.")
+            return self._process_standard_flow(job, text_content, False, start_time, progress_callback)
+
+    def _process_standard_flow(
+        self,
+        job: ExtractionJob,
+        text_content: str,
+        is_image: bool,
+        start_time: float,
+        progress_callback: Optional[callable]
+    ) -> Dict:
+        """
+        Legacy standard extraction flow for images or failed analysis.
+        Extracts from the whole document content at once.
+        """
+        logger.info("Falling back to standard single-pass extraction")
         
-        logger.info(f"Pre-analysis: {expected_count} questions expected")
+        # Estimate count using simple regex (since robust analysis might have failed/skipped)
+        try:
+            from questions.services.pre_analyzer import PreAnalyzer
+            simple_analyzer = PreAnalyzer()
+            analysis = simple_analyzer.analyze_file(text_content)
+            expected_count = analysis['estimated_question_count']
+        except:
+            expected_count = 50 # Default fallback
+            
+        logger.info(f"Estimated questions: {expected_count}")
         
-        # Step 3: Build context (25-30%)
-        logger.info("Step 3: Building extraction context")
+        # Step 3: Build context
         context = self._build_context(job)
+        context['expected_question_count'] = expected_count
         self._update_progress(job, 30, "Context built", progress_callback)
         
-        # Step 4: Extract questions with V2 service (30-80%)
-        logger.info("Step 4: Extracting questions with enhanced AI")
-        
+        # Step 4: Extract
         def extraction_progress(percent, message):
-            # Map 0-100 to 30-80
             mapped_percent = 30 + int(percent * 0.5)
             self._update_progress(job, mapped_percent, message, progress_callback)
         
         extraction_result = self._extract_questions_v2(
-            job,
-            text_content,
-            context,
-            is_image,
-            extraction_progress
+            job, text_content, context, is_image, extraction_progress
         )
         
-        self._update_progress(job, 75, "Questions extracted", progress_callback)
-        
-        # Log extraction result details
         questions_list = extraction_result.get('questions', [])
-        logger.info(f"Extraction result: {len(questions_list)} questions in result")
-        if questions_list:
-            sample = questions_list[0]
-            logger.info(f"Sample question keys: {sample.keys() if isinstance(sample, dict) else 'not a dict'}")
-            logger.info(f"Sample question_text: {sample.get('question_text', 'MISSING')[:100] if isinstance(sample, dict) else 'N/A'}")
         
-        # Step 5: Categorize questions by subject (75-85%)
-        logger.info(f"Step 5: Categorizing {len(questions_list)} questions by subject")
-        self._update_progress(job, 78, "Categorizing by subject...", progress_callback)
-        
-        available_subjects = context.get('subjects', [])
-        if available_subjects and len(questions_list) > 0:
+        # Step 5: Categorize (necessary since we didn't separate)
+        self._update_progress(job, 80, "Categorizing by subject...", progress_callback)
+        if context.get('subjects') and questions_list:
             try:
-                categorization_result = self._categorize_questions(
-                    questions_list,
-                    available_subjects
-                )
-                questions_list = categorization_result['questions']
-                logger.info(f"Subject distribution: {categorization_result['subject_counts']}")
+                categorization = self._categorize_questions(questions_list, context['subjects'])
+                questions_list = categorization['questions']
             except Exception as e:
-                logger.warning(f"Subject categorization failed, continuing without: {e}")
+                logger.warning(f"Categorization failed: {e}")
+
+        # Step 6: Save
+        saved_count = self._save_extracted_questions(job, questions_list, context)
         
-        self._update_progress(job, 85, "Questions categorized", progress_callback)
-        
-        # Step 6: Save extracted questions (85-95%)
-        logger.info(f"Step 6: Saving {len(questions_list)} questions")
-        saved_count = self._save_extracted_questions(
-            job, 
-            questions_list,
-            context
-        )
-        self._update_progress(job, 95, f"Saved {saved_count} questions", progress_callback)
-        
-        # Step 7: Finalize (95-100%)
-        logger.info("Step 7: Finalizing extraction")
+        # Finalize
         processing_time = time.time() - start_time
-        
-        # Update job with results
         job.processing_time_seconds = processing_time
         job.questions_extracted = saved_count
         
-        # Determine final status
-        metadata = extraction_result['metadata']
-        completeness = metadata['completeness']
+        completeness = (saved_count / expected_count * 100) if expected_count > 0 else 0
         
-        # Status thresholds:
-        # - 90%+ = completed (excellent extraction)
-        # - 50%+ = partial (acceptable, user can review)
-        # - <50% = failed (too many missing questions)
         if completeness >= 90:
             job.mark_completed()
         elif completeness >= 50:
             job.mark_partial()
         else:
-            job.mark_failed(
-                f"Low extraction completeness: {completeness:.1f}% "
-                f"({saved_count}/{expected_count} questions)"
-            )
-        
+            job.mark_failed(f"Low completeness: {completeness:.1f}%")
+            
         self._update_progress(job, 100, "Extraction complete", progress_callback)
         
-        result = {
+        return {
             'job_id': str(job.id),
             'status': job.status,
-            'expected_count': expected_count,
             'extracted_count': saved_count,
             'completeness': completeness,
             'processing_time': processing_time,
-            'type_distribution': metadata['type_distribution'],
-            'has_latex': metadata['has_latex'],
-            'detected_subjects': metadata.get('detected_subjects', []),
-            'extraction_method': 'standard',  # Mark method used
+            'extraction_method': 'standard_fallback'
         }
-        
-        logger.info(
-            f"Extraction job {job.id} completed: "
-            f"{saved_count}/{expected_count} questions ({completeness:.1f}%) "
-            f"in {processing_time:.2f}s"
-        )
-        
-        return result
     
     def _update_progress(
         self,
@@ -761,7 +754,15 @@ class ExtractionPipelineV2:
         
         # Use AI-suggested subject if valid
         suggested_subject = None
-        if ai_suggested_subject:
+        
+        # CRITICAL: If we are processing a specific subject block (from pre-analysis),
+        # we MUST use that subject. This overrides AI guessing.
+        known_subject = context.get('current_subject')
+        if known_subject:
+            suggested_subject = known_subject
+            logger.debug(f"Using known subject from context: {suggested_subject}")
+        elif ai_suggested_subject:
+            # Fallback to AI suggestion if no known subject
             for subj in subjects:
                 if subj.lower() == ai_suggested_subject.lower():
                     suggested_subject = subj

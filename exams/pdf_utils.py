@@ -563,12 +563,116 @@ def generate_question_paper_pdf(exam) -> BytesIO:
             
         import html
         import re
+        import tempfile
+        import urllib.request
+        import os
+        
+        # Helper to process images
+        def process_markup_images(txt):
+            # 1. Strip base64 SVGs (ReportLab can't handle them easily without svglib, and they clutter output)
+            # Match <img ... src="data:image/svg+xml;base64,..." ... />
+            txt = re.sub(r'<img[^>]*src=["\']data:image/svg\+xml;base64,[^"\']*["\'][^>]*>', '', txt, flags=re.IGNORECASE)
+            
+            # 2. Handle Markdown Images: ![alt](url) -> <img src="local_path" ... />
+            # We need to download them effectively
+            def download_replacer(match):
+                alt = match.group(1)
+                url = match.group(2).strip()
+                
+                # Cleanup common extraction noise (e.g. extra [ or ] around url)
+                url = url.strip('[]"\' ')
+                
+                try:
+                    # Basic validation
+                    if not url.startswith('http'):
+                        return ''
+                        
+                    # Determine extension from URL
+                    ext = '.jpg'
+                    if '.png' in url.lower(): ext = '.png'
+                    elif '.gif' in url.lower(): ext = '.gif'
+                        
+                    # Create temp file
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
+                        try:
+                            # Use a User-Agent to avoid being blocked by CDNs (Mathpix etc)
+                            req = urllib.request.Request(
+                                url, 
+                                headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+                            )
+                            # Set timeout to avoid hanging
+                            with urllib.request.urlopen(req, timeout=8) as response:
+                                tmp.write(response.read())
+                                tmp.flush()
+                                
+                                width_attr = ""
+                                height_attr = "120" # Default
+                                
+                                # Use PIL to determine image size and scale it
+                                try:
+                                    from PIL import Image as PILImage
+                                    with PILImage.open(tmp.name) as img:
+                                        orig_w, orig_h = img.size
+                                        
+                                        # Max box size (pts) - Reduced for "smaller" look
+                                        MAX_W = 170
+                                        MAX_H = 130
+                                        
+                                        # Calculate scale
+                                        scale_w = MAX_W / orig_w if orig_w > 0 else 1
+                                        scale_h = MAX_H / orig_h if orig_h > 0 else 1
+                                        scale = min(scale_w, scale_h, 1.0) # Don't upscale
+                                        
+                                        final_w = int(orig_w * scale)
+                                        final_h = int(orig_h * scale)
+                                        
+                                        width_attr = str(final_w)
+                                        height_attr = str(final_h)
+                                except Exception:
+                                    pass
+                                
+                                # Return internal placeholder data: path|width|height
+                                return f"{tmp.name}|{width_attr}|{height_attr}"
+                        except Exception as e:
+                            import logging
+                            logging.error(f"Failed to download PDF image {url}: {e}")
+                            return ''
+                except Exception:
+                    return ''
+
+            # Regex for markdown image: ![...] (optional space) (http...)
+            pattern = r'!\[(.*?)\]\s*\((https?://[^\s\)]+)\)'
+            
+            # We perform replacement of images with a unique placeholder to survive escaping
+            if 'http' in txt and '![' in txt:
+                matches = list(re.finditer(pattern, txt, re.IGNORECASE))
+                replacements = {}
+                for m in matches:
+                    full_match = m.group(0)
+                    if full_match not in replacements:
+                        res = download_replacer(m)
+                        if res:
+                             # Base64 encode the path|w|h string to protect it from math processing (_)
+                             encoded_res = base64.b64encode(res.encode()).decode()
+                             replacements[full_match] = f'[IMGURL]{encoded_res}[ENDIMGURL]'
+                        else:
+                             # If download failed, remove the link to keep PDF clean
+                             replacements[full_match] = ''
+                
+                for k, v in replacements.items():
+                    txt = txt.replace(k, v)
+            
+            return txt
+
+        import base64
+        # Pre-process images (hide them in placeholders)
+        if '![' in text or 'data:image' in text:
+            text = process_markup_images(text)
         
         # 1. First, unescape any existing HTML entities to avoid double escaping
         text = html.unescape(text)
         
-        # 2. Clean up common LaTeX "text" wrappers which cause brace confusion
-        # Handle \text{...} or \mathrm{...}
+        # 2. Clean up common LaTeX "text" wrappers
         text = re.sub(r'\\(?:text|mathrm|mathbf|mathit)\{([^}]*)\}', r'\1', text)
         
         # 3. Convert common LaTeX symbols to Unicode equivalents
@@ -579,14 +683,36 @@ def generate_question_paper_pdf(exam) -> BytesIO:
             '\\theta': 'θ', '\\pm': '±', '\\neq': '≠', '\\approx': '≈',
             '\\geq': '≥', '\\leq': '≤', '\\infty': '∞', '\\to': '→',
             '\\rightarrow': '→', '\\leftrightarrow': '↔', '\\Rightarrow': '⇒',
+            '\\mu': 'μ', '\\epsilon': 'ε', '\\rho': 'ρ', '\\tau': 'τ',
+            '\\phi': 'φ', '\\Delta': 'Δ', '\\Omega': 'Ω',
         }
         for lat, sym in symbols.items():
             text = text.replace(lat, sym)
             
+        # 3.5 Convert fractions \frac{a}{b} -> (a)/(b) RECURSIVELY
+        # We need to loop this because nested fractions exist
+        for _ in range(3):
+            text = re.sub(r'\\frac\{([^{}]+)\}\{([^{}]+)\}', r'(\1)/(\2)', text)
+            
+        # 3.6 Handle \sqrt
+        text = re.sub(r'\\sqrt\{([^{}]+)\}', r'√(\1)', text)
+        text = re.sub(r'\\sqrt\[([^{}]+)\]\{([^{}]+)\}', r'(\2)^(1/\1)', text)
+
+        # 3.7 Handle \text, \mathrm, \mathbf
+        text = re.sub(r'\\(?:text|mathrm|mathbf|mathit|bf|it)\{([^{}]+)\}', r'\1', text)
+        
+        # 3.8 Handle spacing commands
+        text = re.sub(r'\\[;,!]', ' ', text)
+        text = re.sub(r'\\quad', '    ', text)
+        text = re.sub(r'\\qquad', '        ', text)
+        
+        # 3.9 Handle Trig functions (remove backslash)
+        trig_funcs = ['sin', 'cos', 'tan', 'sec', 'csc', 'cot', 'log', 'ln', 'exp', 'min', 'max']
+        for func in trig_funcs:
+            text = re.sub(r'\\' + func + r'(?![a-zA-Z])', func, text)
+
         # 4. Handle braced subscripts/superscripts (INNERMOST FIRST)
-        # Use a loop to handle nested cases like _{X^{2+}}
-        for _ in range(5):  # Max 5 levels of nesting
-            # Match only innermost groups (containing no other { or })
+        for _ in range(5):
             new_text = re.sub(r'\_\{([^{}]*)\}', r'<sub>\1</sub>', text)
             new_text = re.sub(r'\^\{([^{}]*)\}', r'<sup>\1</sup>', new_text)
             if new_text == text:
@@ -594,22 +720,31 @@ def generate_question_paper_pdf(exam) -> BytesIO:
             text = new_text
             
         # 5. Handle single-character subscripts/superscripts
-        # Only if NOT followed by { (already handled) and NOT part of an existing tag
-        # Use a more constrained char set to avoid matching part of tags like <sub>
         text = re.sub(r'(?<![a-zA-Z0-9])\_([a-zA-Z0-9°α-ωΑ-Ω])', r'<sub>\1</sub>', text)
         text = re.sub(r'(?<![a-zA-Z0-9])\^([a-zA-Z0-9°α-ωΑ-Ω])', r'<sup>\1</sup>', text)
-        # Fallback for simple cases like H_2O (no word boundary needed)
-        text = re.sub(r'([a-zA-Z])\_([0-9])', r'\1<sub>\2</sub>', text)
-        text = re.sub(r'([a-zA-Z])\^([0-9])', r'\1<sup>\2</sup>', text)
+        # Handle cases like x_2 or y^2 directly
+        text = re.sub(r'([a-zA-Z])\_([0-9a-zA-Z])', r'\1<sub>\2</sub>', text)
+        text = re.sub(r'([a-zA-Z])\^([0-9a-zA-Z])', r'\1<sup>\2</sup>', text)
+
+        # 6. Remove remaining LaTeX backslashes for text readability
+        # Strip commands like \alpha -> α is done, but things like \perp might remain
+        # This is a catch-all cleanup for unhandled commands to avoid "\command" showing up
+        # We match \<word> and if it's not a tag, we keep just the word? No, might be risky.
+        # Let's just remove specific remaining styling commands
+        text = re.sub(r'\\(?:left|right|big|Big|bigg|Bigg)', '', text)
+        
+        # Clean up brackets \[ \] \( \)
+        text = text.replace('\\[', '').replace('\\]', '')
+        text = text.replace('\\(', '').replace('\\)', '')
 
         # 6. Remove remaining $ delimiters
         text = text.replace('$', '')
         
-        # 7. XML Escaping for ReportLab (must come AFTER conversions but BEFORE restoring tags)
+        # 7. XML Escaping for ReportLab
         from xml.sax.saxutils import escape as xml_escape
         text = xml_escape(text)
         
-        # 8. Unescape allowed ReportLab tags
+        # 8. Unescape allowed tags
         text = text.replace('&lt;b&gt;', '<b>').replace('&lt;/b&gt;', '</b>')
         text = text.replace('&lt;i&gt;', '<i>').replace('&lt;/i&gt;', '</i>')
         text = text.replace('&lt;u&gt;', '<u>').replace('&lt;/u&gt;', '</u>')
@@ -617,9 +752,32 @@ def generate_question_paper_pdf(exam) -> BytesIO:
         text = text.replace('&lt;sub&gt;', '<sub>').replace('&lt;/sub&gt;', '</sub>')
         text = text.replace('&lt;sup&gt;', '<sup>').replace('&lt;/sup&gt;', '</sup>')
         
-        # Limit length to prevent memory issues
-        if len(text) > 10000:
-            text = text[:10000] + '...'
+        # 9. Final Restore Images (at the very end)
+        def restore_img(match):
+            try:
+                # Decode the base64 content to get back path|w|h
+                encoded_content = match.group(1).strip()
+                content = base64.b64decode(encoded_content).decode('utf-8')
+                
+                parts = content.split('|')
+                p = parts[0]
+                w = parts[1] if len(parts) > 1 else ""
+                h = parts[2] if len(parts) > 2 else "120"
+                
+                attrs = f'src="{p}" valign="middle"'
+                if w: attrs += f' width="{w}"'
+                if h: attrs += f' height="{h}"'
+                return f'<img {attrs} />'
+            except Exception:
+                return ''
+                
+        # Final subst with DOTALL to catch any potential multi-line placeholders
+        # Uses the new math-safe square bracket format with base64 content
+        text = re.sub(r'\[IMGURL\](.+?)\[ENDIMGURL\]', restore_img, text, flags=re.DOTALL)
+        
+        # Limit length
+        if len(text) > 15000:
+            text = text[:15000] + '...'
         return text
 
     def to_roman(n):
@@ -630,6 +788,69 @@ def generate_question_paper_pdf(exam) -> BytesIO:
             return romans.get(n, str(n))
         except:
             return str(n)
+
+    # Standard board question rendering
+    def render_simple_question(q, index, marks_per_question):
+        story_elements = []
+        
+        # Question text and marks
+        q_text = f"Q.{index} {sanitize_pdf_text(q.question_text)}"
+        story_elements.append(Table([[Paragraph(q_text, board_question_text), Paragraph(f"[{marks_per_question}]", board_marks)]], colWidths=[5.8 * inch, 0.7 * inch], style=TableStyle([('VALIGN', (0,0), (-1,-1), 'TOP'), ('LEFTPADDING', (0,0), (-1,-1), 0), ('RIGHTPADDING', (0,0), (-1,-1), 0)])))
+        
+        # Draw options for MCQs
+        if q.question_type in ['single_mcq', 'multiple_mcq'] and q.options:
+            option_labels = ['(1)', '(2)', '(3)', '(4)', '(5)', '(6)'] # Use numbers as per instruction
+            
+            # Heuristic: Use vertical layout only if ANY option text is VERY long
+            # (diagrams/images should stay in grid if possible as per user reference)
+            force_vertical = False
+            for opt in q.options:
+                if len(str(opt)) > 120: # Arbitrary length to detect "long" options
+                    force_vertical = True
+                    break
+            
+            # Use 2-col grid if <= 4 options and not too much text
+            if len(q.options) <= 4 and not force_vertical:
+                opt_data = []
+                for i in range(0, len(q.options), 2):
+                    row = []
+                    # Option 1
+                    p1 = Paragraph(sanitize_pdf_text(f"{option_labels[i]} {q.options[i]}"), board_option)
+                    row.append(p1)
+                    
+                    # Option 2
+                    if i + 1 < len(q.options):
+                        p2 = Paragraph(sanitize_pdf_text(f"{option_labels[i+1]} {q.options[i+1]}"), board_option)
+                        row.append(p2)
+                    else:
+                        row.append("") # Empty cell for alignment
+                    opt_data.append(row)
+                
+                opt_table = Table(opt_data, colWidths=[3.25 * inch, 3.25 * inch])
+                opt_table.setStyle(TableStyle([
+                    ('LEFTPADDING', (0,0), (-1,-1), 0),
+                    ('VALIGN', (0,0), (-1,-1), 'TOP'),
+                    ('TOPPADDING', (0,0), (-1,-1), 10),    # More padding for images
+                    ('BOTTOMPADDING', (0,0), (-1,-1), 10),
+                ]))
+                story_elements.append(opt_table)
+            else:
+                # Vertical Layout
+                for i, opt in enumerate(q.options):
+                    label_para = Paragraph(f"<b>{option_labels[i]}</b>", board_option)
+                    content_para = Paragraph(sanitize_pdf_text(str(opt)), board_option)
+                    
+                    v_table = Table([[label_para, content_para]], colWidths=[0.4 * inch, 6.1 * inch])
+                    v_table.setStyle(TableStyle([
+                        ('VALIGN', (0,0), (-1,-1), 'TOP'),
+                        ('LEFTPADDING', (0,0), (-1,-1), 0),
+                        ('TOPPADDING', (0,0), (-1,-1), 2),
+                        ('BOTTOMPADDING', (0,0), (-1,-1), 8),
+                    ]))
+                    story_elements.append(v_table)
+        
+        story_elements.append(Spacer(1, 14))
+        return story_elements
 
     story = []
 
@@ -964,30 +1185,57 @@ def generate_question_paper_pdf(exam) -> BytesIO:
 
                 # Draw options for MCQs
                 if q.question_type in ['single_mcq', 'multiple_mcq'] and q.options:
-                    option_labels = ['(a)', '(b)', '(c)', '(d)', '(e)', '(f)']
+                    option_labels = ['(1)', '(2)', '(3)', '(4)', '(5)', '(6)']
                     
-                    if len(q.options) <= 4:
+                    # Heuristic: Prefer grid (2-col) for images/diagrams unless text is very long
+                    force_vertical = False
+                    for opt in q.options:
+                        if len(str(opt)) > 120:
+                            force_vertical = True
+                            break
+                    
+                    # Use 2-col standard if <= 4 options and NOT forced vertical
+                    if len(q.options) <= 4 and not force_vertical:
                         opt_data = []
                         for i in range(0, len(q.options), 2):
                             row = []
-                            row.append(Paragraph(sanitize_pdf_text(f"{option_labels[i]} {q.options[i]}"), board_option))
+                            # Option 1
+                            p1 = Paragraph(sanitize_pdf_text(f"{option_labels[i]} {q.options[i]}"), board_option)
+                            row.append(p1)
+                            
+                            # Option 2
                             if i + 1 < len(q.options):
-                                row.append(Paragraph(sanitize_pdf_text(f"{option_labels[i+1]} {q.options[i+1]}"), board_option))
+                                p2 = Paragraph(sanitize_pdf_text(f"{option_labels[i+1]} {q.options[i+1]}"), board_option)
+                                row.append(p2)
                             else:
                                 row.append("")
                             opt_data.append(row)
                         
                         opt_table = Table(opt_data, colWidths=[3.25 * inch, 3.25 * inch])
                         opt_table.setStyle(TableStyle([
-                            ('LEFTPADDING', (0,0), (-1,-1), 20),
+                            ('LEFTPADDING', (0,0), (-1,-1), 0),
                             ('VALIGN', (0,0), (-1,-1), 'TOP'),
+                            ('TOPPADDING', (0,0), (-1,-1), 8),    # Added more padding for images
+                            ('BOTTOMPADDING', (0,0), (-1,-1), 8),
                         ]))
                         story.append(opt_table)
                     else:
+                        # Vertical Layout for long text or > 4 options
                         for i, opt in enumerate(q.options):
-                            story.append(Paragraph(sanitize_pdf_text(f"{option_labels[i]} {opt}"), board_option))
+                            label_para = Paragraph(f"<b>{option_labels[i]}</b>", board_option)
+                            content_para = Paragraph(sanitize_pdf_text(str(opt)), board_option)
+                            
+                            v_table = Table([[label_para, content_para]], colWidths=[0.4 * inch, 6.1 * inch])
+                            v_table.setStyle(TableStyle([
+                                ('VALIGN', (0,0), (-1,-1), 'TOP'),
+                                ('LEFTPADDING', (0,0), (-1,-1), 0),
+                                ('RIGHTPADDING', (0,0), (-1,-1), 0),
+                                ('TOPPADDING', (0,0), (-1,-1), 2),
+                                ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+                            ]))
+                            story.append(v_table)
             
-            story.append(Spacer(1, 10))
+            story.append(Spacer(1, 14)) # spacing between questions
 
     # Footer
     story.append(Spacer(1, 30))

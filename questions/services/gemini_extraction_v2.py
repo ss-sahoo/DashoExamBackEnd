@@ -521,13 +521,42 @@ class GeminiExtractionServiceV2:
         
         # Strategy 1: Try numbered question patterns first
         # Matches: Q.1, Q1., Question 1, 1., 1), (1), ### 1., **1.
+        # ENHANCED regex: clearer boundaries and support for "Q. 1"
         q_pattern = r'(?:^|\n)\s*(?:Q\.?\s*(\d+)|Question\s+(\d+)|#{1,4}\s*(\d+)[\.\)]|\*\*(\d+)[\.\)]|(\d+)[\.\)])\s*(.+?)(?=(?:\n\s*(?:Q\.?\s*\d+|Question\s+\d+|#{1,4}\s*\d+|\*\*\d+|\d+[\.\)]))|$)'
         
         matches = list(re.finditer(q_pattern, chunk_text, re.IGNORECASE | re.DOTALL))
         
+        # Helper to check if a match is a False Positive (e.g., reference in solution)
+        def is_false_positive(match_text, full_text, start_index):
+            # Extract the specific line where the match occurred
+            line_start = full_text.rfind('\n', 0, start_index) + 1
+            line_end = full_text.find('\n', start_index)
+            if line_end == -1: line_end = len(full_text)
+            line_content = full_text[line_start:line_end].lower()
+            
+            # Check for reference keywords
+            suspicious_keywords = ['sheet', 'level', 'page', 'theory', 'article', 'sol.', 'solution']
+            if any(k in line_content for k in suspicious_keywords):
+                # But allow if it STARTS with "Q." cleanly
+                clean_line = line_content.strip()
+                if clean_line.startswith('q.') or clean_line.startswith('question'):
+                     # Even if it starts with Q., if it mentions "sheet" or "level" on the SAME line, it's suspect
+                     # unless it's just "Q.1 Level 1" which might be a header. 
+                     # But "Sol. ... Q.1" is definitely bad.
+                     if 'sol.' in line_content or 'sheet' in line_content: 
+                         return True
+                else:
+                    # If it doesn't start with Q/Question, but matched (e.g. "1."), check for keywords
+                    return True
+            return False
+
         if matches:
             for match in matches:
                 try:
+                    # Check for false positives involving references
+                    if is_false_positive(match.group(0), chunk_text, match.start()):
+                        continue
+                        
                     q_num = int(match.group(1) or match.group(2) or match.group(3) or match.group(4) or match.group(5))
                     q_content = match.group(6).strip()
                     
@@ -719,12 +748,43 @@ class GeminiExtractionServiceV2:
             else:
                 response = self._call_gemini_text(prompt)
             
-            questions = self._parse_response(response)
-            return questions
+            logger.info(f"Gemini Raw Response for Q{start_q}-{end_q}:")
+            logger.info(response)
+            
+            return self._parse_response(response)
             
         except Exception as e:
-            logger.error(f"Chunk extraction failed: {e}")
-            raise
+            logger.warning(f"Chunk extraction failed: {e}")
+            raise e
+            
+    def _call_gemini_vision(self, image_path: str, prompt: str) -> str:
+        """
+        Call Gemini Vision API for image-based extraction.
+        CRITICAL: This is used for pages with diagrams, graphs, and complex layouts.
+        """
+        try:
+            import PIL.Image
+            
+            # Load the image
+            img = PIL.Image.open(image_path)
+            
+            # Use a vision-capable model (Gemini 1.5/2.0 Flash are excellent for this)
+            # Check if current model is vision capable, if not fall back to 1.5-flash
+            vision_model_name = self.model
+            if 'gemini' not in vision_model_name.lower() or 'nano' in vision_model_name.lower():
+                vision_model_name = 'gemini-2.0-flash'
+                
+            model = self.genai.GenerativeModel(vision_model_name)
+            
+            logger.info(f"Calling Gemini Vision ({vision_model_name}) for image: {image_path}")
+            
+            # Vision request
+            response = model.generate_content([prompt, img])
+            return response.text
+            
+        except Exception as e:
+            logger.error(f"Gemini Vision call failed: {e}")
+            raise GeminiExtractionError(f"Vision extraction failed: {str(e)}")
     
     def _build_extraction_prompt(
         self,

@@ -232,32 +232,86 @@ class DocumentPreAnalyzer:
                 subject_result = self._fallback_subject_detection(text_content, pattern_subjects)
                 logger.info(f"✅ Subjects detected (Regex): {subject_result.get('detected_subjects')}")
             logger.info(f"   Step 2 took {time.time() - step2_start:.2f} seconds")
+
+            # Step 4: AI-powered document structure detection (Moved BEFORE Step 3)
+            # We do this earlier so we can find subjects inside section headers that Step 2 might have missed
+            step4_start = time.time()
+            if use_ai:
+                try:
+                    logger.info("📊 Step 4: Detecting document structure with AI...")
+                    document_structure = self.detect_document_structure_ai(text_content)
+                    sections_count = document_structure.get('total_sections', 0)
+                    logger.info(f"✅ Structure detected (AI): {sections_count} sections found")
+                except Exception as e:
+                    logger.warning(f"⚠️ AI structure detection failed: {e}, using regex fallback")
+                    document_structure = self._fallback_structure_detection(text_content)
+                    sections_count = document_structure.get('total_sections', 0)
+                    logger.info(f"✅ Structure detected (Regex): {sections_count} sections found")
+            else:
+                logger.info("📊 Step 4: Detecting document structure with regex (AI unavailable)...")
+                document_structure = self._fallback_structure_detection(text_content)
+                sections_count = document_structure.get('total_sections', 0)
+                logger.info(f"✅ Structure detected (Regex): {sections_count} sections found")
+            logger.info(f"   Step 4 took {time.time() - step4_start:.2f} seconds")
+
+            # ENHANCEMENT: Extract subjects from valid section structure and merge with detected subjects
+            # This handles cases where Step 2 missed a subject but Step 4 found it in a section header (e.g. "Part C - BIOLOGY")
+            if document_structure and document_structure.get('sections'):
+                structure_subjects = []
+                # Common subject names to look for
+                known_subjects = ['Physics', 'Chemistry', 'Mathematics', 'Maths', 'Biology', 'Botany', 'Zoology', 'English', 'Science', 'Social']
+                
+                for section in document_structure.get('sections', []):
+                    section_name = section.get('name', '').upper()
+                    for known in known_subjects:
+                        if known.upper() in section_name:
+                            # Avoid false positives like "Physical Chemistry" -> Physics
+                            if known.upper() == 'PHYSICS' and 'CHEMISTRY' in section_name:
+                                continue
+                            if known not in structure_subjects:
+                                structure_subjects.append(known)
+                
+                # Merge with detected subjects
+                current_detected = set(subject_result.get('detected_subjects', []))
+                merged_subjects = list(current_detected.union(set(structure_subjects)))
+                
+                if len(merged_subjects) > len(current_detected):
+                    logger.info(f"🔄 Updated detected subjects from structure: {current_detected} -> {merged_subjects}")
+                    subject_result['detected_subjects'] = merged_subjects
+                    
+                    # Also update matched subjects if we have pattern subjects
+                    if pattern_subjects:
+                        subject_result['matched_subjects'] = [
+                            s for s in merged_subjects 
+                            if any(ps.lower() in s.lower() or s.lower() in ps.lower() for ps in pattern_subjects)
+                        ]
+                    else:
+                        subject_result['matched_subjects'] = merged_subjects
             
-            # Step 3: Separate content by subject
+            # Step 3: Separate content by subject (Now uses consolidated subject list)
             separated_content = {}
             # Extract general instructions from document beginning
             general_instructions = self._extract_instructions_from_text(text_content[:2000])
             
-            if len(subject_result['matched_subjects']) > 1:
+            # Prioritize matched subjects for separation
+            subjects_to_separate = subject_result.get('matched_subjects', [])
+            if not subjects_to_separate:
+                subjects_to_separate = subject_result.get('detected_subjects', [])
+
+            if len(subjects_to_separate) > 1:
                 separated_content = self.separate_by_subject(
                     text_content, 
-                    subject_result['matched_subjects']
+                    subjects_to_separate
                 )
-            elif len(subject_result['matched_subjects']) == 1:
+            elif len(subjects_to_separate) == 1:
                 # Single subject - all content belongs to it
-                subject = subject_result['matched_subjects'][0]
+                subject = subjects_to_separate[0]
                 separated_content = {
                     subject: {
                         'content': text_content,
                         'instructions': general_instructions
                     }
                 }
-            elif len(subject_result['detected_subjects']) > 0:
-                # Use detected subjects even if not matched
-                separated_content = self.separate_by_subject(
-                    text_content,
-                    subject_result['detected_subjects']
-                )
             else:
                 # No subjects detected - treat as single subject
                 separated_content = {
@@ -280,27 +334,6 @@ class DocumentPreAnalyzer:
                 # Fallback to AI estimate if counting fails
                 subject_question_counts = subject_result['subject_question_counts']
                 total_questions = sum(subject_question_counts.values())
-            
-            # Step 4: AI-powered document structure detection
-            # Analyzes the document to detect sections, question types, and structure
-            step4_start = time.time()
-            if use_ai:
-                try:
-                    logger.info("📊 Step 4: Detecting document structure with AI...")
-                    document_structure = self.detect_document_structure_ai(text_content)
-                    sections_count = document_structure.get('total_sections', 0)
-                    logger.info(f"✅ Structure detected (AI): {sections_count} sections found")
-                except Exception as e:
-                    logger.warning(f"⚠️ AI structure detection failed: {e}, using regex fallback")
-                    document_structure = self._fallback_structure_detection(text_content)
-                    sections_count = document_structure.get('total_sections', 0)
-                    logger.info(f"✅ Structure detected (Regex): {sections_count} sections found")
-            else:
-                logger.info("📊 Step 4: Detecting document structure with regex (AI unavailable)...")
-                document_structure = self._fallback_structure_detection(text_content)
-                sections_count = document_structure.get('total_sections', 0)
-                logger.info(f"✅ Structure detected (Regex): {sections_count} sections found")
-            logger.info(f"   Step 4 took {time.time() - step4_start:.2f} seconds")
             
             # ENSURE UNIQUE subjects before returning (safety net)
             unique_detected = list(dict.fromkeys(subject_result['detected_subjects']))
@@ -1713,8 +1746,10 @@ You MUST identify ALL sections present across the ENTIRE document.
         
         # STOP when we encounter actual questions - these patterns indicate question content, not instructions
         question_indicators = [
-            r'\n\s*Q\.?\s*\d+',  # Q1, Q.1, Q 1
+            r'\n\s*Q\.?\s*\d+',  # Q1, Q.1, Q 1, Q. 1
+            r'\n\s*Question\s*\d+',  # Question 1, Question 10
             r'\n\s*\d+\.\s+[A-Z]',  # 1. Question text starting with capital
+            r'\n\s*\d+\s+[A-Z]',  # 1 Question text
             r'\n\s*\(\d+\)\s+',  # (1) Question
             r'Answer\s*\([A-D]\)',  # Answer (A) - indicates MCQ question
             r'Answer\s*:\s*\d+',  # Answer: 23 - indicates numerical question

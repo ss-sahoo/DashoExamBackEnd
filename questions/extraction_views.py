@@ -1441,7 +1441,11 @@ def extract_questions_by_section(request):
             'total_extracted': result['total_extracted'],
             'total_expected': result['total_expected'],
             'extraction_summary': result['extraction_summary'],
-            'message': f"Extracted {result['total_extracted']} questions from {len(sections_data)} sections"
+            'message': f"Extracted {result['total_extracted']} questions from {len(sections_data)} sections",
+            'content_debug_info': {
+                'content_length': len(subject_content),
+                'content_preview': subject_content[:500] + "..." if len(subject_content) > 500 else subject_content
+            }
         }
         
         # Add warning if count mismatch

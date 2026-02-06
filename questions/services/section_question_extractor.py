@@ -176,6 +176,9 @@ class SectionQuestionExtractor:
         
         prompt = self._build_extraction_prompt(content, subject, expected_count)
         
+        logger.info(f"Gemini Extraction Prompt for {subject}:")
+        logger.info(prompt[:500] + "... (truncated)" if len(prompt) > 2000 else prompt)
+        
         try:
             response = self.client.generate_content(
                 prompt,
@@ -187,6 +190,10 @@ class SectionQuestionExtractor:
             )
             
             response_text = response.text if hasattr(response, 'text') else str(response)
+            
+            logger.warning("Gemini Raw Response for Section Extraction:")
+            logger.warning(response_text[:1000] + "... (truncated)" if len(response_text) > 5000 else response_text)
+            
             questions = self._parse_ai_response(response_text, content, subject)
             logger.info(f"AI extracted {len(questions)} questions")
             
@@ -277,45 +284,49 @@ The document has DIFFERENT SECTIONS with different question types. Look for sect
 
 **QUESTION TYPE RULES:**
 
-1. **single_mcq** - Has options A/B/C/D with ONE correct answer (letter)
-   - Answer format: "A", "B", "C", or "D"
-   - Usually in "Section A" or "MCQ" sections
+1. **single_mcq** - Multiple Choice Questions
+   - Options can be labeled (1), (2), (3), (4) OR (A), (B), (C), (D) or just A, B, C, D.
+   - EXTRACT OPTIONS INTO THE 'options' LIST. Do not keep them in question_text.
+   - Answer format: "1", "2", "3", "4" OR "A", "B", "C", "D"
 
-2. **numerical** - Answer is a NUMBER, not a letter
-   - Answer format: "5", "3.14", "42", "100 m/s"
-   - Usually in "Section B" or "Numerical" sections
-   - NO options A/B/C/D, just a numeric answer
+2. **numerical** - Answer is a NUMBER (Integer or Decimal)
+   - Answer format: "5", "3.14", "42", "100"
+   - NO options, just a direct numeric answer.
 
 3. **true_false** - Answer is True or False
-   - Answer format: "True", "False", "T", "F"
-   - Usually in "Section C" or "True/False" sections
-   - Questions are statements to verify
+   - Questions are statements to verify.
 
 4. **fill_blank** - Has blanks (_____ or ______) to fill
-   - Answer is a word or phrase that fills the blank
-   - Usually in "Section D" or "Fill in the blank" sections
+   - Answer is the word or phrase that fills the blank.
+
+**FIELD SEPARATION RULES (CRITICAL):**
+- **question_text**: The main question ONLY. Do NOT include options (A, B, C, D) or the 'Sol.' text here.
+- **options**: Array of option strings. Remove the labels (1), (A), etc. Example: `["Option text 1", "Option text 2"]`.
+- **solution**: Text starting after "Sol.", "Solution:", or "Explanation:". Extract this into the 'solution' field.
+- **correct_answer**: The label of the correct option (e.g., "1", "2", "A", "B") or the numeric value.
+
+**CRITICAL RULES:**
+1. LOOK AT SECTION HEADERS to determine question type
+2. Extract EVERY question that ACTUALLY EXISTS in the content - don't invent or skip any.
+3. If the content only has Questions 1-30, DO NOT output Question 31, 61, or 91.
+4. DO NOT output the example questions shown above.
+5. **PRESERVE IMAGE LINKS**: If you see image links like `![](https://cdn.mathpix.com/...)`, include them EXACTLY as they are in the `question_text` or `solution`.
+{f"6. TOTAL EXPECTED: {expected_count} questions - verify your count!" if expected_count > 0 else ""}
 
 **OUTPUT FORMAT (JSON array):**
 ```json
 [
-  {{"question_number": 1, "question_text": "What is the acceleration?", "options": ["2 m/s", "5 m/s", "10 m/s", "20 m/s"], "correct_answer": "B", "solution": "a = F/m", "question_type": "single_mcq"}},
-  {{"question_number": 31, "question_text": "Calculate the velocity.", "options": [], "correct_answer": "20", "solution": "v = sqrt(2gh)", "question_type": "numerical"}},
-  {{"question_number": 61, "question_text": "Gravity is constant everywhere.", "options": [], "correct_answer": "False", "solution": "Varies with altitude", "question_type": "true_false"}},
-  {{"question_number": 91, "question_text": "The SI unit of force is ______.", "options": [], "correct_answer": "Newton", "solution": "", "question_type": "fill_blank"}}
+  {{"question_number": 1, "question_text": "What is the acceleration? ![](https://cdn.mathpix.com/example.jpg)", "options": ["2 m/s", "5 m/s", "10 m/s", "20 m/s"], "correct_answer": "B", "solution": "a = F/m", "question_type": "single_mcq"}},
+  {{"question_number": 31, "question_text": "Calculate the velocity.", "options": [], "correct_answer": "20", "solution": "v = sqrt(2gh)", "question_type": "numerical"}}
 ]
 ```
 
-**CRITICAL RULES:**
-1. LOOK AT SECTION HEADERS to determine question type
-2. Questions 1-30 are usually MCQ (single_mcq)
-3. Questions 31-60 are usually Numerical (numerical)
-4. Questions 61-90 are usually True/False (true_false)
-5. Questions 91-100 are usually Fill in the blank (fill_blank)
-6. Extract EVERY question that EXISTS - don't invent or skip any
-{f"7. TOTAL EXPECTED: {expected_count} questions - verify your count!" if expected_count > 0 else ""}
-
 **CONTENT TO EXTRACT FROM:**
 {content}
+
+**IGNORE PAGE HEADERS/FOOTERS:**
+- Ignore text like "Page no. 128", "Exam 2024", "Space for rough work"
+- Do not treat them as part of the question text
 
 **Return ONLY the JSON array:**"""
 
@@ -332,10 +343,35 @@ The document has DIFFERENT SECTIONS with different question types. Look for sect
                 else:
                     json_str = response
             
-            questions = json.loads(json_str)
-            
+            # Clean up the string before parsing
+            json_str = json_str.strip()
+            # Remove markdown code blocks if still present (double check)
+            json_str = re.sub(r'^```json\s*', '', json_str, flags=re.MULTILINE)
+            json_str = re.sub(r'^```\s*', '', json_str, flags=re.MULTILINE)
+            json_str = re.sub(r'\s*```$', '', json_str, flags=re.MULTILINE)
+
+            try:
+                questions = json.loads(json_str)
+            except json.JSONDecodeError:
+                # Try repairing common JSON errors
+                logger.warning("Standard JSON parse failed, attempting repair...")
+                try:
+                    import ast
+                    # Allow trailing commas by using literal_eval (python dictionary syntax is more forgiving)
+                    questions = ast.literal_eval(json_str)
+                except:
+                    # Last resort: simple regex cleanup for trailing commas
+                    try:
+                        fixed_str = re.sub(r',\s*([\]}])', r'\1', json_str)
+                        questions = json.loads(fixed_str)
+                    except:
+                        raise json.JSONDecodeError("Failed to repair JSON", json_str, 0)
+
             if not isinstance(questions, list):
-                questions = [questions]
+                if isinstance(questions, dict) and 'questions' in questions:
+                    questions = questions['questions']
+                else:
+                    questions = [questions]
             
             validated = []
             for q in questions:
@@ -462,9 +498,12 @@ The document has DIFFERENT SECTIONS with different question types. Look for sect
         logger.info(f"Detected section types: {section_types}")
         
         patterns = [
-            r'Q\.(\d+)',
+            r'Q\.\s*(\d+)',  # Handles "Q.1" and "Q. 1"
+            r'Question\s*(\d+)[\.\):\s]',
             r'Q(\d+)[\.\)]',
             r'(?:^|\n)\s*(\d+)\.\s+[A-Z]',
+            r'(?:^|\n)\s*(\d+)\s+[A-Z]',
+            r'(?:^|\n)\s*\((\d+)\)\s',
         ]
         
         q_starts = []
@@ -502,8 +541,8 @@ The document has DIFFERENT SECTIONS with different question types. Look for sect
                 'confidence': 0.6
             }
             
-            # Extract options
-            option_pattern = r'(?:^|\n)\s*\(?([A-Da-d])\)?[\.\)]\s*(.+?)(?=(?:\n\s*\(?[A-Da-d]\)?[\.\)])|(?:\n\s*(?:Answer|Ans|Solution))|$)'
+            # Extract options - support (A)/(a) or (1) style
+            option_pattern = r'(?:^|\n)\s*\(?([A-Da-d1-4])\)?[\.\)]\s*(.+?)(?=(?:\n\s*\(?[A-Da-d1-4]\)?[\.\)])|(?:\n\s*(?:Answer|Ans|Solution))|$)'
             options = re.findall(option_pattern, q_content, re.DOTALL | re.IGNORECASE)
             
             if options:
