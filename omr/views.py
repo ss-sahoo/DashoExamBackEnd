@@ -3,6 +3,7 @@ OMR App Views
 API endpoints for OMR sheet generation and evaluation
 """
 import os
+import tempfile
 from django.shortcuts import get_object_or_404
 from django.core.files.storage import default_storage
 from rest_framework import status, viewsets, permissions
@@ -10,7 +11,8 @@ from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser, FormParser
 
-from exams.models import Exam
+from django.utils import timezone
+from exams.models import Exam, ExamAttempt
 from .models import OMRSheet, OMRSubmission, AnswerKey
 from .serializers import (
     OMRSheetSerializer,
@@ -47,7 +49,11 @@ class OMRSheetViewSet(viewsets.ModelViewSet):
         exam = get_object_or_404(Exam, id=exam_id)
         
         # Validate exam mode
-        if exam.exam_mode != 'offline_omr':
+        effective_mode = exam.exam_mode
+        if effective_mode == 'online' and exam.pattern:
+            effective_mode = getattr(exam.pattern, 'exam_mode', 'online')
+            
+        if effective_mode != 'offline_omr':
             return Response(
                 {'error': 'Exam mode must be "offline_omr" to generate OMR sheet'},
                 status=status.HTTP_400_BAD_REQUEST
@@ -57,10 +63,15 @@ class OMRSheetViewSet(viewsets.ModelViewSet):
         serializer = OMRSheetGenerateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         
+        # Use candidate fields from request or fallback to exam.omr_config
+        candidate_fields = serializer.validated_data.get('candidate_fields')
+        if not candidate_fields and isinstance(exam.omr_config, dict):
+            candidate_fields = exam.omr_config.get('candidate_fields', [])
+            
         # Create OMR sheet record
         omr_sheet = OMRSheet.objects.create(
             exam=exam,
-            candidate_fields=serializer.validated_data.get('candidate_fields', []),
+            candidate_fields=candidate_fields or [],
         )
         
         try:
@@ -68,7 +79,7 @@ class OMRSheetViewSet(viewsets.ModelViewSet):
             generator = OMRGeneratorService(exam)
             generator.generate_and_save(
                 omr_sheet,
-                candidate_fields=serializer.validated_data.get('candidate_fields'),
+                candidate_fields=candidate_fields,
             )
             
             # Update exam flags
@@ -164,12 +175,22 @@ class OMRSubmissionViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        # Save uploaded files
+        # Save uploaded files - both to storage and locally for processing
         saved_paths = []
+        local_temp_paths = []
         for file in files:
+            # Save to cloud storage for record keeping
             file_path = f"omr_uploads/{exam.id}/{file.name}"
             saved_path = default_storage.save(file_path, file)
-            saved_paths.append(default_storage.path(saved_path))
+            saved_paths.append(saved_path)  # Store cloud path (relative)
+            
+            # Also save locally for processing
+            file.seek(0)  # Reset file position after saving to storage
+            file_ext = os.path.splitext(file.name)[1]
+            with tempfile.NamedTemporaryFile(suffix=file_ext, delete=False) as tmp:
+                for chunk in file.chunks():
+                    tmp.write(chunk)
+                local_temp_paths.append(tmp.name)
         
         # Determine student
         student_id = request.data.get('student_id')
@@ -179,10 +200,24 @@ class OMRSubmissionViewSet(viewsets.ModelViewSet):
         else:
             student = request.user
         
+        # Create or get ExamAttempt for OMR
+        # For OMR, we usually just want one attempt record that tracks the results
+        attempt, created = ExamAttempt.objects.get_or_create(
+            exam=exam,
+            student=student,
+            defaults={
+                'status': 'submitted',
+                'started_at': timezone.now(),
+                'submitted_at': timezone.now(),
+                'attempt_number': 1
+            }
+        )
+        
         # Create submission
         submission = OMRSubmission.objects.create(
             omr_sheet=omr_sheet,
             student=student,
+            attempt=attempt,
             scanned_files=saved_paths,
         )
         
@@ -192,7 +227,15 @@ class OMRSubmissionViewSet(viewsets.ModelViewSet):
                 evaluator = OMREvaluatorService(submission)
                 evaluator.evaluate_and_save()
             except Exception as e:
-                # Submission is saved but evaluation failed
+                # Submission is saved but evaluation failed - log the error
+                print(f"[OMR UPLOAD] Auto-evaluation failed: {e}")
+        
+        # Clean up local temp files
+        for temp_path in local_temp_paths:
+            try:
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+            except:
                 pass
         
         return Response(
@@ -290,7 +333,6 @@ class AnswerKeyViewSet(viewsets.ModelViewSet):
                     {'error': 'No answer key found for this exam'},
                     status=status.HTTP_404_NOT_FOUND
                 )
-        
         else:  # POST
             answers = request.data.get('answers', {})
             
@@ -306,6 +348,241 @@ class AnswerKeyViewSet(viewsets.ModelViewSet):
                 AnswerKeySerializer(answer_key).data,
                 status=status.HTTP_201_CREATED if created else status.HTTP_200_OK
             )
+    
+    @action(detail=False, methods=['post'], url_path='set-answers/(?P<exam_id>[^/.]+)')
+    def set_answers(self, request, exam_id=None):
+        """
+        Directly set answer key via JSON input.
+        
+        POST /api/omr/answer-keys/set-answers/{exam_id}/
+        
+        Expected format:
+        {
+            "Q1": {"correct": ["A"], "marks": 4, "negative": 1},
+            "Q2": {"correct": ["B"], "marks": 4, "negative": 1},
+            ...
+            "Q21": {"correct": ["1234"], "marks": 4, "negative": 0},  # For integer type questions
+        }
+        
+        Each question entry must have:
+        - correct: List of correct answer(s) - e.g. ["A"], ["B", "C"], ["1234"]
+        - marks: Positive marks for correct answer
+        - negative: Negative marks for wrong answer (0 for no negative marking)
+        """
+        exam = get_object_or_404(Exam, id=exam_id)
+        
+        # The request body is the answer key directly
+        answers = request.data
+        
+        # Validate the format
+        if not isinstance(answers, dict):
+            return Response(
+                {'error': 'Invalid format. Expected JSON object with question answers.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        errors = []
+        validated_answers = {}
+        
+        for field, data in answers.items():
+            # Validate field name
+            if not (field.startswith('Q') and field[1:].isdigit()):
+                errors.append(f"Invalid question field: {field}. Expected format like 'Q1', 'Q2', etc.")
+                continue
+            
+            # Validate data structure
+            if not isinstance(data, dict):
+                errors.append(f"{field}: Expected object with 'correct', 'marks', 'negative' fields.")
+                continue
+            
+            # Validate required fields
+            if 'correct' not in data:
+                errors.append(f"{field}: Missing 'correct' field.")
+                continue
+            
+            if not isinstance(data.get('correct'), list):
+                errors.append(f"{field}: 'correct' must be a list (e.g. ['A'] or ['B', 'C']).")
+                continue
+            
+            if len(data.get('correct', [])) == 0:
+                errors.append(f"{field}: 'correct' list cannot be empty.")
+                continue
+            
+            # Set defaults for optional fields
+            marks = data.get('marks', 1)
+            negative = data.get('negative', 0)
+            
+            try:
+                marks = float(marks)
+                negative = float(negative)
+            except (ValueError, TypeError):
+                errors.append(f"{field}: 'marks' and 'negative' must be numbers.")
+                continue
+            
+            validated_answers[field] = {
+                'correct': data['correct'],
+                'marks': marks,
+                'negative': negative
+            }
+        
+        if errors:
+            return Response(
+                {
+                    'error': 'Validation failed',
+                    'details': errors
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        if not validated_answers:
+            return Response(
+                {'error': 'No valid answers provided'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Create or update answer key
+        answer_key, created = AnswerKey.objects.update_or_create(
+            exam=exam,
+            defaults={
+                'answers': validated_answers,
+                'created_by': request.user,
+            }
+        )
+        
+        return Response(
+            {
+                'message': f"Answer key {'created' if created else 'updated'} successfully",
+                'exam_id': exam.id,
+                'questions_count': len(validated_answers),
+                'answer_key': AnswerKeySerializer(answer_key).data
+            },
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK
+        )
+    
+    @action(detail=False, methods=['post'], url_path='upload-master/(?P<exam_id>[^/.]+)', parser_classes=[MultiPartParser, FormParser])
+    def upload_master(self, request, exam_id=None):
+        """
+        Upload a bubbled master sheet to define the answer key.
+        
+        POST /api/omr/answer-keys/upload-master/{exam_id}/
+        """
+        exam = get_object_or_404(Exam, id=exam_id)
+        omr_sheet = OMRSheet.objects.filter(exam=exam, is_primary=True).first()
+        
+        if not omr_sheet:
+            return Response(
+                {'error': 'No primary OMR sheet generated for this exam. Generate one first.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        file = request.FILES.get('file')
+        if not file:
+            return Response(
+                {'error': 'No file uploaded'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Get file extension
+        file_ext = os.path.splitext(file.name)[1].lower()
+        
+        # Save master sheet temporarily
+        tmp_path = None
+        image_paths = []
+        
+        try:
+            # Create temp file
+            with tempfile.NamedTemporaryFile(suffix=file_ext, delete=False) as tmp:
+                for chunk in file.chunks():
+                    tmp.write(chunk)
+                tmp_path = tmp.name
+            
+            # Convert PDF to images if needed
+            if file_ext == '.pdf':
+                from .services.evaluator_core import convert_pdf_to_images
+                image_paths = convert_pdf_to_images(tmp_path)
+            else:
+                # It's already an image
+                image_paths = [tmp_path]
+            
+            # Import extraction function
+            from .services.evaluator_core import extract_responses_with_details
+            
+            # Use metadata from the omr_sheet
+            layout_data = omr_sheet.metadata
+            if not layout_data:
+                return Response(
+                    {'error': 'OMR sheet metadata not found'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+            
+            print(f"[DEBUG] Processing {len(image_paths)} images")
+            print(f"[DEBUG] Metadata has {len(layout_data.get('bubbles', []))} bubbles defined")
+            
+            # Extract bubbled responses (pass list of image paths)
+            responses, all_evaluated = extract_responses_with_details(image_paths, layout_data)
+            
+            print(f"[DEBUG] Total evaluated bubbles: {len(all_evaluated)}")
+            print(f"[DEBUG] Responses found: {responses}")
+            
+            # Log some fill ratios for debugging
+            filled_bubbles = [b for b in all_evaluated if b.is_filled]
+            print(f"[DEBUG] Filled bubbles count: {len(filled_bubbles)}")
+            if all_evaluated:
+                sample_ratios = [(b.field_name, b.value, b.fill_ratio) for b in all_evaluated[:20]]
+                print(f"[DEBUG] Sample fill ratios: {sample_ratios}")
+            
+            # Convert responses to AnswerKey format
+            new_answers = {}
+            for field, values in responses.items():
+                if field.startswith('Q'):
+                    # It's a question field
+                    if values:
+                        # Find marks/negative from exam questions
+                        from questions.models import ExamQuestion
+                        try:
+                            q_num = int(field[1:])
+                            mapping = ExamQuestion.objects.get(exam=exam, question_number=q_num)
+                            marks = float(mapping.marks)
+                            negative = float(mapping.negative_marks)
+                        except:
+                            marks = 1.0
+                            negative = 0.0
+                            
+                        new_answers[field] = {
+                            'correct': values,
+                            'marks': marks,
+                            'negative': negative
+                        }
+            
+            # Update or create the AnswerKey
+            answer_key, created = AnswerKey.objects.update_or_create(
+                exam=exam,
+                defaults={
+                    'answers': new_answers,
+                    'created_by': request.user,
+                }
+            )
+            
+            return Response({
+                'message': 'Master answer key uploaded and extracted successfully',
+                'answer_key': AnswerKeySerializer(answer_key).data,
+                'extracted_count': len(new_answers)
+            })
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return Response(
+                {'error': f'Failed to extract answer key: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+        finally:
+            # Clean up temp files
+            if tmp_path and os.path.exists(tmp_path):
+                os.remove(tmp_path)
+            for img_path in image_paths:
+                if img_path != tmp_path and os.path.exists(img_path):
+                    os.remove(img_path)
 
 
 # Convenience API endpoints

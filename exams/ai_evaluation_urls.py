@@ -21,6 +21,11 @@ urlpatterns = [
         ai_evaluation_views.ai_evaluation_status,
         name='ai-evaluation-status'
     ),
+    path(
+        '<int:exam_id>/submissions/',
+        ai_evaluation_views.list_submissions,
+        name='list-submissions'
+    ),
     
     # Testing endpoint
     path(

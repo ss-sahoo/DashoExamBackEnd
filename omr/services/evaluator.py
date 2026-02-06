@@ -53,12 +53,10 @@ class OMREvaluatorService:
         """
         Build answer key from exam question mappings.
         """
-        from exams.models import ExamQuestionMapping
-        
-        answer_key = {}
-        mappings = ExamQuestionMapping.objects.filter(
+        from questions.models import ExamQuestion
+        mappings = ExamQuestion.objects.filter(
             exam=self.exam
-        ).select_related('question').order_by('order')
+        ).select_related('question').order_by('question_number')
         
         for i, mapping in enumerate(mappings, start=1):
             q = mapping.question
@@ -112,6 +110,8 @@ class OMREvaluatorService:
         Returns:
             Tuple of (evaluation_results, results_path, annotated_path)
         """
+        from django.core.files.storage import default_storage
+        
         # Get metadata from OMR sheet
         metadata = self.omr_sheet.metadata
         if not metadata:
@@ -130,6 +130,30 @@ class OMREvaluatorService:
         # Create temp directory for processing
         output_dir = tempfile.mkdtemp(prefix='omr_eval_')
         
+        # Download files from storage to temp directory for processing
+        local_files = []
+        for file_path in scanned_files:
+            # Check if it's a local path or cloud storage path
+            if os.path.exists(file_path):
+                # Local path - use directly
+                local_files.append(file_path)
+            else:
+                # Cloud storage path - download to temp file
+                try:
+                    file_ext = os.path.splitext(file_path)[1]
+                    temp_file = tempfile.NamedTemporaryFile(suffix=file_ext, delete=False, dir=output_dir)
+                    with default_storage.open(file_path, 'rb') as f:
+                        temp_file.write(f.read())
+                    temp_file.close()
+                    local_files.append(temp_file.name)
+                except Exception as e:
+                    # If download fails, log and continue
+                    print(f"[EVALUATOR] Failed to download {file_path}: {e}")
+                    continue
+        
+        if not local_files:
+            raise ValueError("Could not access any scanned files for evaluation")
+        
         # Save metadata to temp file
         metadata_path = os.path.join(output_dir, 'metadata.json')
         with open(metadata_path, 'w') as f:
@@ -141,7 +165,7 @@ class OMREvaluatorService:
         
         # Run evaluation
         results = evaluate_omr_core(
-            scanned_images=scanned_files,
+            scanned_images=local_files,
             metadata_file=metadata_path,
             answer_key=answer_key,
             output_results=results_path,
@@ -150,10 +174,12 @@ class OMREvaluatorService:
         )
         
         # Cleanup temp metadata file
-        try:
-            os.remove(metadata_path)
-        except:
-            pass
+        # Cleanup temp metadata file
+        # try:
+        #     os.remove(metadata_path)
+        # except:
+        #     pass
+        print(f"DEBUG: Metadata file preserved at: {metadata_path}")
         
         return results, results_path, annotated_path
     
@@ -185,7 +211,8 @@ class OMREvaluatorService:
                     filename = f"annotated_{self.exam.id}_{self.submission.id}.pdf"
                     self.submission.annotated_pdf.save(filename, ContentFile(f.read()))
                 try:
-                    os.remove(annotated_path)
+                    # os.remove(annotated_path)
+                    pass
                 except:
                     pass
             
@@ -195,7 +222,8 @@ class OMREvaluatorService:
                     filename = f"results_{self.exam.id}_{self.submission.id}.json"
                     self.submission.results_json.save(filename, ContentFile(f.read()))
                 try:
-                    os.remove(results_path)
+                    # 
+                    pass
                 except:
                     pass
             
@@ -223,7 +251,7 @@ class OMREvaluatorService:
             return
         
         # Update attempt score
-        attempt.total_score = self.submission.score
+        attempt.score = self.submission.score
         attempt.percentage = self.submission.percentage
         
         # Store evaluation results in answers field as backup
@@ -231,16 +259,17 @@ class OMREvaluatorService:
             attempt.answers = {}
         attempt.answers['omr_evaluation'] = self.submission.evaluation_results
         
-        attempt.save(update_fields=['total_score', 'percentage', 'answers'])
+        attempt.save(update_fields=['score', 'percentage', 'answers'])
         
         # Create QuestionEvaluation records if model exists
         try:
-            from exams.models import QuestionEvaluation, ExamQuestionMapping
+            from exams.models import QuestionEvaluation
+            from questions.models import ExamQuestion
             
             details = self.submission.evaluation_results.get('details', [])
             mappings = {
                 f"Q{i}": m for i, m in enumerate(
-                    ExamQuestionMapping.objects.filter(exam=self.exam).order_by('order'),
+                    ExamQuestion.objects.filter(exam=self.exam).order_by('question_number'),
                     start=1
                 )
             }

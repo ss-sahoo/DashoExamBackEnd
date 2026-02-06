@@ -28,6 +28,13 @@ class ExamPattern(models.Model):
         ('hybrid', 'Hybrid (Mixed)'),
     ]
     
+    # Exam Mode - Controls how the exam is conducted
+    EXAM_MODE_CHOICES = [
+        ('online', 'Online Exam'),
+        ('offline_omr', 'Offline OMR-Based'),
+        ('offline_subjective', 'Offline Subjective'),
+    ]
+    
     name = models.CharField(max_length=200)
     description = models.TextField(blank=True)
     institute = models.ForeignKey(Institute, on_delete=models.CASCADE, related_name='exam_patterns')
@@ -35,6 +42,17 @@ class ExamPattern(models.Model):
     total_duration = models.IntegerField(help_text="Duration in minutes", validators=[MinValueValidator(1)])
     total_marks = models.IntegerField(validators=[MinValueValidator(1)])
     pattern_type = models.CharField(max_length=20, choices=PATTERN_TYPE_CHOICES, default='fixed')
+    exam_mode = models.CharField(
+        max_length=20,
+        choices=EXAM_MODE_CHOICES,
+        default='online',
+        help_text="Default exam mode for exams using this pattern"
+    )
+    omr_config = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Default OMR configuration (candidate fields, etc.)"
+    )
     is_active = models.BooleanField(default=True)
     created_by = models.ForeignKey('accounts.User', on_delete=models.CASCADE, related_name='created_patterns')
     created_at = models.DateTimeField(auto_now_add=True)

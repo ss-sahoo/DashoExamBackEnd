@@ -27,8 +27,8 @@ except ImportError:
 
 # BUBBLE DETECTION CONFIGURATION
 
-FILL_THRESHOLD = 0.39
-BUBBLE_SEARCH_RADIUS_MM = BUBBLE_RADIUS / mm * 0.99
+FILL_THRESHOLD = 0.5  # Increased back to 0.5 since we now have better signal
+BUBBLE_SEARCH_RADIUS_MM = BUBBLE_RADIUS / mm * 0.9  # Reduce to 90% to avoid picking up the circle border
 
 
 @dataclass
@@ -67,6 +67,104 @@ def convert_pdf_to_images(pdf_path: str) -> List[str]:
 
 # IMAGE PREPROCESSING
 
+def detect_paper_boundary(image: np.ndarray) -> Tuple[np.ndarray, bool]:
+    """
+    Detect the white paper rectangle in an image (useful for photos).
+    
+    This is a fallback when alignment boxes cannot be detected directly.
+    It looks for the largest rectangular white area in the image, which
+    should be the OMR sheet itself.
+    
+    Returns: (corners_array, success) where corners_array is [[x, y], ...] for TL, TR, BL, BR
+    """
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image
+    img_height, img_width = gray.shape[:2]
+    
+    # Method 1: Detect white paper using adaptive thresholding
+    # The paper is bright white, background is usually darker
+    
+    # Apply Gaussian blur
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    
+    # Use Otsu's thresholding to find the white paper
+    # This automatically finds the best threshold to separate white paper from background
+    _, binary = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    
+    # Clean up with morphological operations
+    kernel = np.ones((5, 5), np.uint8)
+    binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel, iterations=2)
+    binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel, iterations=1)
+    
+    # Find contours of white regions
+    contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    if not contours:
+        print("[PAPER DETECTION] No contours found")
+        return None, False
+    
+    # Find the largest contour that could be the paper
+    best_contour = None
+    best_area = 0
+    
+    # Paper should be at least 30% of the image area for a photo
+    min_paper_area = img_width * img_height * 0.3
+    
+    for contour in contours:
+        area = cv2.contourArea(contour)
+        if area < min_paper_area:
+            continue
+        
+        # Check if it's roughly rectangular (convex hull area should be similar)
+        hull = cv2.convexHull(contour)
+        hull_area = cv2.contourArea(hull)
+        if hull_area > 0:
+            rectangularity = area / hull_area
+            # Paper should be fairly rectangular (> 80% of convex hull)
+            if rectangularity > 0.7 and area > best_area:
+                best_contour = contour
+                best_area = area
+    
+    if best_contour is None:
+        # Just use the largest contour
+        best_contour = max(contours, key=cv2.contourArea)
+        if cv2.contourArea(best_contour) < min_paper_area:
+            print(f"[PAPER DETECTION] Largest contour too small: {cv2.contourArea(best_contour):.0f} < {min_paper_area:.0f}")
+            return None, False
+    
+    # Get the minimum area rectangle that contains the paper
+    rect = cv2.minAreaRect(best_contour)
+    corners = cv2.boxPoints(rect).astype(np.float32)
+    
+    # Sort corners: TL, TR, BL, BR
+    # Sum of coordinates: TL has min sum, BR has max sum
+    # Difference: TR has min diff (x-y), BL has max diff
+    sums = corners.sum(axis=1)
+    diffs = np.diff(corners, axis=1).flatten()
+    
+    tl = corners[np.argmin(sums)]
+    br = corners[np.argmax(sums)]
+    tr = corners[np.argmin(diffs)]
+    bl = corners[np.argmax(diffs)]
+    
+    sorted_corners = np.array([tl, tr, bl, br], dtype=np.float32)
+    
+    # Validate the detected corners - they should form a reasonable rectangle
+    width = np.linalg.norm(tr - tl)
+    height = np.linalg.norm(bl - tl)
+    
+    # Check aspect ratio is reasonable for A4 (should be around 1:1.414)
+    if width > 0 and height > 0:
+        aspect_ratio = max(width, height) / min(width, height)
+        if aspect_ratio < 1.2 or aspect_ratio > 2.0:
+            print(f"[PAPER DETECTION] Aspect ratio {aspect_ratio:.2f} doesn't look like A4 paper")
+            # Continue anyway, but log the warning
+    
+    print(f"[PAPER DETECTION] Found paper boundary at corners: {sorted_corners.astype(int).tolist()}")
+    print(f"[PAPER DETECTION] Paper size: {width:.0f}x{height:.0f} pixels, aspect ratio: {max(width,height)/max(min(width,height),1):.2f}")
+    
+    return sorted_corners, True
+
+
 def detect_alignment_boxes(gray_image: np.ndarray) -> Tuple[np.ndarray, bool]:
     """
     Detect the four corner alignment boxes in the image and extract their outer corner points.
@@ -74,14 +172,14 @@ def detect_alignment_boxes(gray_image: np.ndarray) -> Tuple[np.ndarray, bool]:
     Uses cv2.minAreaRect() to get the actual rotated rectangle corners, which is more
     accurate than axis-aligned bounding boxes, especially for rotated/skewed scans.
 
-    Extracts the appropriate corner from each rotated box:
-    - Top-left box → use its top-left corner
-    - Top-right box → use its top-right corner
-    - Bottom-left box → use its bottom-left corner
-    - Bottom-right box → use its bottom-right corner
+    Improved detection: Instead of just taking the 4 largest squares, we look for
+    squares specifically in each corner quadrant of the image. This is more robust
+    for photos where barcode, filled bubbles, or other elements could be mistaken as boxes.
 
     Returns: (corners_array, success) where corners_array is [[x, y], ...] for TL, TR, BL, BR
     """
+    img_height, img_width = gray_image.shape[:2]
+    
     # Apply thresholding to detect black squares
     _, binary = cv2.threshold(gray_image, 127, 255, cv2.THRESH_BINARY_INV)
 
@@ -90,9 +188,15 @@ def detect_alignment_boxes(gray_image: np.ndarray) -> Tuple[np.ndarray, bool]:
 
     # Filter for square-like contours (alignment boxes)
     box_candidates = []
+    
+    # Minimum area based on image size (alignment boxes should be at least 0.1% of image)
+    min_area = (img_width * img_height) * 0.0001
+    # Maximum area (alignment boxes should not be more than 2% of image)
+    max_area = (img_width * img_height) * 0.02
+    
     for contour in contours:
         area = cv2.contourArea(contour)
-        if area < 100:  # Too small
+        if area < min_area or area > max_area:
             continue
 
         # Use minAreaRect to get rotated rectangle (better for rotated boxes)
@@ -116,13 +220,54 @@ def detect_alignment_boxes(gray_image: np.ndarray) -> Tuple[np.ndarray, bool]:
         print(f"[WARNING] Found only {len(box_candidates)} alignment boxes, expected 4")
         return None, False
 
-    # Sort by area and take the 4 largest (should be our alignment boxes)
-    box_candidates.sort(key=lambda x: x[2], reverse=True)
-    boxes = box_candidates[:4]
-
-    # Sort boxes into corners based on their centers: TL, TR, BL, BR
-    # Top boxes have smaller y, bottom boxes have larger y
-    boxes.sort(key=lambda p: p[1])  # Sort by center y
+    # Define corner regions (20% of image from each edge)
+    margin_x = int(img_width * 0.25)
+    margin_y = int(img_height * 0.25)
+    
+    def is_in_corner(cx, cy, corner):
+        """Check if point is in specified corner region"""
+        if corner == 'TL':
+            return cx < margin_x and cy < margin_y
+        elif corner == 'TR':
+            return cx > (img_width - margin_x) and cy < margin_y
+        elif corner == 'BL':
+            return cx < margin_x and cy > (img_height - margin_y)
+        elif corner == 'BR':
+            return cx > (img_width - margin_x) and cy > (img_height - margin_y)
+        return False
+    
+    # Try to find the best box in each corner
+    corner_boxes = {'TL': None, 'TR': None, 'BL': None, 'BR': None}
+    
+    for corner in ['TL', 'TR', 'BL', 'BR']:
+        corner_candidates = [(cx, cy, area, bp) for cx, cy, area, bp in box_candidates 
+                             if is_in_corner(cx, cy, corner)]
+        if corner_candidates:
+            # Take the largest square-ish contour in this corner
+            corner_candidates.sort(key=lambda x: x[2], reverse=True)
+            corner_boxes[corner] = corner_candidates[0]
+    
+    # Check if we found all 4 corners
+    found_corners = sum(1 for v in corner_boxes.values() if v is not None)
+    
+    if found_corners == 4:
+        print(f"[ALIGNMENT] Found alignment boxes in all 4 corners")
+        boxes = [corner_boxes['TL'], corner_boxes['TR'], corner_boxes['BL'], corner_boxes['BR']]
+    elif found_corners >= 2:
+        # We have at least 2 corners - try to continue with fallback
+        print(f"[WARNING] Only found {found_corners}/4 corner boxes. Using fallback detection.")
+        box_candidates.sort(key=lambda x: x[2], reverse=True)
+        boxes = box_candidates[:4]
+        
+        # Sort boxes into corners based on their centers: TL, TR, BL, BR
+        # Top boxes have smaller y, bottom boxes have larger y
+        boxes.sort(key=lambda p: p[1])  # Sort by center y
+    else:
+        # Less than 2 corners found - can't reliably detect alignment
+        print(f"[WARNING] Only found {found_corners}/4 corner boxes. Alignment box detection failed.")
+        return None, False
+    
+    # Sort boxes into top/bottom pairs
     top_boxes = sorted(boxes[:2], key=lambda p: p[0])  # Top 2, sorted by center x
     bottom_boxes = sorted(boxes[2:], key=lambda p: p[0])  # Bottom 2, sorted by center x
 
@@ -184,12 +329,17 @@ def crop_and_align_to_a4(image: np.ndarray, debug_image_path: str = None) -> Tup
     corners, success = detect_alignment_boxes(gray)
 
     if not success or corners is None:
-        print("[WARNING] Alignment box detection failed, using full image")
-        # Fallback: use original image and estimate scale
-        a4_height_mm = 297
-        img_height_px = image.shape[0]
-        pixels_per_mm = img_height_px / a4_height_mm
-        return image, pixels_per_mm, None
+        print("[WARNING] Alignment box detection failed, trying paper boundary detection...")
+        # Try paper boundary detection as fallback
+        corners, success = detect_paper_boundary(image)
+        
+        if not success or corners is None:
+            print("[WARNING] Paper boundary detection also failed, using full image")
+            # Last resort: use original image and estimate scale
+            a4_height_mm = 297
+            img_height_px = image.shape[0]
+            pixels_per_mm = img_height_px / a4_height_mm
+            return image, pixels_per_mm, None
 
     # A4 dimensions in mm (from generator.py PAGE_WIDTH and PAGE_HEIGHT)
     a4_width_mm = 210
@@ -261,20 +411,41 @@ def preprocess_image(image_path: str, save_aligned: bool = False) -> Tuple[np.nd
     if img is None:
         raise ValueError(f"Cannot load image: {image_path}")
 
-    # Crop and align to A4 using alignment boxes
-    # This handles rotation, skew, and scaling automatically
-    debug_path = image_path.replace('.png', '_aligned.png') if save_aligned else None
-    aligned_img, pixels_per_mm, transform_matrix = crop_and_align_to_a4(img, debug_path)
+    print(f"[PREPROCESS] Loaded image: {image_path}, shape: {img.shape}")
+
+    try:
+        # Crop and align to A4 using alignment boxes
+        # This handles rotation, skew, and scaling automatically
+        debug_path = image_path.replace('.png', '_aligned.png').replace('.jpg', '_aligned.jpg') if save_aligned else None
+        aligned_img, pixels_per_mm, transform_matrix = crop_and_align_to_a4(img, debug_path)
+        print(f"[PREPROCESS] Alignment successful, pixels_per_mm: {pixels_per_mm:.2f}")
+    except Exception as e:
+        print(f"[PREPROCESS] Alignment failed: {e}, using fallback scaling")
+        # Fallback: Scale image to A4 at 300 DPI without perspective correction
+        a4_width_mm = 210.0
+        a4_height_mm = 297.0
+        target_pixels_per_mm = 300 / 25.4  # 300 DPI
+        
+        target_width_px = int(a4_width_mm * target_pixels_per_mm)
+        target_height_px = int(a4_height_mm * target_pixels_per_mm)
+        
+        # Resize image to A4 dimensions
+        aligned_img = cv2.resize(img, (target_width_px, target_height_px))
+        pixels_per_mm = target_pixels_per_mm
+        print(f"[PREPROCESS] Fallback: resized to {target_width_px}x{target_height_px}")
 
     # Convert to grayscale
     gray = cv2.cvtColor(aligned_img, cv2.COLOR_BGR2GRAY)
 
     # Adaptive thresholding for varying lighting conditions
+    # Adaptive thresholding for varying lighting conditions
+    # Block size increased to 65 (must be odd) to be larger than bubble diameter (~41px)
+    # This prevents "hollowing out" of solid filled bubbles
     binary = cv2.adaptiveThreshold(
         gray, 255,
         cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
         cv2.THRESH_BINARY_INV,
-        11, 2
+        65, 2
     )
 
     return binary, pixels_per_mm, aligned_img
@@ -379,13 +550,43 @@ def extract_responses_with_details(scanned_images: List[str], metadata: Dict) ->
                 fill_ratio=fill_ratio
             ))
 
-    # Group responses by field
-    responses = {}
+    # Group responses by field and apply "Relative Dominance" check
+    # This prevents smudges or ghost marks from causing "Multiple Bubbles" errors
+    # when a clear strong answer exists.
+    field_groups = {}
     for eb in all_evaluated:
-        if eb.is_filled:
-            if eb.field_name not in responses:
-                responses[eb.field_name] = []
-            responses[eb.field_name].append(eb.value)
+        if eb.field_name not in field_groups:
+            field_groups[eb.field_name] = []
+        field_groups[eb.field_name].append(eb)
+
+    responses = {}
+    for field_name, bubbles in field_groups.items():
+        # Find max fill in this group
+        max_fill = max((b.fill_ratio for b in bubbles), default=0.0)
+        
+        # Smart Dynamic Threshold:
+        # If we have a very strong vote (>0.7), we ignore noise
+        # This solves the "not fully marked" issue where smudges count as double answers
+        effective_threshold = FILL_THRESHOLD
+        
+        # Only apply dynamic thresholding if we have a strong signal
+        if max_fill > 0.7:
+             # If we have a strong candidate, be stricter with others to avoid double-marking on smudges
+             # We require other bubbles to be at least 70% as strong as the winner to count
+             # e.g. if max is 0.9, threshold becomes max(0.5, 0.63). A 0.55 smudge is ignored.
+             effective_threshold = max(FILL_THRESHOLD, max_fill * 0.7)
+        
+        selected_values = []
+        for b in bubbles:
+             # Update is_filled based on dynamic threshold
+             # We update the object itself so strictness is reflected in remarks too
+             b.is_filled = b.fill_ratio >= effective_threshold
+             
+             if b.is_filled:
+                 selected_values.append(b.value)
+        
+        if selected_values:
+             responses[field_name] = selected_values
 
     return responses, all_evaluated
 

@@ -53,8 +53,8 @@ USE_OLLAMA = get_config('USE_OLLAMA', default='false')
 OLLAMA_BASE_URL = get_config('OLLAMA_BASE_URL', default='http://localhost:11434')
 
 # Mathpix OCR Configuration (for PDF extraction)
-MATHPIX_APP_ID = get_config('MATHPIX_APP_ID', default='')
-MATHPIX_APP_KEY = get_config('MATHPIX_APP_KEY', default='')
+MATHPIX_APP_ID = get_config('MATHPIX_APP_ID', default='diracai_cae940_4314c2')
+MATHPIX_APP_KEY = get_config('MATHPIX_APP_KEY', default='a884a06e50c036d948bad5a335efa754819b65d80a213c02359a04c7e162358d')
 
 # Email Configuration
 EMAIL_HOST = get_config('EMAIL_HOST', default='smtp.gmail.com')

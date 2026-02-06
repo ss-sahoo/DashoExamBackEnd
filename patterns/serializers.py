@@ -83,7 +83,8 @@ class ExamPatternSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'name', 'description', 'institute', 'institute_name',
             'total_questions', 'total_duration', 'total_marks', 'is_active',
-            'created_by', 'created_by_name', 'sections', 'created_at', 'updated_at'
+            'created_by', 'created_by_name', 'sections', 'exam_mode', 'omr_config',
+            'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_by', 'created_at', 'updated_at']
 
@@ -199,7 +200,7 @@ class ExamPatternCreateSerializer(serializers.ModelSerializer):
         model = ExamPattern
         fields = [
             'name', 'description', 'total_questions', 'total_duration', 
-            'total_marks', 'sections'
+            'total_marks', 'exam_mode', 'omr_config', 'sections'
         ]
 
     def create(self, validated_data):

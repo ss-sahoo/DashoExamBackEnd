@@ -71,7 +71,8 @@ class ExamSerializer(serializers.ModelSerializer):
             'reschedule_allowed', 'max_reschedules', 'reschedule_deadline',
             'created_at', 'updated_at',
             'questions_added', 'questions_required', 'questions_remaining',
-            'question_completion_percent', 'is_question_complete', 'share_url'
+            'question_completion_percent', 'is_question_complete', 'share_url',
+            'exam_mode', 'omr_config', 'omr_metadata', 'omr_sheet_generated', 'omr_sheet_file'
         ]
         read_only_fields = [
             'id', 'created_by', 'created_at', 'updated_at',
@@ -113,9 +114,14 @@ class ExamSerializer(serializers.ModelSerializer):
                 )
 
             if added < required:
-                raise serializers.ValidationError(
-                    f"Add all {required} questions before publishing (currently {added})."
-                )
+                # If it's an offline exam, we might allow publishing even if questions are not fully added in-app
+                # but we'll still warn or prevent it if it's meant to be strict.
+                # For now, let's keep it strict but maybe OMR exams can have different rules?
+                # The user's request suggests they want to generate OMR regardless.
+                if exam.exam_mode == 'online':
+                    raise serializers.ValidationError(
+                        f"Add all {required} questions before publishing (currently {added})."
+                    )
 
         return value
 
@@ -124,9 +130,15 @@ class ExamSerializer(serializers.ModelSerializer):
         center_ids = validated_data.pop('center_ids', [])
         batch_ids = validated_data.pop('batch_ids', [])
         
-        # Automatically set duration_minutes from the pattern
+        # Automatically set duration_minutes, exam_mode and omr_config from the pattern
         pattern = validated_data['pattern']
         validated_data['duration_minutes'] = pattern.total_duration
+        
+        if 'exam_mode' not in validated_data or validated_data['exam_mode'] == 'online':
+            validated_data['exam_mode'] = getattr(pattern, 'exam_mode', 'online')
+        
+        if 'omr_config' not in validated_data or not validated_data['omr_config']:
+            validated_data['omr_config'] = getattr(pattern, 'omr_config', {})
         
         exam = super().create(validated_data)
         
@@ -155,6 +167,12 @@ class ExamSerializer(serializers.ModelSerializer):
             pattern = ExamPattern.objects.get(id=pattern_id)
             validated_data['pattern'] = pattern
             validated_data['duration_minutes'] = pattern.total_duration
+            
+            # Also update mode if not explicitly changed
+            if 'exam_mode' not in validated_data:
+                validated_data['exam_mode'] = getattr(pattern, 'exam_mode', 'online')
+            if 'omr_config' not in validated_data:
+                validated_data['omr_config'] = getattr(pattern, 'omr_config', {})
         
         exam = super().update(instance, validated_data)
         
@@ -257,6 +275,12 @@ class ExamCreateSerializer(serializers.ModelSerializer):
         validated_data['pattern'] = pattern
         validated_data['duration_minutes'] = pattern.total_duration
         
+        # Copy mode and config from pattern if not provided
+        if 'exam_mode' not in validated_data or validated_data['exam_mode'] == 'online':
+            validated_data['exam_mode'] = getattr(pattern, 'exam_mode', 'online')
+        if 'omr_config' not in validated_data or not validated_data['omr_config']:
+            validated_data['omr_config'] = getattr(pattern, 'omr_config', {})
+
         # Set status to 'draft' until questions are added (or if copying, questions will be added)
         validated_data['status'] = 'draft'
         

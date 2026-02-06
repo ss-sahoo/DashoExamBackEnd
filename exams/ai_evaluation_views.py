@@ -4,6 +4,7 @@ API endpoints for AI-powered grading of subjective exams
 """
 import os
 import tempfile
+from django.utils import timezone
 from django.shortcuts import get_object_or_404
 from django.core.files.storage import default_storage
 from rest_framework import status, permissions
@@ -102,15 +103,17 @@ def upload_answer_sheet(request, exam_id):
                     student=student,
                     defaults={
                         'status': 'completed',
-                        'total_score': result.get('total_marks', 0),
+                        'score': result.get('total_marks', 0),
                         'percentage': result.get('percentage', 0),
                         'answers': {
                             'ai_evaluation': {
                                 'grades': result.get('grades', []),
                                 'student_name': result.get('student_name'),
+                                'report': result.get('report'),
+                                'file_path': saved_path,
                             }
                         },
-                        'end_time': None,  # Will be set by model
+                        'submitted_at': timezone.now() if not ExamAttempt.objects.filter(exam=exam, student=student).exists() else None
                     }
                 )
                 
@@ -195,12 +198,14 @@ def evaluate_answer_sheet(request, exam_id):
                 student=student,
                 defaults={
                     'status': 'completed',
-                    'total_score': result.get('total_marks', 0),
+                    'score': result.get('total_marks', 0),
                     'percentage': result.get('percentage', 0),
                     'answers': {
                         'ai_evaluation': {
                             'grades': result.get('grades', []),
                             'student_name': result.get('student_name'),
+                            'report': result.get('report'),
+                            'file_path': file_path,
                         }
                     },
                 }
@@ -326,3 +331,42 @@ def test_ai_evaluation(request):
             'success': False,
             'error': str(e),
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def list_submissions(request, exam_id):
+    """
+    List past AI evaluation submissions for an exam.
+    """
+    exam = get_object_or_404(Exam, id=exam_id)
+    
+    attempts = ExamAttempt.objects.filter(
+        exam=exam,
+        answers__has_key='ai_evaluation'
+    ).select_related('student').order_by('-submitted_at')
+    
+    submissions = []
+    for attempt in attempts:
+        ai_data = attempt.answers.get('ai_evaluation', {})
+        submissions.append({
+            'id': attempt.id,
+            'exam': exam.id,
+            'student_id': attempt.student.id,
+            'student_name': attempt.student.get_full_name() or attempt.student.username,
+            'status': 'evaluated',
+            'score': attempt.score,
+            'percentage': attempt.percentage,
+            'evaluation_result': {
+                'student_name': ai_data.get('student_name'),
+                'total_score': float(attempt.score) if attempt.score else 0,
+                'max_score': float(attempt.score * 100 / attempt.percentage) if attempt.percentage and attempt.score else 0,
+                'percentage': float(attempt.percentage) if attempt.percentage else 0,
+                'grades': ai_data.get('grades', []),
+                'report': ai_data.get('report', ''),
+            },
+            'created_at': attempt.submitted_at or attempt.created_at,
+            'file_path': ai_data.get('file_path', ''),
+        })
+    
+    return Response(submissions)
