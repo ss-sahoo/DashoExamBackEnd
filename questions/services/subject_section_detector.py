@@ -26,7 +26,7 @@ class SubjectSectionDetector:
     def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None):
         """Initialize the detector"""
         self.api_key = api_key or getattr(settings, 'GEMINI_API_KEY', None)
-        self.model = model or getattr(settings, 'GEMINI_MODEL', 'gemini-2.0-flash')
+        self.model = model or getattr(settings, 'GEMINI_MODEL', 'gemini-2.5-flash')
         
         if not self.api_key:
             raise SubjectSectionDetectionError("Gemini API key not configured")

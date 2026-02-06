@@ -367,7 +367,7 @@ class GeminiExtractionServiceV2:
         This is useful for documents where questions are separated by Answer: lines
         """
         # Find all Answer: positions
-        answer_pattern = r'(?:Correct\s+)?(?:Answer|Ans|Option)[\s:]+[A-Da-d]'
+        answer_pattern = r'(?:Answer|Ans)[\s:]+[A-Da-d]'
         answer_positions = [m.start() for m in re.finditer(answer_pattern, text, re.IGNORECASE)]
         
         if len(answer_positions) < 2:
@@ -563,7 +563,7 @@ class GeminiExtractionServiceV2:
         blocks = re.split(r'(?=\n[A-Z][^\n]*\?\n)', text)
         
         # Alternative: split by looking for option patterns followed by Answer
-        answer_pattern = r'(?:Correct\s+)?(?:Answer|Ans|Option)[\s:]+([A-Da-d])'
+        answer_pattern = r'(?:Answer|Ans)[\s:]+([A-Da-d])'
         answer_positions = [(m.start(), m.group(1)) for m in re.finditer(answer_pattern, text, re.IGNORECASE)]
         
         if not answer_positions:
@@ -641,8 +641,7 @@ class GeminiExtractionServiceV2:
         try:
             # Extract options if present
             options = []
-            # Updated pattern to handle "Correct Answer" as a delimiter
-            option_pattern = r'\n\s*\(?([A-Ea-e])\)?[\.\)]\s*(.+?)(?=\n\s*\(?[A-Ea-e]\)?[\.\)]|\n\s*(?:Correct\s+)?(?:Answer|Solution|Ans)|$)'
+            option_pattern = r'\n\s*\(?([A-Ea-e])\)?[\.\)]\s*(.+?)(?=\n\s*\(?[A-Ea-e]\)?[\.\)]|\n\s*(?:Answer|Solution|Ans)|$)'
             option_matches = re.findall(option_pattern, q_content, re.IGNORECASE | re.DOTALL)
             
             for letter, opt_text in option_matches:
@@ -650,8 +649,7 @@ class GeminiExtractionServiceV2:
             
             # Extract answer
             answer = ''
-            # Updated pattern to handle "Correct Answer: A" or "Correct Option: A"
-            answer_match = re.search(r'(?:Correct\s+)?(?:Answer|Ans|Option)[\s:]+(.+?)(?:\n|$)', q_content, re.IGNORECASE)
+            answer_match = re.search(r'(?:Answer|Ans)[\s:]+(.+?)(?:\n|$)', q_content, re.IGNORECASE)
             if answer_match:
                 answer = answer_match.group(1).strip()
             
@@ -663,11 +661,7 @@ class GeminiExtractionServiceV2:
             
             # Clean question text (remove options, answer, solution)
             q_text = q_content
-            for pattern in [
-                r'\n\s*\(?[A-Ea-e]\)?[\.\)].*', 
-                r'(?:Correct\s+)?(?:Answer|Ans|Option)[\s:].*', 
-                r'(?:Solution|Explanation)[\s:].*'
-            ]:
+            for pattern in [r'\n\s*\(?[A-Ea-e]\)?[\.\)].*', r'(?:Answer|Ans)[\s:].*', r'(?:Solution|Explanation)[\s:].*']:
                 q_text = re.sub(pattern, '', q_text, flags=re.IGNORECASE | re.DOTALL)
             q_text = q_text.strip()
             
@@ -821,67 +815,30 @@ Return a JSON array with all questions found:
     "question_text": "Full question text here without options",
     "question_type": "single_mcq",
     "options": ["Option A text", "Option B text", "Option C text", "Option D text"],
-    "is_nested": false,
-    "structure": {{}},
     "correct_answer": "C",
     "solution": "Solution explanation here",
     "detected_section": "Section A - Single Correct"
   }},
   {{
     "question_number": 2,
-    "question_text": "Answer the following questions:",
-    "question_type": "subjective",
-    "is_nested": true,
-    "structure": {{
-      "nested_parts": [
-        {{
-          "type": "compulsory",
-          "label": "a",
-          "text": "What happens when phenol reacts with",
-          "marks": 2,
-          "sub_parts": [
-            {{ "type": "compulsory", "label": "i", "text": "Br2/CS2", "marks": 1 }},
-            {{ "type": "compulsory", "label": "ii", "text": "Conc. HNO3", "marks": 1 }}
-          ]
-        }},
-        {{ "type": "compulsory", "label": "b", "text": "Why phenol does not undergo protonation?", "marks": 1 }},
-        {{
-          "type": "choice_group",
-          "label": "c",
-          "options": [
-            {{ 
-               "label": "c", "text": "Explain the following:", "marks": 2,
-               "sub_parts": [
-                 {{ "label": "i", "text": "Hyperconjugation", "marks": 1 }},
-                 {{ "label": "ii", "text": "Electromeric effect", "marks": 1 }}
-               ]
-            }},
-            {{ "label": "c", "text": "Write the IUPAC name of the product...", "marks": 1 }}
-          ]
-        }}
-      ]
-    }},
-    "correct_answer": "...",
-    "solution": "...",
-    "detected_section": "Descriptive"
+    "question_text": "Another question text",
+    "question_type": "numerical",
+    "options": [],
+    "correct_answer": "42",
+    "solution": "Solution here",
+    "detected_section": "Numerical Type"
   }}
 ]
 ```
 
 ## EXTRACTION RULES
 1. question_number: Sequential starting from 1
-2. question_text: The main prompt or lead-in text (e.g., "Answer the following:")
-3. question_type: One of the types listed above
-4. nested_parts: 
-   - Use `type: "compulsory"` for parts that must be answered.
-   - Use `type: "choice_group"` for parts that are alternatives (separated by "OR").
-   - `sub_parts` can be nested inside compulsory parts for deeper levels (i, ii, etc.).
-5. marks: Extract marks if indicated next to the part (e.g., "[2]" or "2 marks").
-6. correctly identify the hierarchy of parts (a, b, c) and sub-parts (i, ii).
-7. options: Array of option texts (empty array for numerical/subjective).
-8. correct_answer: Single letter, multiple letters "A,C", or actual values for sub-parts.
-9. solution: Text after "Solution:" or "Explanation:".
-10. detected_section: Which section this question belongs to.
+2. question_text: Full question text WITHOUT the options
+3. question_type: One of the types listed above (use section info to determine)
+4. options: Array of option texts (empty array for numerical/subjective)
+5. correct_answer: Single letter A/B/C/D, multiple letters "A,C", or actual value
+6. solution: Text after "Solution:" or "Explanation:" (can be empty string "")
+7. detected_section: Which section this question belongs to (if known)
 
 ## IMPORTANT
 - Return ONLY the JSON array, no other text
@@ -1197,7 +1154,6 @@ Return JSON array with all questions:
                 'has_latex': q.get('has_latex', False),
                 # NEW: Preserve detected section from AI response
                 'detected_section': str(q.get('detected_section', '')).strip(),
-                'structure': q.get('structure', {}) or {},
             }
             
             # Validate MCQ options

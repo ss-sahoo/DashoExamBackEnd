@@ -45,15 +45,12 @@ class SectionQuestionExtractor:
         'true_false': 'True/False - Answer is True or False',
         'fill_blank': 'Fill in the Blank - Complete the sentence',
         'subjective': 'Subjective - Long answer/essay type',
-        'multipart': 'Multipart - Question with multiple compulsory parts (a, b, c)',
-        'internal_choice': 'Internal Choice - Question with EITHER/OR options between parts',
-        'mixed': 'Mixed Nested - Complex question with both compulsory parts and OR choices',
     }
     
     def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None):
         """Initialize the extractor"""
         self.api_key = api_key or getattr(settings, 'GEMINI_API_KEY', None)
-        self.model = model or getattr(settings, 'GEMINI_MODEL', 'gemini-2.0-flash')
+        self.model = model or getattr(settings, 'GEMINI_MODEL', 'gemini-2.5-flash')
         
         if not self.api_key:
             raise SectionExtractionError("Gemini API key not configured")
@@ -72,100 +69,46 @@ class SectionQuestionExtractor:
         text_content: str,
         document_structure: Dict,
         subject: str,
-        expected_question_count: int = 0,
-        pattern_hint: Optional[Dict] = None,  # NEW: Target slots from pattern
+        expected_question_count: int = 0,  # NEW: Expected count from pre-analysis
         progress_callback: Optional[callable] = None
     ) -> Dict:
-        """Extract questions section by section using detected document structure."""
+        """Extract ALL questions and classify them by type using AI."""
         logger.info(f"Starting AI extraction for subject: {subject}")
         logger.info(f"Content length: {len(text_content)} chars")
         
-        # Get sections from document structure
-        sections = document_structure.get('sections', [])
+        # Count actual questions in content if expected_count not provided
+        if expected_question_count <= 0:
+            expected_question_count = self._count_questions_in_content(text_content)
         
-        # If no sections detected, fallback to old behavior (group by type)
-        if not sections:
-            logger.warning("No sections detected in document_structure, falling back to type-based extraction")
-            return self._extract_and_group_by_type(text_content, subject, expected_question_count, progress_callback)
-        
-        logger.info(f"Extracting questions from {len(sections)} detected sections")
+        logger.info(f"Expected question count for {subject}: {expected_question_count}")
         
         if progress_callback:
-            progress_callback(10, f"Extracting from {len(sections)} sections...")
+            progress_callback(10, "Analyzing content with AI...")
         
         try:
+            all_questions = self._ai_extract_and_classify(text_content, subject, expected_question_count)
+            
+            if progress_callback:
+                progress_callback(70, "Grouping questions by type...")
+            
+            questions_by_type = self._group_by_type(all_questions)
+            
             results = []
             total_extracted = 0
-            all_types_found = set()
             
-            # Extract questions section by section
-            for i, section_info in enumerate(sections):
-                section_name = section_info.get('name', f'Section {i+1}')
-                section_type = section_info.get('type_hint', 'mixed')
-                start_marker = section_info.get('start_marker', '')
-                question_range = section_info.get('question_range', '')
-                expected_count = section_info.get('question_count', 0)
-                
-                logger.info(f"Processing section: {section_name} (type: {section_type})")
-                
-                if progress_callback:
-                    progress_callback(10 + (i * 70 // len(sections)), f"Extracting from {section_name}...")
-                
-                # Extract content for this section
-                section_content = self._extract_section_content(text_content, start_marker, sections, i)
-                
-                if not section_content:
-                    logger.warning(f"Could not extract content for section: {section_name}")
-                    continue
-                
-                # Extract questions from this section
-                if expected_count > 0:
-                    section_questions = self._ai_extract_and_classify(
-                        section_content, subject, expected_count, pattern_hint
-                    )
-                else:
-                    # Count questions in this section
-                    section_expected = self._count_questions_in_content(section_content)
-                    section_questions = self._ai_extract_and_classify(
-                        section_content, subject, section_expected, pattern_hint
-                    )
-                
-                # Ensure question type matches section type
-                for q in section_questions:
-                    # Use section type if question type doesn't match or is unclear
-                    detected_type = q.get('question_type', 'single_mcq')
-                    is_nested = q.get('is_nested', False)
-                    
-                    # Define which types are compatible or should not be overridden
-                    nested_types = ['multipart', 'internal_choice', 'mixed']
-                    
-                    # NEW: NEVER override if it is a nested/structured question
-                    if is_nested or detected_type in nested_types:
-                        logger.info(f"Preserving specialized type '{detected_type}' for nested question")
-                        pass
-                    elif section_type != 'mixed' and detected_type != section_type:
-                        # For plain questions, allow section type to guide
-                        if section_type == 'subjective' and detected_type in nested_types:
-                            pass # Already handled by is_nested but for safety
-                        else:
-                            logger.debug(f"Overriding question type {detected_type} with section type {section_type}")
-                            q['question_type'] = section_type
-                    
-                    all_types_found.add(q.get('question_type', section_type))
-                
+            for q_type, questions in questions_by_type.items():
                 result = SectionQuestionResult(
-                    section_name=section_name,
-                    section_type=section_type,
-                    questions=section_questions,
-                    total_extracted=len(section_questions),
-                    expected_count=expected_count if expected_count > 0 else len(section_questions),
+                    section_name=f"{subject} - {self._get_type_display(q_type)}",
+                    section_type=q_type,
+                    questions=questions,
+                    total_extracted=len(questions),
+                    expected_count=len(questions),
                     extraction_confidence=0.85,
                     warnings=[]
                 )
-                
                 results.append(result)
-                total_extracted += len(section_questions)
-                logger.info(f"Section '{section_name}': {len(section_questions)} questions extracted")
+                total_extracted += len(questions)
+                logger.info(f"Type '{q_type}': {len(questions)} questions")
             
             if progress_callback:
                 progress_callback(100, "Extraction complete")
@@ -191,7 +134,7 @@ class SectionQuestionExtractor:
                 'total_expected': expected_question_count if expected_question_count > 0 else total_extracted,
                 'extraction_summary': {
                     'sections_processed': len(results),
-                    'types_found': list(all_types_found),
+                    'types_found': list(questions_by_type.keys()),
                     'completeness': (total_extracted / expected_question_count * 100) if expected_question_count > 0 else 100.0,
                     'expected_count': expected_question_count,
                     'extracted_count': total_extracted
@@ -201,133 +144,6 @@ class SectionQuestionExtractor:
         except Exception as e:
             logger.error(f"AI extraction failed: {e}", exc_info=True)
             raise SectionExtractionError(f"Extraction failed: {str(e)}")
-    
-    def _extract_and_group_by_type(
-        self,
-        text_content: str,
-        subject: str,
-        expected_question_count: int,
-        progress_callback: Optional[callable] = None
-    ) -> Dict:
-        """Fallback: Extract all questions and group by type (old behavior)."""
-        # Count actual questions in content if expected_count not provided
-        if expected_question_count <= 0:
-            expected_question_count = self._count_questions_in_content(text_content)
-        
-        if progress_callback:
-            progress_callback(10, "Analyzing content with AI...")
-        
-        all_questions = self._ai_extract_and_classify(text_content, subject, expected_question_count)
-        
-        if progress_callback:
-            progress_callback(70, "Grouping questions by type...")
-        
-        questions_by_type = self._group_by_type(all_questions)
-        
-        results = []
-        total_extracted = 0
-        
-        for q_type, questions in questions_by_type.items():
-            result = SectionQuestionResult(
-                section_name=f"{subject} - {self._get_type_display(q_type)}",
-                section_type=q_type,
-                questions=questions,
-                total_extracted=len(questions),
-                expected_count=len(questions),
-                extraction_confidence=0.85,
-                warnings=[]
-            )
-            results.append(result)
-            total_extracted += len(questions)
-        
-        if progress_callback:
-            progress_callback(100, "Extraction complete")
-        
-        return {
-            'subject': subject,
-            'sections': results,
-            'total_extracted': total_extracted,
-            'total_expected': expected_question_count if expected_question_count > 0 else total_extracted,
-            'extraction_summary': {
-                'sections_processed': len(results),
-                'types_found': list(questions_by_type.keys()),
-                'completeness': (total_extracted / expected_question_count * 100) if expected_question_count > 0 else 100.0,
-                'expected_count': expected_question_count,
-                'extracted_count': total_extracted
-            }
-        }
-    
-    def _extract_section_content(self, text_content: str, start_marker: str, all_sections: List[Dict], section_index: int) -> str:
-        """Extract content for a specific section using start_marker."""
-        if not start_marker:
-            # If no marker, try to find section boundaries using section name
-            section_info = all_sections[section_index]
-            section_name = section_info.get('name', '')
-            # Try to find section header in content
-            patterns = [
-                re.escape(section_name),
-                section_name.replace(' ', r'\s+'),
-                section_name.split('-')[-1].strip() if '-' in section_name else section_name
-            ]
-            
-            for pattern in patterns:
-                match = re.search(pattern, text_content, re.IGNORECASE)
-                if match:
-                    start_pos = match.start()
-                    break
-            else:
-                # If no match found, return empty (will use full content as fallback)
-                logger.warning(f"Could not find section marker for: {section_name}")
-                return text_content if section_index == 0 else ""
-        else:
-            # Find start position using marker
-            # Try exact match first
-            start_pos = text_content.find(start_marker)
-            if start_pos == -1:
-                # Try case-insensitive
-                match = re.search(re.escape(start_marker), text_content, re.IGNORECASE)
-                if match:
-                    start_pos = match.start()
-                else:
-                    # Try partial match (first few words)
-                    marker_words = start_marker.split()[:3]  # First 3 words
-                    marker_pattern = r'\b' + r'\s+'.join(re.escape(w) for w in marker_words) + r'\b'
-                    match = re.search(marker_pattern, text_content, re.IGNORECASE)
-                    if match:
-                        start_pos = match.start()
-                    else:
-                        logger.warning(f"Could not find start_marker: {start_marker}")
-                        return text_content if section_index == 0 else ""
-        
-        # Find end position (start of next section or end of content)
-        if section_index + 1 < len(all_sections):
-            next_section = all_sections[section_index + 1]
-            next_marker = next_section.get('start_marker', '')
-            next_name = next_section.get('name', '')
-            
-            # Try to find next section start
-            end_pos = len(text_content)
-            if next_marker:
-                next_pos = text_content.find(next_marker, start_pos)
-                if next_pos != -1:
-                    end_pos = next_pos
-            else:
-                # Try finding by name
-                patterns = [
-                    re.escape(next_name),
-                    next_name.replace(' ', r'\s+'),
-                ]
-                for pattern in patterns:
-                    match = re.search(pattern, text_content[start_pos:], re.IGNORECASE)
-                    if match:
-                        end_pos = start_pos + match.start()
-                        break
-        else:
-            end_pos = len(text_content)
-        
-        section_content = text_content[start_pos:end_pos]
-        logger.debug(f"Extracted section content: {len(section_content)} chars from position {start_pos} to {end_pos}")
-        return section_content
     
     def _count_questions_in_content(self, content: str) -> int:
         """Count actual questions in content using regex patterns"""
@@ -352,13 +168,13 @@ class SectionQuestionExtractor:
         logger.info(f"Counted {max_count} questions in content ({len(content)} chars)")
         return max_count
     
-    def _ai_extract_and_classify(self, content: str, subject: str, expected_count: int = 0, pattern_hint: Optional[Dict] = None) -> List[Dict]:
+    def _ai_extract_and_classify(self, content: str, subject: str, expected_count: int = 0) -> List[Dict]:
         """Use AI to extract all questions and classify each by type"""
         max_chunk_size = 40000
         if len(content) > max_chunk_size:
-            return self._extract_in_chunks(content, subject, max_chunk_size, pattern_hint)
+            return self._extract_in_chunks(content, subject, max_chunk_size)
         
-        prompt = self._build_extraction_prompt(content, subject, expected_count, pattern_hint)
+        prompt = self._build_extraction_prompt(content, subject, expected_count)
         
         try:
             response = self.client.generate_content(
@@ -384,20 +200,21 @@ class SectionQuestionExtractor:
             logger.error(f"AI call failed: {e}")
             return self._fallback_extraction(content, subject)
     
-    def _extract_in_chunks(self, content: str, subject: str, chunk_size: int, pattern_hint: Optional[Dict] = None) -> List[Dict]:
+    def _extract_in_chunks(self, content: str, subject: str, chunk_size: int) -> List[Dict]:
         """Extract from large content in chunks"""
         all_questions = []
         chunks = self._smart_split(content, chunk_size)
         
         # Estimate questions per chunk
         total_expected = self._count_questions_in_content(content)
+        questions_per_chunk = max(1, total_expected // len(chunks)) if chunks else 0
         
         for i, chunk in enumerate(chunks):
             logger.info(f"Processing chunk {i+1}/{len(chunks)}")
             try:
                 # Count questions in this chunk for accurate extraction
                 chunk_expected = self._count_questions_in_content(chunk)
-                questions = self._ai_extract_and_classify(chunk, subject, chunk_expected, pattern_hint)
+                questions = self._ai_extract_and_classify(chunk, subject, chunk_expected)
                 for q in questions:
                     q['question_number'] = len(all_questions) + 1
                     all_questions.append(q)
@@ -435,78 +252,72 @@ class SectionQuestionExtractor:
             
             chunks.append(content[current_pos:end_pos])
             current_pos = end_pos
+        
         return chunks
 
-    def _build_extraction_prompt(self, content: str, subject: str, expected_count: int = 0, pattern_hint: Optional[Dict] = None) -> str:
-        """Build a comprehensive AI extraction prompt with strict slot matching."""
+    def _build_extraction_prompt(self, content: str, subject: str, expected_count: int = 0) -> str:
+        """Build the AI extraction prompt with expected question count"""
         count_instruction = ""
         if expected_count > 0:
-            count_instruction = f"This content contains EXACTLY {expected_count} questions. Extract all {expected_count}."
-        
-        hint_instruction = ""
-        if pattern_hint:
-            hint_instruction = f"""
-**TARGET SLOTS (PATTERN HINT):**
-You MUST map the extracted content to these Slot IDs (1, 2, 3...). 
-Match the type and labels (a, b, c, i, ii etc.) defined below:
-{json.dumps(pattern_hint, indent=2)}
+            count_instruction = f"""
+**CRITICAL: This content contains EXACTLY {expected_count} questions for {subject}.**
+You MUST extract exactly {expected_count} questions - no more, no less.
+DO NOT hallucinate or invent questions that don't exist in the content.
 """
-
-        return f"""You are an expert Question Extractor.
+        
+        return f"""You are an expert question extractor. Extract ALL questions from this {subject} content.
 {count_instruction}
-{hint_instruction}
+**CRITICAL: DETECT QUESTION TYPE FROM SECTION HEADERS AND CONTENT**
 
-**OBJECTIVE**: Extract questions and format them as a JSON array. 
+The document has DIFFERENT SECTIONS with different question types. Look for section headers like:
+- "Section A", "SECTION A", "Section A - MCQ" -> single_mcq
+- "Section B", "SECTION B", "Numerical" -> numerical  
+- "Section C", "SECTION C", "True/False", "True or False" -> true_false
+- "Section D", "SECTION D", "Fill in the blank", "Fill-Ups" -> fill_blank
 
-**STRICT RULES FOR ORDERING**:
-1. **question_number**: Assign 1, 2, 3, 4, 5 in the **EXACT ORDER** they appear in the source. 
-   - PDF Q1 MUST be Slot 1, Q2 MUST be Slot 2, etc.
+**QUESTION TYPE RULES:**
 
-**STRICT RULES FOR NESTED STRUCTURE**:
-1. **question_text**: This MUST contain ONLY the preamble/passage (e.g., "Phenols undergo...").
-2. **is_nested**: Set to `true` for any question with parts (a), (b), (c) or OR choices.
-3. **structure**: This field is MANDATORY for nested questions. Use this EXACT schema:
-   {{
-     "parts": [
-       {{
-         "label": "a", 
-         "question_text": "Text for part a", 
-         "marks": 2,
-         "sub_parts": [
-            {{ "label": "i", "question_text": "Sub-part text", "marks": 1 }}
-         ]
-       }},
-       {{
-         "type": "choice_group",
-         "label": "OR Group",
-         "options": [
-            {{ "label": "1", "question_text": "Choice 1 text", "marks": 2 }},
-            {{ "label": "2", "question_text": "Choice 2 text", "marks": 2 }}
-         ]
-       }}
-     ],
-     "is_nested": true,
-     "nested_type": "mixed" 
-   }}
-   - **CRITICAL**: Use `parts` (NOT `options`) at the top level of `structure`.
-   - **CRITICAL**: Use `question_text` (NOT `text`) for the content within parts.
-   - **CLEANING**: Remove text like "(a)", "(i)", "OR", "-------------------" from all text fields.
+1. **single_mcq** - Has options A/B/C/D with ONE correct answer (letter)
+   - Answer format: "A", "B", "C", or "D"
+   - Usually in "Section A" or "MCQ" sections
 
-**QUESTION TYPES**:
-- `single_mcq`: Use ONLY for standard Multiple Choice Questions with choices.
-- `subjective`: Use for ANY question that is NOT a Multiple Choice Question. This includes all passages, structured questions, and multipart questions.
-- `multipart`, `internal_choice`, `mixed`: Use these as the `nested_type` INSIDE the `structure` object. The top-level `question_type` should still be `subjective` for these.
+2. **numerical** - Answer is a NUMBER, not a letter
+   - Answer format: "5", "3.14", "42", "100 m/s"
+   - Usually in "Section B" or "Numerical" sections
+   - NO options A/B/C/D, just a numeric answer
 
-**MARKS**:
-- The total marks for each question in this section is provided in the hints.
-- For nested questions, you MUST distribute these total marks among the sub-parts/parts so that their SUM equals the total marks for the question.
+3. **true_false** - Answer is True or False
+   - Answer format: "True", "False", "T", "F"
+   - Usually in "Section C" or "True/False" sections
+   - Questions are statements to verify
 
-**LATEX**: Use LaTeX for formulas (e.g., $HNO_{{3}}$).
+4. **fill_blank** - Has blanks (_____ or ______) to fill
+   - Answer is a word or phrase that fills the blank
+   - Usually in "Section D" or "Fill in the blank" sections
+
+**OUTPUT FORMAT (JSON array):**
+```json
+[
+  {{"question_number": 1, "question_text": "What is the acceleration?", "options": ["2 m/s", "5 m/s", "10 m/s", "20 m/s"], "correct_answer": "B", "solution": "a = F/m", "question_type": "single_mcq"}},
+  {{"question_number": 31, "question_text": "Calculate the velocity.", "options": [], "correct_answer": "20", "solution": "v = sqrt(2gh)", "question_type": "numerical"}},
+  {{"question_number": 61, "question_text": "Gravity is constant everywhere.", "options": [], "correct_answer": "False", "solution": "Varies with altitude", "question_type": "true_false"}},
+  {{"question_number": 91, "question_text": "The SI unit of force is ______.", "options": [], "correct_answer": "Newton", "solution": "", "question_type": "fill_blank"}}
+]
+```
+
+**CRITICAL RULES:**
+1. LOOK AT SECTION HEADERS to determine question type
+2. Questions 1-30 are usually MCQ (single_mcq)
+3. Questions 31-60 are usually Numerical (numerical)
+4. Questions 61-90 are usually True/False (true_false)
+5. Questions 91-100 are usually Fill in the blank (fill_blank)
+6. Extract EVERY question that EXISTS - don't invent or skip any
+{f"7. TOTAL EXPECTED: {expected_count} questions - verify your count!" if expected_count > 0 else ""}
 
 **CONTENT TO EXTRACT FROM:**
 {content}
 
-**Return ONLY a JSON array of question objects.**"""
+**Return ONLY the JSON array:**"""
 
     def _parse_ai_response(self, response: str, original_content: str, subject: str) -> List[Dict]:
         """Parse AI response to extract questions"""
@@ -528,46 +339,8 @@ Match the type and labels (a, b, c, i, ii etc.) defined below:
             
             validated = []
             for q in questions:
-                if not q.get('question_text', '').strip() and not q.get('is_nested'):
+                if not q.get('question_text', '').strip():
                     continue
-                
-                # Standardize nested structure if present
-                structure = q.get('structure', {})
-                is_nested_type = q.get('question_type') in ['multipart', 'internal_choice', 'mixed']
-                
-                if structure or is_nested_type:
-                    q['is_nested'] = True
-                    if not structure:
-                        structure = {'parts': [], 'nested_type': q.get('question_type', 'mixed'), 'is_nested': True}
-                    
-                    # Ensure is_nested is consistent
-                    structure['is_nested'] = True
-                    if 'nested_type' not in structure:
-                        structure['nested_type'] = q.get('question_type', 'mixed')
-
-                    # Migration: Map 'options' or 'nested_parts' to 'parts' if AI used them
-                    if 'options' in structure and 'parts' not in structure:
-                        structure['parts'] = structure.pop('options')
-                    if 'nested_parts' in structure and 'parts' not in structure:
-                        structure['parts'] = structure.pop('nested_parts')
-                    
-                    # Migration: Map 'text' to 'question_text' recursively
-                    def migrate_text_fields(obj):
-                        if isinstance(obj, list):
-                            for item in obj: migrate_text_fields(item)
-                        elif isinstance(obj, dict):
-                            if 'text' in obj and 'question_text' not in obj:
-                                obj['question_text'] = obj.pop('text')
-                            # Handle common part names
-                            if 'parts' in obj: migrate_text_fields(obj['parts'])
-                            if 'sub_parts' in obj: migrate_text_fields(obj['sub_parts'])
-                            if 'options' in obj: migrate_text_fields(obj['options'])
-                    
-                    migrate_text_fields(structure.get('parts', []))
-                    
-                    q['structure'] = structure
-                    # Force subjective type for frontend compatibility with nested questions
-                    q['question_type'] = 'subjective'
                 
                 q.setdefault('question_type', 'single_mcq')
                 q.setdefault('options', [])
@@ -576,14 +349,8 @@ Match the type and labels (a, b, c, i, ii etc.) defined below:
                 q.setdefault('confidence', 0.85)
                 
                 q['question_type'] = self._normalize_type(q['question_type'])
-
-                # CRITICAL: Re-force subjective for nested structures AFTER normalization
-                if q.get('is_nested') or structure:
-                    q['question_type'] = 'subjective'
-                    
                 validated.append(q)
             
-            logger.info(f"Successfully validated {len(validated)} questions. Types: {set(q['question_type'] for q in validated)}")
             return validated
             
         except json.JSONDecodeError as e:
@@ -611,10 +378,7 @@ Match the type and labels (a, b, c, i, ii etc.) defined below:
             'fill_blank': 'fill_blank',
             'fill in the blank': 'fill_blank',
             'fill': 'fill_blank',
-            'multipart': 'multipart',
-            'internal_choice': 'internal_choice',
-            'mixed': 'mixed',
-            'descriptive': 'subjective',
+            'subjective': 'subjective',
         }
         
         return type_mapping.get(q_type, 'single_mcq')

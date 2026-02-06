@@ -36,7 +36,7 @@ class FileParserService:
     
     def __init__(self):
         """Initialize the file parser service"""
-        self.gemini_ocr_service = None  # Will be initialized when needed for image parsing
+        self.gemini_client = None  # Will be initialized when needed for image parsing
         self.mathpix_service = None  # Will be initialized when needed for PDF/image parsing
     
     def parse_file(self, file_path: str, file_type: str) -> str:
@@ -92,28 +92,13 @@ class FileParserService:
     def _get_mathpix_service(self):
         """Lazy initialization of Mathpix service"""
         if self.mathpix_service is None:
-            from .mathpix_service import MathpixService
-            if not MathpixService.is_configured():
-                raise FileParsingError("Mathpix credentials not configured. Set MATHPIX_APP_ID and MATHPIX_APP_KEY in environment or settings.")
             try:
+                from .mathpix_service import MathpixService
                 self.mathpix_service = MathpixService()
             except Exception as e:
                 logger.error(f"Failed to initialize Mathpix service: {e}")
                 raise FileParsingError(f"Mathpix service not available: {str(e)}")
         return self.mathpix_service
-    
-    def _get_gemini_ocr_service(self):
-        """Lazy initialization of Gemini OCR service"""
-        if self.gemini_ocr_service is None:
-            try:
-                from .gemini_ocr_service import GeminiOCRService
-                if not GeminiOCRService.is_configured():
-                    raise FileParsingError("Gemini API key not configured. Set GEMINI_API_KEY in environment or settings.")
-                self.gemini_ocr_service = GeminiOCRService()
-            except Exception as e:
-                logger.error(f"Failed to initialize Gemini OCR service: {e}")
-                raise FileParsingError(f"Gemini OCR service not available: {str(e)}")
-        return self.gemini_ocr_service
     
     def parse_pdf_mathpix(self, file_path: str) -> str:
         """
@@ -147,74 +132,42 @@ class FileParserService:
             )
             return text_content
             
+        except FileParsingError:
+            raise
         except Exception as e:
-            logger.warning(f"Mathpix PDF extraction failed or not configured: {str(e)}")
+            logger.error(f"Mathpix PDF extraction failed: {str(e)}")
             # Fallback to PyPDF2 for simple text PDFs
             logger.info("Attempting fallback to PyPDF2...")
-            try:
-                return self.parse_pdf_pypdf2(file_path)
-            except FileParsingError as pypdf_err:
-                # If PyPDF2 returns "No text content", it's likely a scanned PDF
-                # Try Gemini as final fallback
-                if "No text content" in str(pypdf_err):
-                    logger.info("PyPDF2 found no text (likely scanned PDF). Attempting Gemini OCR fallback...")
-                    return self.parse_pdf_gemini(file_path)
-                raise
-            except Exception as nested_err:
-                logger.error(f"PyPDF2 fallback also failed: {nested_err}. Trying Gemini...")
-                return self.parse_pdf_gemini(file_path)
-                
-    def parse_pdf_gemini(self, file_path: str) -> str:
-        """Extract text from PDF using Gemini Vision/File API (for scanned PDFs)"""
-        try:
-            gemini_ocr = self._get_gemini_ocr_service()
-            text_content = gemini_ocr.extract_pdf(file_path)
-            if not text_content or not text_content.strip():
-                raise FileParsingError("No text content extracted from PDF using Gemini")
-            return text_content
-        except Exception as e:
-            logger.error(f"Gemini PDF extraction failed: {str(e)}")
-            raise FileParsingError(f"Failed to extract text from PDF (Scanned): {str(e)}")
+            return self.parse_pdf_pypdf2(file_path)
     
     def parse_image_mathpix(self, file_path: str) -> str:
         """
         Extract text from image using Mathpix OCR API with caching.
-        Fallbacks to Gemini OCR if Mathpix is unavailable.
         
         Args:
             file_path: Path to image file
             
         Returns:
-            Extracted text content
+            Extracted text content with LaTeX preserved
         """
-        # Try Mathpix first if configured
         try:
             mathpix = self._get_mathpix_service()
+            
             # Use cached extraction method
             text_content, ocr_result = mathpix.extract_image_with_cache(file_path)
             
-            if text_content and text_content.strip():
-                cache_status = "CACHED" if ocr_result.usage_count > 0 else "NEW"
-                logger.info(f"Successfully extracted {len(text_content)} characters from image via Mathpix [{cache_status}]")
-                return text_content
-        except Exception as e:
-            logger.warning(f"Mathpix image extraction failed or not configured: {str(e)}")
-            # Fallback to Gemini
-            logger.info("Attempting fallback to Gemini OCR...")
-            return self.parse_image_gemini(file_path)
-            
-        return self.parse_image_gemini(file_path)
-
-    def parse_image_gemini(self, file_path: str) -> str:
-        """Extract text from image using Gemini Vision API"""
-        try:
-            gemini_ocr = self._get_gemini_ocr_service()
-            text_content = gemini_ocr.extract_image(file_path)
             if not text_content or not text_content.strip():
-                raise FileParsingError("No text content extracted from image using Gemini")
+                raise FileParsingError("No text content extracted from image")
+            
+            cache_status = "CACHED" if ocr_result.usage_count > 0 else "NEW"
+            logger.info(
+                f"Successfully extracted {len(text_content)} characters from image via Mathpix "
+                f"[{cache_status}]"
+            )
             return text_content
+            
         except Exception as e:
-            logger.error(f"Gemini image extraction failed: {str(e)}")
+            logger.error(f"Mathpix image extraction failed: {str(e)}")
             raise FileParsingError(f"Failed to extract text from image: {str(e)}")
     
     def parse_pdf_pypdf2(self, file_path: str) -> str:

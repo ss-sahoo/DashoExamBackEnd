@@ -252,19 +252,8 @@ class DocumentPreAnalyzer:
                         'instructions': general_instructions
                     }
                 }
-            elif len(pattern_subjects) == 1:
-                # If nothing matched but pattern ONLY has one subject, assume it belongs there
-                # This handles cases where the document text doesn't explicitly name the subject
-                subject = pattern_subjects[0]
-                logger.info(f"No direct subject match, but pattern only has one subject ({subject}). Assigning all content to it.")
-                separated_content = {
-                    subject: {
-                        'content': text_content,
-                        'instructions': general_instructions
-                    }
-                }
             elif len(subject_result['detected_subjects']) > 0:
-                # Use detected subjects even if not matched against pattern
+                # Use detected subjects even if not matched
                 separated_content = self.separate_by_subject(
                     text_content,
                     subject_result['detected_subjects']
@@ -316,12 +305,6 @@ class DocumentPreAnalyzer:
             # ENSURE UNIQUE subjects before returning (safety net)
             unique_detected = list(dict.fromkeys(subject_result['detected_subjects']))
             unique_matched = list(dict.fromkeys(subject_result['matched_subjects']))
-            
-            # If we performed a single-subject fallback, ensure it's in unique_matched
-            for subject in separated_content.keys():
-                if subject != 'General' and subject not in unique_matched:
-                    unique_matched.append(subject)
-            
             unique_unmatched = list(dict.fromkeys(subject_result['unmatched_subjects']))
             
             logger.info(f"Final subjects - detected: {unique_detected}, matched: {unique_matched}")
@@ -1665,40 +1648,16 @@ You MUST identify ALL sections present across the ENTIRE document.
         """
         More flexible detection - find subject mentions and extract surrounding content
         Now also extracts instructions for each subject
-        
-        NOTE: This function returns EMPTY result if it detects inline subject labels
-        (like "Q1. (Physics)" or "1. [Chemistry]") because those should be handled
-        by _keyword_based_separation instead.
         """
         result = {s: {'content': '', 'instructions': ''} for s in subjects}
-        
-        # Check if document has inline subject labels (e.g., "Q1. (Physics)", "(Chemistry)")
-        # If so, skip this function and let keyword_based_separation handle it
-        inline_label_pattern = r'(?:^|\n)\s*(?:Q\.?\s*\d+|Question\s*\d+|\d+\.)\s*[\[\(](?:' + '|'.join(re.escape(s) for s in subjects) + r')[\]\)]'
-        if re.search(inline_label_pattern, text_content, re.IGNORECASE | re.MULTILINE):
-            logger.info("Detected inline subject labels (e.g., Q1. (Physics)), skipping flexible detection")
-            return result  # Return empty to trigger keyword_based_separation
         
         # Find all positions where subjects are mentioned
         all_mentions = []
         for subject in subjects:
-            # Look for subject name with some context - ONLY standalone headers
+            # Look for subject name with some context
             pattern = rf'(?:^|\n)([^\n]*\b{re.escape(subject)}\b[^\n]*(?:\n|$))'
             for match in re.finditer(pattern, text_content, re.IGNORECASE):
                 line = match.group(1).strip()
-                
-                # SKIP: Lines that look like questions with inline subject labels
-                # These patterns indicate question content, not section headers
-                question_patterns = [
-                    r'^Q\.?\s*\d+',  # Q1., Q 1, Q.1
-                    r'^Question\s*\d+',  # Question 1
-                    r'^\d+\.\s*\(',  # 1. (Physics)
-                    r'^\d+\.\s*\[',  # 1. [Physics]
-                ]
-                is_question_line = any(re.search(p, line, re.IGNORECASE) for p in question_patterns)
-                if is_question_line:
-                    continue  # Skip question lines
-                
                 # Check if this looks like a header (short line, possibly with special chars)
                 if len(line) < 100 and (
                     line.upper() == subject.upper() or
@@ -1922,34 +1881,7 @@ You MUST identify ALL sections present across the ENTIRE document.
             if not q_text.strip():
                 continue
             
-            # First, check for EXPLICIT inline subject labels (e.g., "(Physics)", "[Chemistry]")
-            # These are definitive markers and should ALWAYS take precedence
-            explicit_subject = None
-            for subject in subjects:
-                subject_normalized = self._normalize_subject(subject)
-                # Patterns for explicit inline subject labels (very common in JEE/NEET papers)
-                explicit_patterns = [
-                    rf'\(\s*{re.escape(subject)}\s*\)',  # (Physics)
-                    rf'\[\s*{re.escape(subject)}\s*\]',  # [Physics]
-                    rf'\{{\s*{re.escape(subject)}\s*\}}',  # {Physics}
-                    rf'\(\s*{re.escape(subject_normalized)}\s*\)',  # (Physics) normalized
-                    rf'\[\s*{re.escape(subject_normalized)}\s*\]',  # [Physics] normalized
-                ]
-                for pattern in explicit_patterns:
-                    if re.search(pattern, q_text, re.IGNORECASE):
-                        explicit_subject = subject
-                        logger.debug(f"  Q.{q_num}: Found explicit subject label '{subject}' via pattern")
-                        break
-                if explicit_subject:
-                    break
-            
-            # If explicit label found, use it directly (skip keyword scoring)
-            if explicit_subject:
-                full_question = f"Q.{q_num}. {q_text.strip()}"
-                current_content[explicit_subject].append(full_question)
-                continue
-            
-            # Otherwise, fall back to keyword-based scoring
+            # Determine subject by keywords with weighted scoring
             q_lower = q_text.lower()
             best_subject = subjects[0] if subjects else 'General'
             best_score = 0
@@ -1965,7 +1897,7 @@ You MUST identify ALL sections present across the ENTIRE document.
                 )
                 score = 0
                 
-                # Subject name match in text - high priority (score 5)
+                # Subject name match - highest priority (score 5)
                 if subject.lower() in q_lower or subject_normalized.lower() in q_lower:
                     score += 5
                 
@@ -1988,19 +1920,15 @@ You MUST identify ALL sections present across the ENTIRE document.
                     best_score = score
                     best_subject = subject
             
-            # Reconstruct question with number - keep original text to preserve options/structure
-            # If we don't include the original structure, AI parsing will fail to find options
+            # Reconstruct question with number
             full_question = f"Q.{q_num}. {q_text.strip()}"
             current_content[best_subject].append(full_question)
         
         # Combine questions for each subject and add instructions
         for subject in subjects:
             if current_content[subject]:
-                # Join with double newlines to clearly separate questions
-                combined_content = '\n\n'.join(current_content[subject])
-                
                 result[subject] = {
-                    'content': combined_content,
+                    'content': '\n\n'.join(current_content[subject]),
                     'instructions': general_instructions  # Use general instructions for keyword-based separation
                 }
         

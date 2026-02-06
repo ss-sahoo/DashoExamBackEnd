@@ -661,7 +661,6 @@ class ExtractionPipelineV2:
                         question_text=q_text,
                         question_type=question_type,
                         options=options,
-                        structure=question_data.get('structure', {}) or {},
                         correct_answer=correct_answer,
                         solution=str(question_data.get('solution', '')),
                         explanation=str(question_data.get('explanation', '')),
