@@ -10,9 +10,14 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.AlterUniqueTogether(
-            name="question",
-            unique_together={("exam", "pattern_section_id", "question_number")},
+        migrations.SeparateDatabaseAndState(
+            state_operations=[
+                migrations.AlterUniqueTogether(
+                    name="question",
+                    unique_together={("exam", "pattern_section_id", "question_number")},
+                ),
+            ],
+            database_operations=[]  # Constraint was already manually added/modified in 0022
         ),
         migrations.AddField(
             model_name="extractedquestion",
