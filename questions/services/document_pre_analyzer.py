@@ -689,11 +689,23 @@ class DocumentPreAnalyzer:
                 'total_questions_detected': result.get('total_questions_detected', 0)
             }
             
-            # Calculate total questions from sections if not provided
-            if structure['total_questions_detected'] == 0:
-                structure['total_questions_detected'] = sum(
-                    s.get('question_count', 0) for s in valid_sections
-                )
+            # IMPROVED: Calculate total from sections and prefer that if reasonable
+            section_total = sum(s.get('question_count', 0) for s in valid_sections)
+            ai_total = structure['total_questions_detected']
+            
+            # If AI total is 0 or wildly different from section totals, use section count
+            if ai_total == 0:
+                structure['total_questions_detected'] = section_total
+            elif section_total > 0:
+                # If section total is more conservative (lower but still > 50% of AI estimate),
+                # or if AI seems to be over-counting significantly (> 2x section total),
+                # prefer section-based count as it's more reliable
+                if ai_total > section_total * 2.5 and section_total > 10:
+                    logger.warning(
+                        f"AI total ({ai_total}) seems inflated compared to section total ({section_total}). "
+                        f"Using section-based count."
+                    )
+                    structure['total_questions_detected'] = section_total
             
             return structure
             
@@ -2018,22 +2030,25 @@ You MUST identify ALL sections present across the ENTIRE document.
         
         IMPORTANT: Only counts UNIQUE question numbers in SEQUENTIAL order to avoid
         counting answer options like (1), (2), (3), (4) as separate questions.
+        
+        ENHANCED: Now validates question patterns more strictly to avoid false positives
+        from step numbers, list items, and solution markers.
         """
         questions = []
         
         # Multiple patterns for question detection - ordered by specificity
+        # Pattern 1 & 2 are most reliable; Pattern 3 needs validation
         patterns = [
-            # Q1. or Q.1 or Q 1 - most specific
-            r'(?:^|\n)\s*Q\.?\s*(\d+)[\.\):\s]+',
+            # Q1. or Q.1 or Q 1 - most specific, HIGHEST confidence
+            (r'(?:^|\n)\s*Q\.?\s*(\d+)[\.:\)\s]+', 'q_prefix', 0.95),
             # Question 1 or Question: 1
-            r'(?:^|\n)\s*Question[\s:]*(\d+)[\.\):\s]+',
-            # Number followed by . and actual question content
-            # Matches: "61. The product..." or "89. 20 mL of..." 
-            r'(?:^|\n)\s*(\d+)\.\s+',
+            (r'(?:^|\n)\s*Question[\s:]*(\d+)[\.:\)\s]+', 'question_word', 0.95),
+            # Number followed by . and actual question content (needs validation)
+            (r'(?:^|\n)\s*(\d+)\.\s+', 'numbered', 0.70),
         ]
         
         # Try each pattern
-        for pattern in patterns:
+        for pattern, pattern_type, confidence in patterns:
             matches = list(re.finditer(pattern, text_content, re.IGNORECASE | re.MULTILINE))
             if len(matches) >= 3:  # At least 3 questions found
                 # CRITICAL: Filter to only UNIQUE question numbers in APPROXIMATE sequence
@@ -2043,10 +2058,45 @@ You MUST identify ALL sections present across the ENTIRE document.
                 
                 for match in matches:
                     q_num = int(match.group(1))
+                    
+                    # VALIDATION: For 'numbered' pattern, do extra checks to avoid false positives
+                    if pattern_type == 'numbered':
+                        # Get immediate context (just before the number) to validate
+                        # Use smaller window - only check if marker is on same line or very close
+                        pre_context_start = max(0, match.start() - 30)
+                        pre_context = text_content[pre_context_start:match.start()].lower()
+                        
+                        # Skip if this directly follows a step/solution marker (on same line)
+                        if pre_context.rstrip().endswith(('step', 'sol.', 'sol')):
+                            continue
+                        
+                        # Skip if this is clearly inside a solution block (marker right before)
+                        if 'step' in pre_context and '\n' not in pre_context:
+                            continue
+                        
+                        # Skip very small question numbers (1-4) that appear after options context
+                        if q_num <= 4 and any(marker in pre_context for marker in ['option', '(a)', '(b)', '(c)', '(d)']):
+                            continue
+                    
                     # Only count if we haven't seen this number yet
                     if q_num not in seen_numbers:
                         seen_numbers.add(q_num)
                         unique_matches.append(match)
+                
+                # Validate: Check if question numbers form a reasonable sequence
+                if unique_matches:
+                    q_nums = sorted([int(m.group(1)) for m in unique_matches])
+                    
+                    # For question banks, numbers should be reasonably sequential
+                    if len(q_nums) >= 3:
+                        min_q, max_q = q_nums[0], q_nums[-1]
+                        expected_range = max_q - min_q + 1
+                        coverage = len(q_nums) / expected_range if expected_range > 0 else 0
+                        
+                        # If coverage is too low for 'numbered' pattern, skip
+                        if pattern_type == 'numbered' and coverage < 0.3 and expected_range > 50:
+                            logger.debug(f"Skipping 'numbered' pattern due to low coverage ({coverage:.1%})")
+                            continue
                 
                 # Extract questions from unique matches
                 for i, match in enumerate(unique_matches):
@@ -2061,11 +2111,10 @@ You MUST identify ALL sections present across the ENTIRE document.
                     q_text = text_content[start:end].strip()
                     questions.append((q_num, q_text))
                 
-                logger.info(f"Found {len(questions)} UNIQUE questions using pattern: {pattern[:30]}...")
+                logger.info(f"Found {len(questions)} UNIQUE questions using pattern: {pattern_type}")
                 return questions
         
         # FALLBACK: Use Answer pattern to count questions
-        # Many exam documents have "Answer (N)" or "Ans. (N)" patterns
         answer_patterns = [
             r'(?:Answer|Ans)\.?\s*[\(\[]?(\d+)[\)\]]?',
             r'##\s*Answer\s*[\(\[]?(\d+)[\)\]]?',
@@ -2076,7 +2125,6 @@ You MUST identify ALL sections present across the ENTIRE document.
             if len(matches) >= 3:
                 unique_nums = sorted(set(int(m) for m in matches if m.isdigit()))
                 logger.info(f"Found {len(unique_nums)} questions via Answer pattern")
-                # Return placeholder questions for counting purposes
                 return [(str(n), '') for n in unique_nums]
         
         # LAST RESORT: If no pattern worked, try splitting by double newlines
@@ -2086,7 +2134,6 @@ You MUST identify ALL sections present across the ENTIRE document.
                 questions.append((str(i + 1), block.strip()))
         
         return questions
-    
     def _build_separation_prompt(
         self,
         text_content: str,

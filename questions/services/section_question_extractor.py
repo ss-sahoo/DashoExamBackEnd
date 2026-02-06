@@ -168,8 +168,32 @@ class SectionQuestionExtractor:
         logger.info(f"Counted {max_count} questions in content ({len(content)} chars)")
         return max_count
     
+    def _preprocess_content(self, content: str) -> str:
+        """Preprocess content to handle problematic elements before AI extraction.
+        
+        - Replaces inline base64 SVG/image data with placeholders
+        - Truncates extremely long inline data that can break JSON
+        """
+        # Replace inline base64 SVG images that can cause JSON parsing issues
+        # Pattern: <img ... src="data:image/svg+xml;base64,LONG_BASE64_DATA" ...>
+        base64_svg_pattern = r'<img[^>]*src="data:image/svg\+xml;base64,[^"]+?"[^>]*>'
+        content = re.sub(base64_svg_pattern, '[CHEMISTRY_STRUCTURE_IMAGE]', content, flags=re.IGNORECASE)
+        
+        # Also handle generic base64 images
+        base64_img_pattern = r'<img[^>]*src="data:image/[^;]+;base64,[^"]+?"[^>]*>'
+        content = re.sub(base64_img_pattern, '[INLINE_IMAGE]', content, flags=re.IGNORECASE)
+        
+        # Log if any replacements were made
+        if '[CHEMISTRY_STRUCTURE_IMAGE]' in content or '[INLINE_IMAGE]' in content:
+            logger.info(f"Preprocessed content: replaced base64 images with placeholders")
+        
+        return content
+
     def _ai_extract_and_classify(self, content: str, subject: str, expected_count: int = 0) -> List[Dict]:
         """Use AI to extract all questions and classify each by type"""
+        # Preprocess content to handle problematic base64 SVG images
+        content = self._preprocess_content(content)
+        
         max_chunk_size = 40000
         if len(content) > max_chunk_size:
             return self._extract_in_chunks(content, subject, max_chunk_size)
@@ -331,8 +355,9 @@ The document has DIFFERENT SECTIONS with different question types. Look for sect
 **Return ONLY the JSON array:**"""
 
     def _parse_ai_response(self, response: str, original_content: str, subject: str) -> List[Dict]:
-        """Parse AI response to extract questions"""
+        """Parse AI response to extract questions with robust JSON handling"""
         try:
+            # Extract JSON from response
             json_match = re.search(r'```json\s*(.*?)\s*```', response, re.DOTALL)
             if json_match:
                 json_str = json_match.group(1)
@@ -350,22 +375,67 @@ The document has DIFFERENT SECTIONS with different question types. Look for sect
             json_str = re.sub(r'^```\s*', '', json_str, flags=re.MULTILINE)
             json_str = re.sub(r'\s*```$', '', json_str, flags=re.MULTILINE)
 
+            # Try multiple parsing strategies
+            questions = None
+            parse_errors = []
+            
+            # Strategy 1: Direct JSON parse
             try:
                 questions = json.loads(json_str)
-            except json.JSONDecodeError:
-                # Try repairing common JSON errors
-                logger.warning("Standard JSON parse failed, attempting repair...")
+            except json.JSONDecodeError as e:
+                parse_errors.append(f"Direct parse: {e}")
+            
+            # Strategy 2: Fix trailing commas
+            if questions is None:
+                try:
+                    fixed_str = re.sub(r',\s*([\]}])', r'\1', json_str)
+                    questions = json.loads(fixed_str)
+                    logger.info("JSON parsed after fixing trailing commas")
+                except json.JSONDecodeError as e:
+                    parse_errors.append(f"Trailing comma fix: {e}")
+            
+            # Strategy 3: Handle truncated response - find last complete object
+            if questions is None:
+                try:
+                    # Find the last complete JSON object by looking for "},"
+                    last_complete = json_str.rfind('},')
+                    if last_complete > 0:
+                        truncated_str = json_str[:last_complete + 1] + ']'
+                        questions = json.loads(truncated_str)
+                        logger.warning(f"JSON parsed from truncated response, recovered partial data")
+                except Exception as e:
+                    parse_errors.append(f"Truncation fix: {e}")
+            
+            # Strategy 4: Try ast.literal_eval (more forgiving)
+            if questions is None:
                 try:
                     import ast
-                    # Allow trailing commas by using literal_eval (python dictionary syntax is more forgiving)
                     questions = ast.literal_eval(json_str)
-                except:
-                    # Last resort: simple regex cleanup for trailing commas
-                    try:
-                        fixed_str = re.sub(r',\s*([\]}])', r'\1', json_str)
-                        questions = json.loads(fixed_str)
-                    except:
-                        raise json.JSONDecodeError("Failed to repair JSON", json_str, 0)
+                except Exception as e:
+                    parse_errors.append(f"ast.literal_eval: {e}")
+            
+            # Strategy 5: Extract individual question objects with regex
+            if questions is None:
+                try:
+                    # Match individual question objects
+                    q_pattern = r'\{[^{}]*"question_text"\s*:\s*"[^"]*"[^{}]*\}'
+                    q_matches = re.findall(q_pattern, json_str, re.DOTALL)
+                    if q_matches:
+                        questions = []
+                        for q_match in q_matches:
+                            try:
+                                q_obj = json.loads(q_match)
+                                questions.append(q_obj)
+                            except:
+                                continue
+                        if questions:
+                            logger.warning(f"Extracted {len(questions)} questions via regex pattern matching")
+                except Exception as e:
+                    parse_errors.append(f"Regex extraction: {e}")
+            
+            if questions is None:
+                logger.warning(f"All JSON parse strategies failed: {parse_errors}")
+                raise json.JSONDecodeError("Failed to repair JSON", json_str, 0)
 
             if not isinstance(questions, list):
                 if isinstance(questions, dict) and 'questions' in questions:

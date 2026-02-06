@@ -2059,6 +2059,228 @@ def full_extraction_flow(request):
 
 
 # ===========================
+# Parse Nested Question Structure
+# ===========================
+
+def parse_nested_question_structure(extracted_text):
+    """
+    Parse extracted text to identify nested question structures.
+    
+    Identifies patterns like:
+    - Main parts: (a), (b), (c) or a), b), c)
+    - Sub-parts: (i), (ii), (iii) or i), ii), iii)
+    - Internal choice: OR or (OR)
+    - MCQ options: (A), (B), (C), (D) or A), B), C), D) or (1), (2), (3), (4)
+    
+    Returns a structure dict compatible with frontend expectations.
+    """
+    import re
+    
+    if not extracted_text or not extracted_text.strip():
+        return {
+            'question_text': '',
+            'options': [],
+            'is_nested': False,
+            'structure': None
+        }
+    
+    text = extracted_text.strip()
+    
+    # First, detect if this is a nested/structured question or simple MCQ
+    
+    # Check for internal choice pattern (OR between parts)
+    has_or_separator = bool(re.search(r'\n\s*OR\s*\n|\n\s*\(OR\)\s*\n', text, re.IGNORECASE))
+    
+    # Check for alpha parts: (a), (b) or a), b)
+    alpha_parts_pattern = r'(?:^|\n)\s*\(?([a-c])\)?[\.\)]\s'
+    alpha_parts = re.findall(alpha_parts_pattern, text, re.IGNORECASE | re.MULTILINE)
+    has_alpha_parts = len(set([p.lower() for p in alpha_parts])) >= 2
+    
+    # Check for roman numeral sub-parts: (i), (ii), (iii)
+    roman_pattern = r'\(?(i{1,4}|iv|v|vi|vii|viii|ix|x)\)[\.\)]?\s'
+    roman_parts = re.findall(roman_pattern, text, re.IGNORECASE)
+    has_roman_subparts = len(roman_parts) >= 2
+    
+    # Check for standard MCQ options: (A), (B), (C), (D) or (1), (2), (3), (4)
+    mcq_letter_pattern = r'(?:^|\n)\s*\(?([A-D])\)?[\.\)]\s'
+    mcq_number_pattern = r'(?:^|\n)\s*\(?([1-4])\)[\.\)]?\s'
+    mcq_letters = re.findall(mcq_letter_pattern, text, re.IGNORECASE | re.MULTILINE)
+    mcq_numbers = re.findall(mcq_number_pattern, text, re.MULTILINE)
+    has_mcq_options = len(mcq_letters) >= 2 or len(mcq_numbers) >= 2
+    
+    # Determine question type
+    is_nested = has_or_separator or (has_alpha_parts and has_roman_subparts)
+    
+    # If it's a simple MCQ (has options but no nested structure)
+    if has_mcq_options and not is_nested and not has_alpha_parts:
+        return parse_simple_mcq(text)
+    
+    # If it's a nested question
+    if is_nested or has_alpha_parts:
+        return parse_nested_parts(text, has_or_separator)
+    
+    # Default: return as simple question text
+    return {
+        'question_text': text,
+        'options': [],
+        'is_nested': False,
+        'structure': None
+    }
+
+
+def parse_simple_mcq(text):
+    """
+    Parse a simple MCQ with options (A), (B), (C), (D) or (1), (2), (3), (4).
+    """
+    import re
+    
+    # Try to find the main question (before options)
+    # Pattern for options: (A), (B), (C), (D) or (1), (2), (3), (4)
+    option_patterns = [
+        r'(?:^|\n)\s*\(?([A-D])\)?[\.\)]\s*(.*?)(?=(?:\n\s*\(?[A-D]\)?[\.\)]|$))',  # Letter options
+        r'(?:^|\n)\s*\(([1-4])\)\s*(.*?)(?=(?:\n\s*\([1-4]\)|$))',  # Number options
+    ]
+    
+    options = []
+    option_start = len(text)
+    
+    for pattern in option_patterns:
+        matches = list(re.finditer(pattern, text, re.IGNORECASE | re.DOTALL | re.MULTILINE))
+        if matches and len(matches) >= 2:
+            options = [m.group(2).strip() for m in matches]
+            option_start = matches[0].start()
+            break
+    
+    # Get question text (everything before options)
+    question_text = text[:option_start].strip()
+    
+    # Remove question number from start if present (e.g., "22." or "Q.22")
+    question_text = re.sub(r'^(?:Q\.?\s*)?\d+\.?\s*', '', question_text).strip()
+    
+    return {
+        'question_text': question_text,
+        'options': options if options else [],
+        'is_nested': False,
+        'structure': None,
+        'correct_answer': '',
+        'solution': ''
+    }
+
+
+def parse_nested_parts(text, has_or_separator):
+    """
+    Parse text with nested parts (a), (b) and sub-parts (i), (ii).
+    """
+    import re
+    
+    # Remove question number from start
+    text = re.sub(r'^(?:Q\.?\s*)?\d+\.?\s*', '', text).strip()
+    
+    nested_parts = []
+    
+    # Split by OR if present (internal choice)
+    if has_or_separator:
+        or_split = re.split(r'\n\s*OR\s*\n|\n\s*\(OR\)\s*\n', text, flags=re.IGNORECASE)
+        
+        for idx, part_text in enumerate(or_split):
+            part_text = part_text.strip()
+            if not part_text:
+                continue
+            
+            # Parse this part
+            label = chr(ord('a') + idx)  # a, b, c...
+            part_data = parse_single_part(part_text, label, idx == 0)
+            
+            if idx > 0:
+                part_data['type'] = 'choice'  # Mark as internal choice option
+            
+            nested_parts.append(part_data)
+    else:
+        # Split by (a), (b), (c) pattern
+        part_pattern = r'(?:^|\n)\s*\(?([a-c])\)[\.\)]?\s*'
+        parts = re.split(part_pattern, text, flags=re.IGNORECASE | re.MULTILINE)
+        
+        # First element might be intro/main question text
+        intro_text = parts[0].strip() if parts else ''
+        
+        # Process pairs (label, content)
+        i = 1
+        while i < len(parts) - 1:
+            label = parts[i].lower()
+            content = parts[i + 1].strip() if i + 1 < len(parts) else ''
+            
+            part_data = parse_single_part(content, label, True)
+            nested_parts.append(part_data)
+            i += 2
+        
+        # If no parts found but has roman numerals, treat whole as single part with sub-parts
+        if not nested_parts and re.search(r'\(i+\)', text, re.IGNORECASE):
+            part_data = parse_single_part(text, 'a', True)
+            nested_parts.append(part_data)
+    
+    # Extract main question text (if any)
+    # Usually nested questions have the main text before (a) or include it in part (a)
+    main_question_text = ''
+    if nested_parts and nested_parts[0].get('text'):
+        # Check if first part has a clear question intro
+        first_text = nested_parts[0].get('text', '')
+        if first_text and not first_text.startswith('('):
+            # Use first sentence as main question if it looks like an intro
+            sentences = re.split(r'(?<=[.?:])\s+', first_text)
+            if len(sentences) > 1 and len(sentences[0]) > 20:
+                main_question_text = sentences[0]
+    
+    return {
+        'question_text': main_question_text,
+        'options': [],
+        'is_nested': True,
+        'structure': {
+            'nested_parts': nested_parts
+        },
+        'correct_answer': '',
+        'solution': ''
+    }
+
+
+def parse_single_part(text, label, is_first=False):
+    """
+    Parse a single part, extracting any sub-parts (i), (ii), (iii).
+    """
+    import re
+    
+    # Check for roman numeral sub-parts
+    subpart_pattern = r'\s*\(?(i{1,4}|iv|v|vi|vii|viii|ix|x)\)\s*'
+    subpart_splits = re.split(subpart_pattern, text, flags=re.IGNORECASE)
+    
+    sub_parts = []
+    main_text = subpart_splits[0].strip() if subpart_splits else text
+    
+    # Process pairs (label, content)
+    i = 1
+    while i < len(subpart_splits) - 1:
+        roman_label = subpart_splits[i].lower()
+        content = subpart_splits[i + 1].strip() if i + 1 < len(subpart_splits) else ''
+        
+        if content:
+            sub_parts.append({
+                'label': roman_label,
+                'text': content.strip()
+            })
+        i += 2
+    
+    result = {
+        'label': label,
+        'text': main_text,
+        'type': 'compulsory'
+    }
+    
+    if sub_parts:
+        result['sub_parts'] = sub_parts
+    
+    return result
+
+
+# ===========================
 # Image to Text Extraction (Mathpix OCR)
 # ===========================
 
@@ -2136,12 +2358,16 @@ def extract_text_from_image(request):
             
             logger.info(f"Successfully extracted {len(extracted_text)} chars from image via Mathpix")
             
+            # Parse the extracted text to identify nested question structures
+            parsed_structure = parse_nested_question_structure(extracted_text)
+            
             return Response({
                 'success': True,
                 'extracted_text': extracted_text,
                 'has_latex': has_latex,
                 'confidence': 0.95,
-                'message': 'Successfully extracted text from image'
+                'message': 'Successfully extracted text from image',
+                'parsed_structure': parsed_structure
             }, status=status.HTTP_200_OK)
             
         except MathpixError as e:
