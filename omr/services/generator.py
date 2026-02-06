@@ -40,31 +40,50 @@ class OMRGeneratorService:
         """
         questions = []
         
-        # Get all question mappings for this exam
-        from exams.models import ExamQuestionMapping
-        mappings = ExamQuestionMapping.objects.filter(
+        # Get all questions assigned to this exam
+        from questions.models import ExamQuestion
+        mappings = ExamQuestion.objects.filter(
             exam=self.exam
-        ).select_related('question').order_by('order')
+        ).select_related('question').order_by('question_number')
         
-        for i, mapping in enumerate(mappings, start=1):
-            q = mapping.question
-            q_config = {
-                'number': i,
-                'type': self._map_question_type(q.question_type),
-                'marks': float(mapping.marks),
-                'negative_marks': float(mapping.negative_marks),
-            }
-            
-            # For MCQ questions, determine number of options
-            if q.question_type in ['single', 'multiple']:
-                options_count = len(q.options) if q.options else 4
-                q_config['options'] = [chr(65 + j) for j in range(options_count)]  # ['A', 'B', 'C', 'D']
-            
-            # For integer questions  
-            if q.question_type in ['numerical', 'integer']:
-                q_config['digits'] = 4  # Default 4 digit integer
-            
-            questions.append(q_config)
+        if mappings.exists():
+            for i, mapping in enumerate(mappings, start=1):
+                q = mapping.question
+                q_config = {
+                    'number': i,
+                    'type': self._map_question_type(q.question_type),
+                    'marks': float(mapping.marks),
+                    'negative_marks': float(mapping.negative_marks),
+                }
+                
+                # For MCQ questions, determine number of options
+                if q.question_type in ['single', 'multiple', 'single_mcq', 'multiple_mcq', 'true_false']:
+                    options_count = len(q.options) if hasattr(q, 'options') and q.options else 4
+                    q_config['options'] = [chr(65 + j) for j in range(options_count)]  # ['A', 'B', 'C', 'D']
+                
+                # For integer questions  
+                if q.question_type in ['numerical', 'integer', 'fill_blank']:
+                    q_config['digits'] = 4  # Default 4 digit integer
+                
+                questions.append(q_config)
+        elif self.exam.pattern:
+            # Fallback to pattern sections to determine question counts and types
+            from patterns.models import PatternSection
+            sections = PatternSection.objects.filter(pattern=self.exam.pattern).order_by('start_question')
+            for section in sections:
+                q_type = self._map_question_type(section.question_type)
+                for i in range(section.start_question, section.end_question + 1):
+                    q_config = {
+                        'number': i,
+                        'type': q_type,
+                        'marks': float(section.marks_per_question),
+                        'negative_marks': float(section.negative_marking),
+                    }
+                    if 'mcq' in q_type:
+                        q_config['options'] = ['A', 'B', 'C', 'D']
+                    elif q_type == 'integer':
+                        q_config['digits'] = 4
+                    questions.append(q_config)
         
         return questions
     
@@ -72,11 +91,14 @@ class OMRGeneratorService:
         """Map Django question type to OMR generator type"""
         type_mapping = {
             'single': 'mcq',
+            'single_mcq': 'mcq',
             'multiple': 'mcq_multi',
+            'multiple_mcq': 'mcq_multi',
             'numerical': 'integer',
             'integer': 'integer',
             'true_false': 'mcq',
             'fill_blank': 'integer',
+            'subjective': 'subjective',
         }
         return type_mapping.get(django_type, 'mcq')
     

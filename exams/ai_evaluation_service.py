@@ -108,12 +108,12 @@ class AIEvaluationService:
     
     def _build_question_bank(self) -> List[Dict]:
         """Build question bank from exam question mappings"""
-        from exams.models import ExamQuestionMapping
+        from questions.models import ExamQuestion
         
         question_bank = []
-        mappings = ExamQuestionMapping.objects.filter(
+        mappings = ExamQuestion.objects.filter(
             exam=self.exam
-        ).select_related('question').order_by('order')
+        ).select_related('question').order_by('question_number')
         
         for i, mapping in enumerate(mappings, start=1):
             q = mapping.question
