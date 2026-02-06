@@ -4,6 +4,7 @@ API endpoints for OMR sheet generation and evaluation
 """
 import os
 import tempfile
+# Force reload for filtering fix
 from django.shortcuts import get_object_or_404
 from django.core.files.storage import default_storage
 from rest_framework import status, viewsets, permissions
@@ -37,7 +38,14 @@ class OMRSheetViewSet(viewsets.ModelViewSet):
         user = self.request.user
         if user.role == 'super_admin':
             return OMRSheet.objects.all()
-        return OMRSheet.objects.filter(exam__institute=user.institute)
+        queryset = OMRSheet.objects.filter(exam__institute=user.institute)
+        
+        # Filter by exam_id if provided
+        exam_id = self.request.query_params.get('exam_id')
+        if exam_id:
+            queryset = queryset.filter(exam_id=exam_id)
+            
+        return queryset
     
     @action(detail=False, methods=['post'], url_path='generate/(?P<exam_id>[^/.]+)')
     def generate_for_exam(self, request, exam_id=None):
@@ -137,11 +145,18 @@ class OMRSubmissionViewSet(viewsets.ModelViewSet):
         """Filter submissions based on user role"""
         user = self.request.user
         if user.role == 'super_admin':
-            return OMRSubmission.objects.all()
+            queryset = OMRSubmission.objects.all()
         elif user.role in ['institute_admin', 'exam_admin', 'teacher']:
-            return OMRSubmission.objects.filter(omr_sheet__exam__institute=user.institute)
+            queryset = OMRSubmission.objects.filter(omr_sheet__exam__institute=user.institute)
         else:
-            return OMRSubmission.objects.filter(student=user)
+            queryset = OMRSubmission.objects.filter(student=user)
+            
+        # Filter by exam_id if provided
+        exam_id = self.request.query_params.get('exam_id')
+        if exam_id:
+            queryset = queryset.filter(omr_sheet__exam_id=exam_id)
+            
+        return queryset
     
     @action(detail=False, methods=['post'], url_path='upload/(?P<exam_id>[^/.]+)')
     def upload_for_exam(self, request, exam_id=None):
