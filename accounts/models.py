@@ -286,14 +286,15 @@ class Center(TimeStampedModel):
 
 class Program(TimeStampedModel):
     """
-    Represents a Program running at a specific center.
-    Examples: 'Super 30', 'Only Board'
+    Represents a Program at an Institute level.
+    Programs are created at Institute level and can be assigned to Batches.
+    Examples: 'Super 30', 'Only Board', 'JEE Advanced', 'NEET UG'
     """
-    center = models.ForeignKey(
-        Center,
+    institute = models.ForeignKey(
+        Institute,
         on_delete=models.CASCADE,
         related_name="programs",
-        help_text="Center where this program is offered.",
+        help_text="Institute where this program is offered.",
     )
     name = models.CharField(
         max_length=255,
@@ -316,27 +317,35 @@ class Program(TimeStampedModel):
     )
 
     class Meta:
-        unique_together = ("center", "name")
-        ordering = ["center__name", "name"]
+        unique_together = ("institute", "name")
+        ordering = ["institute__name", "name"]
 
     def __str__(self) -> str:
-        return f"{self.name} - {self.center.name}"
+        return f"{self.name} - {self.institute.name}"
 
 
 class Batch(TimeStampedModel):
     """
-    Represents a Batch inside a Program.
+    Represents a Batch inside a Center, optionally linked to a Program.
     - Created by Admin of that particular center.
     - Students are enrolled into Batches.
     - Teachers can be assigned to Batches as well.
     """
-    program = models.ForeignKey(
-        Program,
+    center = models.ForeignKey(
+        Center,
         on_delete=models.CASCADE,
         related_name="batches",
         null=True,
         blank=True,
-        help_text="Optional program under which this batch runs.",
+        help_text="Center where this batch runs.",
+    )
+    program = models.ForeignKey(
+        Program,
+        on_delete=models.SET_NULL,
+        related_name="batches",
+        null=True,
+        blank=True,
+        help_text="Program under which this batch runs (optional).",
     )
     code = models.CharField(
         max_length=50,
@@ -366,12 +375,15 @@ class Batch(TimeStampedModel):
     )
 
     class Meta:
-        ordering = ["program__name", "name"]
+        ordering = ["center__name", "program__name", "name"]
 
     def __str__(self) -> str:
+        parts = [self.name]
         if self.program:
-            return f"{self.name} ({self.program.name})"
-        return self.name
+            parts.append(f"({self.program.name})")
+        if self.center:
+            parts.append(f"@ {self.center.name}")
+        return " ".join(parts)
 
 
 class Enrollment(TimeStampedModel):

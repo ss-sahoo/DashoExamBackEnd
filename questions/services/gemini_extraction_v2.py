@@ -367,7 +367,7 @@ class GeminiExtractionServiceV2:
         This is useful for documents where questions are separated by Answer: lines
         """
         # Find all Answer: positions
-        answer_pattern = r'(?:Answer|Ans)[\s:]+[A-Da-d]'
+        answer_pattern = r'(?:Correct\s+)?(?:Answer|Ans|Option)[\s:]+[A-Da-d]'
         answer_positions = [m.start() for m in re.finditer(answer_pattern, text, re.IGNORECASE)]
         
         if len(answer_positions) < 2:
@@ -563,7 +563,7 @@ class GeminiExtractionServiceV2:
         blocks = re.split(r'(?=\n[A-Z][^\n]*\?\n)', text)
         
         # Alternative: split by looking for option patterns followed by Answer
-        answer_pattern = r'(?:Answer|Ans)[\s:]+([A-Da-d])'
+        answer_pattern = r'(?:Correct\s+)?(?:Answer|Ans|Option)[\s:]+([A-Da-d])'
         answer_positions = [(m.start(), m.group(1)) for m in re.finditer(answer_pattern, text, re.IGNORECASE)]
         
         if not answer_positions:
@@ -641,7 +641,8 @@ class GeminiExtractionServiceV2:
         try:
             # Extract options if present
             options = []
-            option_pattern = r'\n\s*\(?([A-Ea-e])\)?[\.\)]\s*(.+?)(?=\n\s*\(?[A-Ea-e]\)?[\.\)]|\n\s*(?:Answer|Solution|Ans)|$)'
+            # Updated pattern to handle "Correct Answer" as a delimiter
+            option_pattern = r'\n\s*\(?([A-Ea-e])\)?[\.\)]\s*(.+?)(?=\n\s*\(?[A-Ea-e]\)?[\.\)]|\n\s*(?:Correct\s+)?(?:Answer|Solution|Ans)|$)'
             option_matches = re.findall(option_pattern, q_content, re.IGNORECASE | re.DOTALL)
             
             for letter, opt_text in option_matches:
@@ -649,7 +650,8 @@ class GeminiExtractionServiceV2:
             
             # Extract answer
             answer = ''
-            answer_match = re.search(r'(?:Answer|Ans)[\s:]+(.+?)(?:\n|$)', q_content, re.IGNORECASE)
+            # Updated pattern to handle "Correct Answer: A" or "Correct Option: A"
+            answer_match = re.search(r'(?:Correct\s+)?(?:Answer|Ans|Option)[\s:]+(.+?)(?:\n|$)', q_content, re.IGNORECASE)
             if answer_match:
                 answer = answer_match.group(1).strip()
             
@@ -661,7 +663,11 @@ class GeminiExtractionServiceV2:
             
             # Clean question text (remove options, answer, solution)
             q_text = q_content
-            for pattern in [r'\n\s*\(?[A-Ea-e]\)?[\.\)].*', r'(?:Answer|Ans)[\s:].*', r'(?:Solution|Explanation)[\s:].*']:
+            for pattern in [
+                r'\n\s*\(?[A-Ea-e]\)?[\.\)].*', 
+                r'(?:Correct\s+)?(?:Answer|Ans|Option)[\s:].*', 
+                r'(?:Solution|Explanation)[\s:].*'
+            ]:
                 q_text = re.sub(pattern, '', q_text, flags=re.IGNORECASE | re.DOTALL)
             q_text = q_text.strip()
             

@@ -751,6 +751,57 @@ def pre_analyze_document(request):
             # Update job with results
             job.mark_completed(result)
             
+            # NEW: Detect sections per subject and cache them
+            detected_sections_per_subject = {}
+            if result.is_valid and result.matched_subjects:
+                try:
+                    from questions.services.subject_section_detector import SubjectSectionDetector
+                    detector = SubjectSectionDetector()
+                    
+                    for subject in result.matched_subjects:
+                        try:
+                            # Get subject content and instructions
+                            subject_data = result.subject_separated_content.get(subject, {})
+                            if isinstance(subject_data, dict):
+                                subject_content = subject_data.get('content', '')
+                                subject_instructions = subject_data.get('instructions', '')
+                            else:
+                                subject_content = str(subject_data) if subject_data else ''
+                                subject_instructions = ''
+                            
+                            expected_count = result.subject_question_counts.get(subject, 0)
+                            
+                            if subject_content:
+                                logger.info(f"Pre-analyzing sections for {subject} (expected: {expected_count} questions)")
+                                section_structure = detector.detect_sections_for_subject(
+                                    subject=subject,
+                                    subject_content=subject_content,
+                                    subject_instructions=subject_instructions,
+                                    expected_question_count=expected_count
+                                )
+                                detected_sections_per_subject[subject] = section_structure
+                                logger.info(
+                                    f"Detected {len(section_structure.get('sections', []))} sections for {subject}: "
+                                    f"{[s.get('name', 'Unknown') for s in section_structure.get('sections', [])]}"
+                                )
+                        except Exception as se:
+                            logger.warning(f"Could not detect sections for {subject}: {se}")
+                            # Continue with other subjects even if one fails
+                            detected_sections_per_subject[subject] = {
+                                'sections': [],
+                                'error': str(se)
+                            }
+                    
+                    # Save detected sections to job
+                    if detected_sections_per_subject:
+                        job.detected_sections_per_subject = detected_sections_per_subject
+                        job.save(update_fields=['detected_sections_per_subject'])
+                        logger.info(f"Cached section detection for {len(detected_sections_per_subject)} subjects")
+                        
+                except Exception as sde:
+                    logger.warning(f"Section detection process failed: {sde}")
+                    # Don't fail the entire pre-analysis if section detection fails
+            
             # Build response
             response_data = {
                 'job_id': str(job.id),
@@ -764,13 +815,19 @@ def pre_analyze_document(request):
                 'subject_question_counts': result.subject_question_counts,
                 'total_estimated_questions': result.total_estimated_questions,
                 'document_structure': result.document_structure,
+                'detected_sections_per_subject': detected_sections_per_subject,  # NEW
             }
             
             if result.is_valid:
                 response_data['message'] = (
                     f"Document categorized into {len(result.matched_subjects)} subjects"
                 )
-                if result.document_structure:
+                if detected_sections_per_subject:
+                    total_sections = sum(
+                        len(s.get('sections', [])) for s in detected_sections_per_subject.values()
+                    )
+                    response_data['message'] += f" with {total_sections} section(s) detected across subjects"
+                elif result.document_structure:
                     response_data['message'] += f" with {result.document_structure.get('total_sections', 0)} section(s) detected"
             else:
                 response_data['error_message'] = result.error_message
@@ -883,6 +940,161 @@ def get_pre_analysis_subjects(request, job_id):
         
     except Exception as e:
         logger.error(f"Failed to get pre-analysis subjects: {str(e)}")
+        return Response(
+            {'error': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_pre_analysis_sections(request, job_id):
+    """
+    Get cached per-subject section detection for a pre-analysis job.
+    
+    GET /api/questions/pre-analyze/{job_id}/sections/
+    
+    Optional query params:
+    - subject: Filter sections for a specific subject
+    
+    Returns:
+    {
+        "job_id": "uuid-here",
+        "sections_by_subject": {
+            "Physics": {
+                "sections": [
+                    {
+                        "name": "Section A - Single MCQ",
+                        "type_hint": "single_mcq",
+                        "question_range": "1-20",
+                        "format_description": "...",
+                        "expected_count": 20
+                    }
+                ],
+                "has_instructions": true,
+                "instructions_text": "..."
+            },
+            "Chemistry": {...},
+            "Mathematics": {...}
+        },
+        "summary": {
+            "total_subjects": 3,
+            "total_sections": 9,
+            "sections_per_subject": {"Physics": 3, "Chemistry": 3, "Mathematics": 3}
+        }
+    }
+    """
+    try:
+        # Get pre-analysis job
+        try:
+            job = PreAnalysisJob.objects.get(id=job_id)
+        except PreAnalysisJob.DoesNotExist:
+            return Response(
+                {'error': 'Pre-analysis job not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Check permissions
+        if job.pattern.institute != request.user.institute:
+            return Response(
+                {'error': 'You do not have permission to view this job'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Check job status
+        if job.status != 'completed':
+            return Response(
+                {'error': f'Pre-analysis job is {job.status}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Get optional subject filter
+        subject_filter = request.query_params.get('subject', None)
+        
+        # Get cached sections
+        sections_by_subject = job.detected_sections_per_subject or {}
+        
+        # If no cached sections, try to detect them now
+        if not sections_by_subject and job.is_valid_document:
+            logger.info(f"No cached sections for job {job_id}, detecting now...")
+            try:
+                from questions.services.subject_section_detector import SubjectSectionDetector
+                detector = SubjectSectionDetector()
+                
+                for subject in job.matched_subjects:
+                    subject_data = job.subject_separated_content.get(subject, {})
+                    if isinstance(subject_data, dict):
+                        subject_content = subject_data.get('content', '')
+                        subject_instructions = subject_data.get('instructions', '')
+                    else:
+                        subject_content = str(subject_data) if subject_data else ''
+                        subject_instructions = ''
+                    
+                    expected_count = job.subject_question_counts.get(subject, 0)
+                    
+                    if subject_content:
+                        try:
+                            section_structure = detector.detect_sections_for_subject(
+                                subject=subject,
+                                subject_content=subject_content,
+                                subject_instructions=subject_instructions,
+                                expected_question_count=expected_count
+                            )
+                            sections_by_subject[subject] = section_structure
+                        except Exception as se:
+                            logger.warning(f"Failed to detect sections for {subject}: {se}")
+                            sections_by_subject[subject] = {
+                                'sections': [],
+                                'error': str(se)
+                            }
+                
+                # Cache the results
+                if sections_by_subject:
+                    job.detected_sections_per_subject = sections_by_subject
+                    job.save(update_fields=['detected_sections_per_subject'])
+                    
+            except Exception as e:
+                logger.warning(f"Section detection failed: {e}")
+        
+        # Filter by subject if requested
+        if subject_filter:
+            # Find subject case-insensitively
+            matching_key = None
+            for key in sections_by_subject.keys():
+                if key.lower() == subject_filter.lower():
+                    matching_key = key
+                    break
+            
+            if matching_key:
+                sections_by_subject = {matching_key: sections_by_subject[matching_key]}
+            else:
+                return Response(
+                    {'error': f'Subject "{subject_filter}" not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+        
+        # Build summary
+        sections_per_subject = {}
+        total_sections = 0
+        for subject, data in sections_by_subject.items():
+            count = len(data.get('sections', []))
+            sections_per_subject[subject] = count
+            total_sections += count
+        
+        response_data = {
+            'job_id': str(job.id),
+            'sections_by_subject': sections_by_subject,
+            'summary': {
+                'total_subjects': len(sections_by_subject),
+                'total_sections': total_sections,
+                'sections_per_subject': sections_per_subject
+            }
+        }
+        
+        return Response(response_data, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        logger.error(f"Failed to get pre-analysis sections: {str(e)}")
         return Response(
             {'error': str(e)},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -1382,44 +1594,58 @@ def extract_questions_by_section(request):
                 status=status.HTTP_404_NOT_FOUND
             )
         
-        # ALWAYS detect sections at subject level using subject-specific content and instructions
-        # This ensures accurate section detection per subject, not at document level
-        logger.info(f"Detecting sections for {subject} using subject-specific content and instructions")
-        
         # Get expected question count for this subject
         expected_count = job.subject_question_counts.get(subject, 0)
         
-        try:
-            from questions.services.subject_section_detector import SubjectSectionDetector
-            
-            # Use the new subject-level section detector
-            detector = SubjectSectionDetector()
-            document_structure = detector.detect_sections_for_subject(
-                subject=subject,
-                subject_content=subject_content,
-                subject_instructions=subject_instructions,
-                expected_question_count=expected_count
-            )
-            
+        # NEW: First try to use cached sections from pre-analysis
+        cached_sections = job.detected_sections_per_subject or {}
+        if subject in cached_sections and 'sections' in cached_sections[subject]:
+            document_structure = cached_sections[subject]
             logger.info(
-                f"Detected {len(document_structure.get('sections', []))} sections for {subject}: "
-                f"{[s.get('name', 'Unknown') for s in document_structure.get('sections', [])]}"
+                f"Using cached sections for {subject}: "
+                f"{len(document_structure.get('sections', []))} sections"
             )
-            
-        except Exception as e:
-            logger.error(f"Failed to detect sections for {subject}: {e}", exc_info=True)
-            # Fallback to basic structure
-            document_structure = {
-                'sections': [{
-                    'name': f'{subject} - General',
-                    'type_hint': 'mixed',
-                    'question_range': f'1-{expected_count}' if expected_count > 0 else 'All',
-                    'format_description': 'Mixed questions',
-                    'start_marker': ''
-                }],
-                'has_instructions': bool(subject_instructions),
-                'instructions_text': subject_instructions[:1000] if subject_instructions else ''
-            }
+        else:
+            # Fall back to detecting sections if not cached
+            logger.info(f"No cached sections for {subject}, detecting now...")
+            try:
+                from questions.services.subject_section_detector import SubjectSectionDetector
+                
+                detector = SubjectSectionDetector()
+                document_structure = detector.detect_sections_for_subject(
+                    subject=subject,
+                    subject_content=subject_content,
+                    subject_instructions=subject_instructions,
+                    expected_question_count=expected_count
+                )
+                
+                logger.info(
+                    f"Detected {len(document_structure.get('sections', []))} sections for {subject}: "
+                    f"{[s.get('name', 'Unknown') for s in document_structure.get('sections', [])]}"
+                )
+                
+                # Cache the detected sections for future use
+                if document_structure.get('sections'):
+                    if not job.detected_sections_per_subject:
+                        job.detected_sections_per_subject = {}
+                    job.detected_sections_per_subject[subject] = document_structure
+                    job.save(update_fields=['detected_sections_per_subject'])
+                    logger.info(f"Cached sections for {subject}")
+                
+            except Exception as e:
+                logger.error(f"Failed to detect sections for {subject}: {e}", exc_info=True)
+                # Fallback to basic structure
+                document_structure = {
+                    'sections': [{
+                        'name': f'{subject} - General',
+                        'type_hint': 'mixed',
+                        'question_range': f'1-{expected_count}' if expected_count > 0 else 'All',
+                        'format_description': 'Mixed questions',
+                        'start_marker': ''
+                    }],
+                    'has_instructions': bool(subject_instructions),
+                    'instructions_text': subject_instructions[:1000] if subject_instructions else ''
+                }
         
         # Get expected question count for this subject from pre-analysis
         expected_count = job.subject_question_counts.get(subject, 0)

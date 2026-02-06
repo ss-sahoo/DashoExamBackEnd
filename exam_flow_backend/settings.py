@@ -39,6 +39,7 @@ LOCAL_APPS = [
     'questions',
     'patterns',
     'timetable',  # Timetable management app (uses accounts models)
+    'omr',  # OMR sheet generation and evaluation
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS

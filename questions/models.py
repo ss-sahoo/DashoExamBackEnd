@@ -874,6 +874,13 @@ class PreAnalysisJob(models.Model):
         help_text='Detected document structure with sections and question types'
     )
     
+    # Per-subject section detection (cached for later use)
+    detected_sections_per_subject = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text='Detected sections for each subject, cached to avoid re-detecting during extraction'
+    )
+    
     # Total estimates
     total_estimated_questions = models.IntegerField(
         default=0,

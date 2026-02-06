@@ -104,7 +104,9 @@ def create_program(request):
         return error_response
     
     # Check if program already exists for this center
-    if Program.objects.filter(center=center, name=name).exists():
+    # Program is linked to Institute, not Center directly
+    # Get the institute from the center
+    if Program.objects.filter(institute=center.institute, name=name).exists():
         return Response(
             {"detail": f"Program '{name}' already exists for center '{center_name}'."},
             status=status.HTTP_400_BAD_REQUEST,
@@ -112,7 +114,7 @@ def create_program(request):
     
     try:
         program = Program.objects.create(
-            center=center,
+            institute=center.institute,
             name=name,
             description=description,
             category=category,
@@ -219,7 +221,7 @@ def create_batch(request):
     program = None
     if program_id:
         try:
-            program = Program.objects.get(id=program_id, center=center)
+            program = Program.objects.get(id=program_id, institute=center.institute)
         except Program.DoesNotExist:
             return Response(
                 {"detail": f"Program with id '{program_id}' not found in center '{center.name}'."},
@@ -227,7 +229,7 @@ def create_batch(request):
             )
     elif program_name:
         try:
-            program = Program.objects.get(center=center, name=program_name)
+            program = Program.objects.get(institute=center.institute, name=program_name)
         except Program.DoesNotExist:
             return Response(
                 {"detail": f"Program '{program_name}' not found in center '{center.name}'."},
@@ -449,22 +451,23 @@ def list_programs(request):
                 {"detail": "Admin user is not linked to any center."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        programs = Program.objects.filter(center=user.center)
+        # Programs are at Institute level; filter by user's center's institute
+        programs = Program.objects.filter(institute=user.center.institute)
     else:
         return Response(
             {"detail": "Only Super Admin and Admin can view programs."},
             status=status.HTTP_403_FORBIDDEN,
         )
     
-    programs = programs.select_related("center").prefetch_related("batches").order_by("center__name", "name")
+    programs = programs.select_related("institute").prefetch_related("batches").order_by("institute__name", "name")
     
     programs_data = []
     for program in programs:
         programs_data.append({
             "id": str(program.id),
             "name": program.name,
-            "center": program.center.name,
-            "center_id": str(program.center.id),
+            "institute": program.institute.name,
+            "institute_id": str(program.institute.id),
             "description": program.description,
             "category": program.category,
             "is_active": program.is_active,
@@ -498,7 +501,7 @@ def get_program(request, program_id: str):
     
     # Check permissions
     if user.role in ['admin', 'ADMIN', 'institute_admin']:
-        if not user.center or program.center != user.center:
+        if not user.center or program.institute != user.center.institute:
             return Response(
                 {"detail": "You don't have permission to view this program."},
                 status=status.HTTP_403_FORBIDDEN,
@@ -512,8 +515,8 @@ def get_program(request, program_id: str):
     data = {
         "id": str(program.id),
         "name": program.name,
-        "center": program.center.name,
-        "center_id": str(program.center.id),
+        "institute": program.institute.name,
+        "institute_id": str(program.institute.id),
         "description": program.description,
         "category": program.category,
         "is_active": program.is_active,
@@ -544,10 +547,10 @@ def list_batches(request):
                 {"detail": "Admin user is not linked to any center."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        # Include batches with program in user's center OR batches without program
+        # Include batches in user's center OR batches with program in user's institute
         from django.db.models import Q
         batches = Batch.objects.filter(
-            Q(program__center=user.center) | Q(program__isnull=True)
+            Q(center=user.center) | Q(program__institute=user.center.institute) | Q(program__isnull=True, center=user.center)
         )
         if program_name:
             batches = batches.filter(program__name__icontains=program_name)
@@ -557,20 +560,25 @@ def list_batches(request):
             status=status.HTTP_403_FORBIDDEN,
         )
     
-    batches = batches.select_related("program", "program__center").prefetch_related(
+    # Batch has direct center field; program has institute
+    batches = batches.select_related("program", "program__institute", "center").prefetch_related(
         "enrollments", "teachers"
     ).order_by("program__name", "name")
     
     batches_data = []
     for batch in batches:
+        # Use batch.center directly if available, otherwise fall back to program's institute
+        center_name = batch.center.name if batch.center else None
+        center_id = str(batch.center.id) if batch.center else None
+        
         batches_data.append({
             "id": str(batch.id),
             "code": batch.code,
             "name": batch.name,
             "program": batch.program.name if batch.program else None,
             "program_id": str(batch.program.id) if batch.program else None,
-            "center": batch.program.center.name if batch.program and batch.program.center else None,
-            "center_id": str(batch.program.center.id) if batch.program and batch.program.center else None,
+            "center": center_name,
+            "center_id": center_id,
             "start_date": str(batch.start_date) if batch.start_date else None,
             "end_date": str(batch.end_date) if batch.end_date else None,
             "students_count": batch.enrollments.filter(status=Enrollment.STATUS_ACTIVE).count(),
@@ -595,7 +603,7 @@ def get_batch(request, batch_id: str):
     user = request.user
     
     try:
-        batch = Batch.objects.select_related("program", "program__center").prefetch_related(
+        batch = Batch.objects.select_related("program", "program__institute", "center").prefetch_related(
             "enrollments", "teachers"
         ).get(id=batch_id)
     except Batch.DoesNotExist:
@@ -606,7 +614,9 @@ def get_batch(request, batch_id: str):
     
     # Check permissions
     if user.role in ['admin', 'ADMIN', 'institute_admin']:
-        if not user.center or batch.program.center != user.center:
+        # Check if batch belongs to user's center
+        batch_center = batch.center
+        if not user.center or batch_center != user.center:
             return Response(
                 {"detail": "You don't have permission to view this batch."},
                 status=status.HTTP_403_FORBIDDEN,
@@ -617,14 +627,18 @@ def get_batch(request, batch_id: str):
             status=status.HTTP_403_FORBIDDEN,
         )
     
+    # Use batch.center directly
+    center_name = batch.center.name if batch.center else None
+    center_id = str(batch.center.id) if batch.center else None
+    
     data = {
         "id": str(batch.id),
         "code": batch.code,
         "name": batch.name,
-        "program": batch.program.name,
-        "program_id": str(batch.program.id),
-        "center": batch.program.center.name,
-        "center_id": str(batch.program.center.id),
+        "program": batch.program.name if batch.program else None,
+        "program_id": str(batch.program.id) if batch.program else None,
+        "center": center_name,
+        "center_id": center_id,
         "start_date": str(batch.start_date) if batch.start_date else None,
         "end_date": str(batch.end_date) if batch.end_date else None,
         "students_count": batch.enrollments.filter(status=Enrollment.STATUS_ACTIVE).count(),

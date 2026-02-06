@@ -66,6 +66,7 @@ urlpatterns = [
     path('pre-analyze/<uuid:job_id>/subjects/', extraction_views.get_pre_analysis_subjects, name='pre-analysis-subjects'),
     path('pre-analyze/<uuid:job_id>/subjects/<str:subject>/download/', extraction_views.download_subject_content, name='download-subject-content'),
     path('pre-analyze/<uuid:job_id>/confirm/', extraction_views.confirm_pre_analysis, name='confirm-pre-analysis'),
+    path('pre-analyze/<uuid:job_id>/sections/', extraction_views.get_pre_analysis_sections, name='pre-analysis-sections'),
     
     # Import Preview Endpoint (NEW - shows what will be imported before confirming)
     path('import-preview/<uuid:job_id>/', extraction_views.get_import_preview, name='import-preview'),

@@ -18,6 +18,12 @@ urlpatterns = [
     
     # Timetable APIs (now using accounts models)
     path('api/timetable/', include('timetable.urls')),
+    
+    # OMR Sheet Generation and Evaluation
+    path('api/omr/', include('omr.urls')),
+    
+    # AI Evaluation for Subjective Exams
+    path('api/ai-evaluation/', include('exams.ai_evaluation_urls')),
 ]
 
 # Serve media files in development

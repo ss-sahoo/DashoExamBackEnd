@@ -94,6 +94,80 @@ class Exam(models.Model):
         help_text="Batches whose students can access this exam (when visibility_scope='batches')"
     )
     
+    # Exam Mode - Controls how the exam is conducted
+    EXAM_MODE_CHOICES = [
+        ('online', 'Online Exam'),
+        ('offline_omr', 'Offline OMR-Based'),
+        ('offline_subjective', 'Offline Subjective'),
+    ]
+    exam_mode = models.CharField(
+        max_length=20,
+        choices=EXAM_MODE_CHOICES,
+        default='online',
+        help_text="How the exam is conducted: online (in-app), offline_omr (OMR sheets), offline_subjective (handwritten answers)"
+    )
+    
+    # Exam Scope - Controls how questions are sourced
+    EXAM_SCOPE_CHOICES = [
+        ('exam_specific', 'Exam-Specific Questions'),
+        ('program_specific', 'Program-Specific Questions'),
+    ]
+    exam_scope = models.CharField(
+        max_length=20,
+        choices=EXAM_SCOPE_CHOICES,
+        default='exam_specific',
+        help_text="Whether exam uses its own questions or program-level questions"
+    )
+    
+    # Program reference (for program-specific exams)
+    program = models.ForeignKey(
+        'accounts.Program',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='exams',
+        help_text="Program this exam belongs to (for program-specific exams)"
+    )
+    
+    # OMR Configuration (for offline_omr mode)
+    omr_config = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="OMR sheet configuration (candidate fields, question types, etc.)"
+    )
+    omr_metadata = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Generated OMR layout metadata for evaluation"
+    )
+    omr_sheet_generated = models.BooleanField(
+        default=False,
+        help_text="Whether OMR sheet has been generated for this exam"
+    )
+    omr_sheet_file = models.FileField(
+        upload_to='omr_sheets/',
+        blank=True,
+        null=True,
+        help_text="Generated OMR sheet PDF file"
+    )
+    
+    # Subjective Configuration (for offline_subjective mode)
+    ai_evaluation_enabled = models.BooleanField(
+        default=False,
+        help_text="Enable AI-powered evaluation for subjective answers"
+    )
+    MARKING_STRICTNESS_CHOICES = [
+        ('lenient', 'Lenient'),
+        ('moderate', 'Moderate'),
+        ('strict', 'Strict'),
+    ]
+    marking_strictness = models.CharField(
+        max_length=20,
+        choices=MARKING_STRICTNESS_CHOICES,
+        default='moderate',
+        help_text="How strict the AI grading should be"
+    )
+    
     # Metadata
     created_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='created_exams')
     created_at = models.DateTimeField(auto_now_add=True)
