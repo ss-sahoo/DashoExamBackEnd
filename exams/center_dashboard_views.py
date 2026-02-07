@@ -64,10 +64,9 @@ def center_dashboard_stats(request):
     total_teachers = center_users.filter(role='teacher').count()
     total_staff = center_users.filter(role__in=['staff', 'admin']).count()
     
-    # Get batches - batches are linked through programs which are linked to centers
-    # We need to find batches whose program belongs to this center
+    # Get batches - batches have direct center field
     active_batches = Batch.objects.filter(
-        program__center=center
+        center=center
     ).count()
     
     # Get exams accessible to this center
@@ -288,9 +287,9 @@ def center_batch_stats(request):
             status=404
         )
     
-    # Get batches for this center
+    # Get batches for this center (using direct center field)
     batches = Batch.objects.filter(
-        program__center=center
+        center=center
     ).select_related('program')
     
     batch_stats = []
