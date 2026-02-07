@@ -216,47 +216,72 @@ def list_center_batches(request, center_id: str):
             status=status.HTTP_403_FORBIDDEN,
         )
     
-    # Get batches in this center
-    batches = Batch.objects.filter(program__center=center).select_related('program')
-    
-    # Query filters
-    program_id = request.query_params.get('program_id')
-    if program_id:
-        batches = batches.filter(program_id=program_id)
-    
-    search = request.query_params.get('search')
-    if search:
-        batches = batches.filter(
-            Q(code__icontains=search) | Q(name__icontains=search)
-        )
-    
-    # Serialize
-    batches_data = []
-    for batch in batches:
-        batches_data.append({
-            "id": str(batch.id),
-            "code": batch.code,
-            "name": batch.name,
-            "start_date": str(batch.start_date) if batch.start_date else None,
-            "end_date": str(batch.end_date) if batch.end_date else None,
-            "program": {
-                "id": str(batch.program.id),
-                "name": batch.program.name,
+    try:
+        # Get batches in this center - check both direct center field and program.center
+        batches = Batch.objects.filter(
+            Q(center=center) | Q(program__center=center)
+        ).select_related('program').distinct()
+        
+        # Query filters
+        program_id = request.query_params.get('program_id')
+        if program_id:
+            batches = batches.filter(program_id=program_id)
+        
+        search = request.query_params.get('search')
+        if search:
+            batches = batches.filter(
+                Q(code__icontains=search) | Q(name__icontains=search)
+            )
+        
+        # Serialize
+        batches_data = []
+        for batch in batches:
+            try:
+                student_count = batch.enrollments.filter(status='ACTIVE').count() if hasattr(batch, 'enrollments') else 0
+            except Exception:
+                student_count = 0
+            
+            try:
+                teacher_count = batch.teachers.count() if hasattr(batch, 'teachers') else 0
+            except Exception:
+                teacher_count = 0
+            
+            batch_data = {
+                "id": str(batch.id),
+                "code": batch.code,
+                "name": batch.name,
+                "start_date": str(batch.start_date) if batch.start_date else None,
+                "end_date": str(batch.end_date) if batch.end_date else None,
+                "program": None,
+                "student_count": student_count,
+                "teacher_count": teacher_count,
+                "created_at": batch.created_at.isoformat() if hasattr(batch, 'created_at') else None,
+            }
+            
+            if batch.program:
+                batch_data["program"] = {
+                    "id": str(batch.program.id),
+                    "name": batch.program.name,
+                }
+            
+            batches_data.append(batch_data)
+        
+        return Response(
+            {
+                "center_id": str(center.id),
+                "center_name": center.name,
+                "count": len(batches_data),
+                "results": batches_data,
             },
-            "student_count": batch.enrollments.filter(status='ACTIVE').count() if hasattr(batch, 'enrollments') else 0,
-            "teacher_count": batch.teachers.count() if hasattr(batch, 'teachers') else 0,
-            "created_at": batch.created_at.isoformat() if hasattr(batch, 'created_at') else None,
-        })
-    
-    return Response(
-        {
-            "center_id": str(center.id),
-            "center_name": center.name,
-            "count": len(batches_data),
-            "results": batches_data,
-        },
-        status=status.HTTP_200_OK,
-    )
+            status=status.HTTP_200_OK,
+        )
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"Error listing center batches: {e}")
+        return Response(
+            {"detail": f"Error fetching batches: {str(e)}"},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
 
 
 @api_view(["GET"])
