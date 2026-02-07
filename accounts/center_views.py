@@ -217,10 +217,9 @@ def list_center_batches(request, center_id: str):
         )
     
     try:
-        # Get batches in this center - check both direct center field and program.center
-        batches = Batch.objects.filter(
-            Q(center=center) | Q(program__center=center)
-        ).select_related('program').distinct()
+        # Get batches in this center - use direct center field only
+        # Note: Program model doesn't have a center field, it has institute field
+        batches = Batch.objects.filter(center=center).select_related('program')
         
         # Query filters
         program_id = request.query_params.get('program_id')
