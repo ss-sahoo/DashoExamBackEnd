@@ -99,12 +99,13 @@ class Exam(models.Model):
         ('online', 'Online Exam'),
         ('offline_omr', 'Offline OMR-Based'),
         ('offline_subjective', 'Offline Subjective'),
+        ('hybrid', 'Hybrid (Online + Offline)'),
     ]
     exam_mode = models.CharField(
         max_length=20,
         choices=EXAM_MODE_CHOICES,
         default='online',
-        help_text="How the exam is conducted: online (in-app), offline_omr (OMR sheets), offline_subjective (handwritten answers)"
+        help_text="How the exam is conducted: online (in-app), offline_omr (OMR sheets), offline_subjective (handwritten answers), hybrid (combination)"
     )
     
     # Exam Scope - Controls how questions are sourced
