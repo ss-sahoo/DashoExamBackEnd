@@ -24,16 +24,21 @@ class OMREvaluatorService:
     Wraps the core evaluator functionality for Django integration.
     """
     
-    def __init__(self, omr_submission):
+    def __init__(self, omr_submission=None):
         """
         Initialize OMR evaluator for a submission.
         
         Args:
-            omr_submission: OMRSubmission model instance
+            omr_submission: OMRSubmission model instance (optional)
         """
         self.submission = omr_submission
-        self.omr_sheet = omr_submission.omr_sheet
-        self.exam = self.omr_sheet.exam
+        if omr_submission:
+            self.omr_sheet = omr_submission.omr_sheet
+            self.exam = self.omr_sheet.exam
+        else:
+            self.omr_sheet = None
+            self.exam = None
+
     
     def _get_answer_key(self) -> Dict:
         """
@@ -51,43 +56,177 @@ class OMREvaluatorService:
     
     def _build_answer_key_from_questions(self) -> Dict:
         """
-        Build answer key from exam question mappings.
+        Build answer key from exam question mappings or pattern sections, 
+        matching OMR sequential numbering.
         """
-        from questions.models import ExamQuestion
+        from questions.models import ExamQuestion, Question
+        from patterns.models import PatternSection
+        
+        answer_key = {}
+        global_idx = 1
+        
         mappings = ExamQuestion.objects.filter(
             exam=self.exam
         ).select_related('question').order_by('question_number')
         
-        for i, mapping in enumerate(mappings, start=1):
-            q = mapping.question
-            q_field = f"Q{i}"
-            
-            # Get correct answer based on question type
-            if q.question_type in ['single', 'multiple']:
-                # MCQ - correct options are stored as list
-                if q.correct_answer:
-                    if isinstance(q.correct_answer, list):
-                        correct = q.correct_answer
+        direct_questions = Question.objects.filter(exam=self.exam).order_by('question_number', 'id')
+        
+        if mappings.exists():
+            # First, group by the determined section name (matching OMRGeneratorService logic)
+            raw_questions = []
+            for mapping in mappings:
+                q = mapping.question
+                subject_name = q.subject or 'General'
+                section_name = mapping.section_name
+                
+                if section_name and section_name.lower() != subject_name.lower():
+                    if len(section_name) <= 2:
+                        display_name = f"{subject_name} - Section {section_name}"
                     else:
-                        correct = [q.correct_answer]
+                        display_name = f"{subject_name} - {section_name}"
                 else:
-                    correct = []
-            elif q.question_type in ['numerical', 'integer']:
-                # Numerical - correct answer is a number
-                if q.correct_answer is not None:
-                    correct = [str(q.correct_answer)]
-                else:
-                    correct = []
-            else:
-                correct = []
+                    display_name = subject_name
+                    
+                raw_questions.append({
+                    'mapping': mapping,
+                    'question': q,
+                    'section': display_name,
+                    'original_number': mapping.question_number,
+                    'marks': mapping.marks,
+                    'negative': mapping.negative_marks,
+                    'mapping_id': mapping.id
+                })
+                
+            # Re-sort to match OMR generator's sequential flow (original number first)
+            raw_questions.sort(key=lambda x: (x['original_number'], x['section']))
             
-            answer_key[q_field] = {
-                'correct': correct,
-                'marks': float(mapping.marks),
-                'negative': float(mapping.negative_marks),
-            }
+            for data in raw_questions:
+                q = data['question']
+                q_field = f"Q{global_idx}"
+                
+                if q.question_type in ['single_mcq', 'single', 'multiple_mcq', 'multiple', 'true_false']:
+                    # Handle comma-separated letters if stored that way (e.g. "A,B")
+                    if isinstance(q.correct_answer, str) and ',' in q.correct_answer and all(len(x.strip()) == 1 for x in q.correct_answer.split(',')):
+                        correct = [x.strip().upper() for x in q.correct_answer.split(',')]
+                    elif isinstance(q.correct_answer, str) and len(q.correct_answer.strip()) == 1 and q.correct_answer.strip().upper() in ['A', 'B', 'C', 'D']:
+                        correct = [q.correct_answer.strip().upper()]
+                    else:
+                        # Otherwise, try to find the index of the answer text in options
+                        correct = []
+                        q_options = q.options if isinstance(q.options, list) else []
+                        
+                        # Match by value
+                        ans_text = str(q.correct_answer).strip().lower()
+                        for idx, opt in enumerate(q_options):
+                            if str(opt).strip().lower() == ans_text and idx < 26:
+                                correct.append(chr(65 + idx))
+                                
+                        # Fallback: if correct_answer IS an index (e.g. "0", "1")
+                        if not correct and ans_text.isdigit():
+                            idx = int(ans_text)
+                            if 0 <= idx < len(q_options):
+                                correct.append(chr(65 + idx))
+                elif q.question_type in ['numerical', 'integer', 'fill_blank']:
+                    correct = [str(q.correct_answer).strip()] if q.correct_answer is not None else []
+                else:
+                    correct = []
+                
+                answer_key[q_field] = {
+                    'correct': correct,
+                    'marks': float(data.get('marks', 1)),
+                    'negative': float(data.get('negative', 0)),
+                    'mapping_id': data.get('mapping_id'),
+                    'question_id': q.id
+                }
+                global_idx += 1
+                
+        elif direct_questions.exists():
+            # Check for direct Question linkage (fallback if ExamQuestion missing)
+            raw_questions = []
+            for q in direct_questions:
+                subject_name = q.subject or 'General'
+                section_name = q.pattern_section_name
+                
+                if section_name and section_name.lower() != subject_name.lower():
+                    if len(section_name) <= 2:
+                        display_name = f"{subject_name} - Section {section_name}"
+                    else:
+                        display_name = f"{subject_name} - {section_name}"
+                else:
+                    display_name = subject_name
+                    
+                raw_questions.append({
+                    'question': q,
+                    'section': display_name,
+                    'original_number': q.question_number or 0,
+                    'marks': q.marks,
+                    'negative': q.negative_marks
+                })
+            
+            # Re-sort to match OMR generator's sequential flow (original number first)
+            raw_questions.sort(key=lambda x: (x['original_number'], x['section']))
+            
+            for data in raw_questions:
+                q = data['question']
+                q_field = f"Q{global_idx}"
+                
+                if q.question_type in ['single_mcq', 'single', 'multiple_mcq', 'multiple', 'true_false']:
+                    # Use index-based mapping for MCQs
+                    if isinstance(q.correct_answer, str) and ',' in q.correct_answer and all(len(x.strip()) == 1 for x in q.correct_answer.split(',')):
+                        correct = [x.strip().upper() for x in q.correct_answer.split(',')]
+                    elif isinstance(q.correct_answer, str) and len(q.correct_answer.strip()) == 1 and q.correct_answer.strip().upper() in ['A', 'B', 'C', 'D']:
+                        correct = [q.correct_answer.strip().upper()]
+                    else:
+                        correct = []
+                        q_options = q.options if isinstance(q.options, list) else []
+                        ans_text = str(q.correct_answer).strip().lower()
+                        for idx, opt in enumerate(q_options):
+                            if str(opt).strip().lower() == ans_text and idx < 26:
+                                correct.append(chr(65 + idx))
+                        if not correct and ans_text.isdigit():
+                            idx = int(ans_text)
+                            if 0 <= idx < len(q_options):
+                                correct.append(chr(65 + idx))
+                elif q.question_type in ['numerical', 'integer', 'fill_blank']:
+                    correct = [str(q.correct_answer).strip()] if q.correct_answer is not None else []
+                else:
+                    correct = []
+                
+                answer_key[q_field] = {
+                    'correct': correct,
+                    'marks': float(data.get('marks', 1)),
+                    'negative': float(data.get('negative', 0)),
+                    'mapping_id': None,
+                    'question_id': q.id
+                }
+                global_idx += 1
+                
+        elif self.exam and self.exam.pattern:
+            # Fallback to pattern sections
+            sections = PatternSection.objects.filter(pattern=self.exam.pattern).order_by('start_question')
+            for section in sections:
+                # Combine subject and section name for display
+                subject_name = section.subject or 'General'
+                section_name = section.name
+                if section_name and section_name.lower() != subject_name.lower():
+                    display_name = f"{subject_name} - Section {section_name}" if len(section_name) <= 2 else f"{subject_name} - {section_name}"
+                else:
+                    display_name = subject_name
+
+                for i in range(section.start_question, section.end_question + 1):
+                    q_field = f"Q{global_idx}"
+                    answer_key[q_field] = {
+                        'correct': [], # Pattern mode defaults to empty correct answers unless mapped
+                        'marks': float(section.marks_per_question),
+                        'negative': float(section.negative_marking),
+                        'section': display_name
+                    }
+                    global_idx += 1
         
         return answer_key
+
+
+
     
     def _save_file_to_media(self, file_path: str, prefix: str) -> str:
         """
@@ -120,7 +259,18 @@ class OMREvaluatorService:
         # Get answer key
         answer_key = self._get_answer_key()
         if not answer_key:
-            raise ValueError("No answer key found for exam")
+            # Last resort: check if we can build it from questions or pattern
+            answer_key = self._build_answer_key_from_questions()
+            if answer_key:
+                # Save it so it's permanent
+                from ..models import AnswerKey
+                AnswerKey.objects.update_or_create(
+                    exam=self.exam,
+                    defaults={'answers': answer_key}
+                )
+            else:
+                raise ValueError(f"No answer key or questions found for exam {self.exam.id if self.exam else 'Unknown'}")
+
         
         # Get scanned files
         scanned_files = self.submission.scanned_files
@@ -265,20 +415,23 @@ class OMREvaluatorService:
         try:
             from exams.models import QuestionEvaluation
             from questions.models import ExamQuestion
+            # Match the same sequential logic as generator and answer key builder
+            answer_key_data = self._build_answer_key_from_questions()
             
             details = self.submission.evaluation_results.get('details', [])
-            mappings = {
-                f"Q{i}": m for i, m in enumerate(
-                    ExamQuestion.objects.filter(exam=self.exam).order_by('question_number'),
-                    start=1
-                )
-            }
-            
             for detail in details:
                 q_field = detail.get('question')
-                mapping = mappings.get(q_field)
-                if not mapping:
+                q_key_info = answer_key_data.get(q_field)
+                if not q_key_info:
                     continue
+
+                
+                mapping_id = q_key_info.get('mapping_id')
+                if not mapping_id:
+                    continue
+                    
+                mapping = ExamQuestion.objects.get(id=mapping_id)
+
                 
                 QuestionEvaluation.objects.update_or_create(
                     attempt=attempt,

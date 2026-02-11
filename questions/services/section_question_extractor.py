@@ -74,6 +74,9 @@ class SectionQuestionExtractor:
     ) -> Dict:
         """Extract ALL questions and classify them by type using AI."""
         logger.info(f"Starting AI extraction for subject: {subject}")
+        
+        # Preprocess content to handle problematic base64 SVG and truncate Answer Keys
+        text_content = self._preprocess_content(text_content)
         logger.info(f"Content length: {len(text_content)} chars")
         
         # Count actual questions in content if expected_count not provided
@@ -86,57 +89,104 @@ class SectionQuestionExtractor:
             progress_callback(10, "Analyzing content with AI...")
         
         try:
-            all_questions = self._ai_extract_and_classify(text_content, subject, expected_question_count)
+            all_questions = self._ai_extract_and_classify(text_content, subject, document_structure, expected_question_count)
             
             if progress_callback:
-                progress_callback(70, "Grouping questions by type...")
+                progress_callback(70, "Mapping questions to sections...")
             
-            questions_by_type = self._group_by_type(all_questions)
-            
+            # Use detected sections to group questions
             results = []
             total_extracted = 0
+            assigned_indices = set()
             
-            for q_type, questions in questions_by_type.items():
-                result = SectionQuestionResult(
-                    section_name=f"{subject} - {self._get_type_display(q_type)}",
-                    section_type=q_type,
-                    questions=questions,
-                    total_extracted=len(questions),
-                    expected_count=len(questions),
-                    extraction_confidence=0.85,
-                    warnings=[]
-                )
-                results.append(result)
-                total_extracted += len(questions)
-                logger.info(f"Type '{q_type}': {len(questions)} questions")
+            detected_sections = document_structure.get('sections', [])
             
+            if not detected_sections:
+                # Fallback to type-based grouping if no sections detected
+                questions_by_type = self._group_by_type(all_questions)
+                for q_type, questions in questions_by_type.items():
+                    result = SectionQuestionResult(
+                        section_name=f"{subject} - {self._get_type_display(q_type)}",
+                        section_type=q_type,
+                        questions=questions,
+                        total_extracted=len(questions),
+                        expected_count=len(questions),
+                        extraction_confidence=0.85,
+                        warnings=[]
+                    )
+                    results.append(result)
+                    total_extracted += len(questions)
+                    logger.info(f"Type '{q_type}': {len(questions)} questions")
+            else:
+                for section in detected_sections:
+                    section_name = section.get('name', 'Unknown Section')
+                    type_hint = section.get('type_hint', 'mixed')
+                    q_range_str = section.get('question_range', '')
+                    
+                    section_questions = []
+                    # Parse range (e.g., "1-10")
+                    try:
+                        if '-' in q_range_str:
+                            start_q, end_q = map(int, q_range_str.split('-'))
+                            for i, q in enumerate(all_questions):
+                                q_num = q.get('question_number', 0)
+                                if start_q <= q_num <= end_q:
+                                    # RE-CLASSIFY: If section has a specific type, enforce it
+                                    if type_hint and type_hint != 'mixed' and q.get('question_type') != type_hint:
+                                        logger.info(f"Mapping Q{q_num} to {type_hint} based on {section_name}")
+                                        q['question_type'] = type_hint
+                                    
+                                    section_questions.append(q)
+                                    assigned_indices.add(i)
+                    except Exception as e:
+                        logger.warning(f"Failed to map questions to section {section_name}: {e}")
+
+                    results.append(SectionQuestionResult(
+                        section_name=section_name,
+                        section_type=type_hint,
+                        questions=section_questions,
+                        total_extracted=len(section_questions),
+                        expected_count=section.get('question_count', 0),
+                        extraction_confidence=0.9,
+                        warnings=[]
+                    ))
+                    total_extracted += len(section_questions)
+                    logger.info(f"Section '{section_name}': {len(section_questions)} questions")
+
+                # Handle unassigned questions
+                unassigned = [q for i, q in enumerate(all_questions) if i not in assigned_indices]
+                if unassigned:
+                    # Group remaining by type
+                    remaining_by_type = self._group_by_type(unassigned)
+                    for q_type, questions in remaining_by_type.items():
+                        results.append(SectionQuestionResult(
+                            section_name=f"{subject} - Extra {self._get_type_display(q_type)}",
+                            section_type=q_type,
+                            questions=questions,
+                            total_extracted=len(questions),
+                            expected_count=0,
+                            extraction_confidence=0.7,
+                            warnings=["These questions were found outside detected section ranges"]
+                        ))
+                        total_extracted += len(questions)
+                        logger.info(f"Extra Type '{q_type}': {len(questions)} questions")
+
             if progress_callback:
                 progress_callback(100, "Extraction complete")
             
-            # SANITY CHECK: Warn if extracted doesn't match expected
-            if expected_question_count > 0 and total_extracted != expected_question_count:
-                diff = total_extracted - expected_question_count
-                if diff > 0:
-                    logger.warning(
-                        f"OVER-EXTRACTION: Got {total_extracted} questions but expected {expected_question_count}. "
-                        f"{diff} extra questions may be hallucinated!"
-                    )
-                else:
-                    logger.warning(
-                        f"UNDER-EXTRACTION: Got {total_extracted} questions but expected {expected_question_count}. "
-                        f"{abs(diff)} questions may be missing!"
-                    )
+            # Use original count if total_extracted is 0 or very different
+            display_expected = expected_question_count if expected_question_count > 0 else total_extracted
             
             return {
                 'subject': subject,
                 'sections': results,
                 'total_extracted': total_extracted,
-                'total_expected': expected_question_count if expected_question_count > 0 else total_extracted,
+                'total_expected': display_expected,
                 'extraction_summary': {
                     'sections_processed': len(results),
-                    'types_found': list(questions_by_type.keys()),
-                    'completeness': (total_extracted / expected_question_count * 100) if expected_question_count > 0 else 100.0,
-                    'expected_count': expected_question_count,
+                    'types_found': list(set([s.section_type for s in results])),
+                    'completeness': (total_extracted / display_expected * 100) if display_expected > 0 else 100.0,
+                    'expected_count': display_expected,
                     'extracted_count': total_extracted
                 }
             }
@@ -172,10 +222,9 @@ class SectionQuestionExtractor:
         """Preprocess content to handle problematic elements before AI extraction.
         
         - Replaces inline base64 SVG/image data with placeholders
-        - Truncates extremely long inline data that can break JSON
+        - Truncates answer key / solution summary sections to prevent duplicates
         """
         # Replace inline base64 SVG images that can cause JSON parsing issues
-        # Pattern: <img ... src="data:image/svg+xml;base64,LONG_BASE64_DATA" ...>
         base64_svg_pattern = r'<img[^>]*src="data:image/svg\+xml;base64,[^"]+?"[^>]*>'
         content = re.sub(base64_svg_pattern, '[CHEMISTRY_STRUCTURE_IMAGE]', content, flags=re.IGNORECASE)
         
@@ -183,13 +232,27 @@ class SectionQuestionExtractor:
         base64_img_pattern = r'<img[^>]*src="data:image/[^;]+;base64,[^"]+?"[^>]*>'
         content = re.sub(base64_img_pattern, '[INLINE_IMAGE]', content, flags=re.IGNORECASE)
         
-        # Log if any replacements were made
-        if '[CHEMISTRY_STRUCTURE_IMAGE]' in content or '[INLINE_IMAGE]' in content:
-            logger.info(f"Preprocessed content: replaced base64 images with placeholders")
+        # Truncate Answer Key / Solutions Summary to prevent duplicate extraction
+        key_markers = [
+            r'##\s*Answer\s*Key',
+            r'ANSWER\s*KEY\s*SUMMARY',
+            r'Key\s*Results',
+            r'®\s*ANSWER\s*KEY',
+            r'Section\s*A\s*-\s*Single\s*Correct\s*MCQ\s*\|', # Table header style
+        ]
         
+        for marker in key_markers:
+            match = re.search(marker, content, re.IGNORECASE)
+            if match:
+                # Only truncate if it's in the latter half of the document
+                if match.start() > len(content) * 0.5:
+                    logger.info(f"Truncating Answer Key section at position {match.start()} for AI extraction")
+                    content = content[:match.start()]
+                    break
+
         return content
 
-    def _ai_extract_and_classify(self, content: str, subject: str, expected_count: int = 0) -> List[Dict]:
+    def _ai_extract_and_classify(self, content: str, subject: str, document_structure: Dict, expected_count: int = 0) -> List[Dict]:
         """Use AI to extract all questions and classify each by type"""
         # Preprocess content to handle problematic base64 SVG images
         content = self._preprocess_content(content)
@@ -198,7 +261,7 @@ class SectionQuestionExtractor:
         if len(content) > max_chunk_size:
             return self._extract_in_chunks(content, subject, max_chunk_size)
         
-        prompt = self._build_extraction_prompt(content, subject, expected_count)
+        prompt = self._build_extraction_prompt(content, subject, document_structure, expected_count)
         
         logger.info(f"Gemini Extraction Prompt for {subject}:")
         logger.info(prompt[:500] + "... (truncated)" if len(prompt) > 2000 else prompt)
@@ -219,40 +282,97 @@ class SectionQuestionExtractor:
             logger.warning(response_text[:1000] + "... (truncated)" if len(response_text) > 5000 else response_text)
             
             questions = self._parse_ai_response(response_text, content, subject)
-            logger.info(f"AI extracted {len(questions)} questions")
             
-            if not questions:
-                logger.warning("AI returned no questions, using fallback extraction")
+            # POST-PROCESS: Filter out instruction-like questions and deduplicate
+            filtered_questions = []
+            seen_q_nums = set()
+            instruction_keywords = [
+                'instruction', 'mark the correct', 'marks are awarded', 
+                'four options', 'no negative marking', 'consists of', 
+                'blue/black pen', 'rough work', 'do not use', 'mark t or f',
+                'each question carries'
+            ]
+            
+            for q in questions:
+                q_text = q.get('question_text', '').lower()
+                q_num = q.get('question_number')
+                
+                # Check for instructions masquerading as questions
+                is_instruction = False
+                if any(kw in q_text for kw in instruction_keywords):
+                    # It looks like an instruction, check if it's ONLY an instruction
+                    if '?' not in q_text and 'find' not in q_text and 'calculate' not in q_text and \
+                       'derive' not in q_text and 'state' not in q_text and 'explain' not in q_text:
+                        is_instruction = True
+                
+                if is_instruction:
+                    logger.info(f"Filtering out instruction-like question: {q_text[:50]}...")
+                    continue
+                
+                # Basic deduplication for same extraction chunk
+                if q_num:
+                    q_key = f"{q_num}_{q_text[:50]}"
+                    if q_key in seen_q_nums:
+                        continue
+                    seen_q_nums.add(q_key)
+                
+                filtered_questions.append(q)
+            
+            logger.info(f"AI extracted {len(filtered_questions)} questions (filtered from {len(questions)})")
+            
+            if not filtered_questions:
+                logger.warning("AI returned no questions after filtering, using fallback extraction")
                 return self._fallback_extraction(content, subject)
             
-            return questions
+            return filtered_questions
             
         except Exception as e:
             logger.error(f"AI call failed: {e}")
             return self._fallback_extraction(content, subject)
     
     def _extract_in_chunks(self, content: str, subject: str, chunk_size: int) -> List[Dict]:
-        """Extract from large content in chunks"""
+        """Extract from large content in chunks with preserved numbering"""
         all_questions = []
         chunks = self._smart_split(content, chunk_size)
         
-        # Estimate questions per chunk
-        total_expected = self._count_questions_in_content(content)
-        questions_per_chunk = max(1, total_expected // len(chunks)) if chunks else 0
+        logger.info(f"Splitting {subject} into {len(chunks)} chunks for extraction")
         
+        # Use a seen set to prevent duplicate extraction across chunk boundaries
+        seen_questions = set()
+
         for i, chunk in enumerate(chunks):
             logger.info(f"Processing chunk {i+1}/{len(chunks)}")
             try:
                 # Count questions in this chunk for accurate extraction
                 chunk_expected = self._count_questions_in_content(chunk)
-                questions = self._ai_extract_and_classify(chunk, subject, chunk_expected)
+                
+                # Use a specific prompt that doesn't re-trigger chunking
+                prompt = self._build_extraction_prompt(chunk, subject, {}, chunk_expected)
+                
+                response = self.client.generate_content(
+                    prompt,
+                    generation_config={
+                        'temperature': 0.1,
+                        'top_p': 0.95,
+                        'max_output_tokens': 65536,
+                    }
+                )
+                
+                response_text = response.text if hasattr(response, 'text') else str(response)
+                questions = self._parse_ai_response(response_text, chunk, subject)
+                
                 for q in questions:
-                    q['question_number'] = len(all_questions) + 1
-                    all_questions.append(q)
+                    q_num = q.get('question_number')
+                    q_text = q.get('question_text', '')[:100]
+                    q_key = f"{q_num}_{q_text}"
+                    
+                    if q_key not in seen_questions:
+                        all_questions.append(q)
+                        seen_questions.add(q_key)
+                
             except Exception as e:
-                logger.warning(f"Chunk {i+1} failed: {e}")
-                continue
-        
+                logger.error(f"Chunk {i+1} extraction failed: {e}")
+                
         return all_questions
     
     def _smart_split(self, content: str, chunk_size: int) -> List[str]:
@@ -286,8 +406,8 @@ class SectionQuestionExtractor:
         
         return chunks
 
-    def _build_extraction_prompt(self, content: str, subject: str, expected_count: int = 0) -> str:
-        """Build the AI extraction prompt with expected question count"""
+    def _build_extraction_prompt(self, content: str, subject: str, document_structure: Dict, expected_count: int = 0) -> str:
+        """Build the AI extraction prompt with expected question count and detected structure"""
         count_instruction = ""
         if expected_count > 0:
             count_instruction = f"""
@@ -296,16 +416,28 @@ You MUST extract exactly {expected_count} questions - no more, no less.
 DO NOT hallucinate or invent questions that don't exist in the content.
 """
         
+        structure_instruction = ""
+        if document_structure and document_structure.get('sections'):
+            sections = document_structure['sections']
+            sections_str = "\n".join([
+                f"- {s.get('name')}: {s.get('type_hint')} (Questions {s.get('question_range')})" 
+                for s in sections
+            ])
+            structure_instruction = f"""
+**DETECTED DOCUMENT STRUCTURE:**
+The following sections were detected in this document:
+{sections_str}
+
+Use this structure to guide your 'question_type' classification for each question.
+"""
+
         return f"""You are an expert question extractor. Extract ALL questions from this {subject} content.
 {count_instruction}
+{structure_instruction}
+
 **CRITICAL: DETECT QUESTION TYPE FROM SECTION HEADERS AND CONTENT**
-
-The document has DIFFERENT SECTIONS with different question types. Look for section headers like:
-- "Section A", "SECTION A", "Section A - MCQ" -> single_mcq
-- "Section B", "SECTION B", "Numerical" -> numerical  
-- "Section C", "SECTION C", "True/False", "True or False" -> true_false
-- "Section D", "SECTION D", "Fill in the blank", "Fill-Ups" -> fill_blank
-
+Look for section headers (e.g. "SECTION A", "SECTION B") to determine the type of questions that follow.
+**MATCH EACH QUESTION TO THE CORRECT 'question_type' FROM THE DETECTED DOCUMENT STRUCTURE CORRESPONDING TO ITS QUESTION NUMBER.**
 **QUESTION TYPE RULES:**
 
 1. **single_mcq** - Multiple Choice Questions
@@ -313,35 +445,57 @@ The document has DIFFERENT SECTIONS with different question types. Look for sect
    - EXTRACT OPTIONS INTO THE 'options' LIST. Do not keep them in question_text.
    - Answer format: "1", "2", "3", "4" OR "A", "B", "C", "D"
 
-2. **numerical** - Answer is a NUMBER (Integer or Decimal)
+2. **multiple_mcq** - ONE OR MORE correct answers from options A/B/C/D
+   - Same format as single_mcq but may have multiple letters in 'correct_answer' (e.g. "A, B, D")
+
+3. **numerical** - Answer is a NUMBER (Integer or Decimal)
    - Answer format: "5", "3.14", "42", "100"
    - NO options, just a direct numeric answer.
 
-3. **true_false** - Answer is True or False
+4. **true_false** - Answer is True or False
    - Questions are statements to verify.
 
-4. **fill_blank** - Has blanks (_____ or ______) to fill
+5. **fill_blank** - Has blanks (_____ or ______) to fill
    - Answer is the word or phrase that fills the blank.
+
+6. **subjective** - Open-ended questions requiring a descriptive or derivation-based answer.
 
 **FIELD SEPARATION RULES (CRITICAL):**
 - **question_text**: The main question ONLY. Do NOT include options (A, B, C, D) or the 'Sol.' text here.
-- **options**: Array of option strings. Remove the labels (1), (A), etc. Example: `["Option text 1", "Option text 2"]`.
-- **solution**: Text starting after "Sol.", "Solution:", or "Explanation:". Extract this into the 'solution' field.
-- **correct_answer**: The label of the correct option (e.g., "1", "2", "A", "B") or the numeric value.
+- **options**: Array of option strings. 
+  - **CRITICAL**: If multiple options are on one line (e.g., "(A) 10m (B) 20m"), YOU MUST SPLIT them into separate elements in the array.
+  - Remove labels (A), (B), (C), (D) or (1), (2), (3), (4).
+  - Example output: `["10m", "20m", "30m", "40m"]`.
+- **correct_answer**: 
+  - If "Answer: (B)" or similar is found, use "B".
+  - If an option has a marker like `\boxtimes`, `\checkmark`, `[X]`, `(X)`, or is **bolded**, that is the correct answer. 
+  - Convert markers to labels (e.g., if option B has `\boxtimes`, correct_answer is "B").
+- **solution**: Text starting after "Sol.", "Solution:", or "Explanation:".
 
 **CRITICAL RULES:**
-1. LOOK AT SECTION HEADERS to determine question type
-2. Extract EVERY question that ACTUALLY EXISTS in the content - don't invent or skip any.
-3. If the content only has Questions 1-30, DO NOT output Question 31, 61, or 91.
-4. DO NOT output the example questions shown above.
-5. **PRESERVE IMAGE LINKS**: If you see image links like `![](https://cdn.mathpix.com/...)`, include them EXACTLY as they are in the `question_text` or `solution`.
-{f"6. TOTAL EXPECTED: {expected_count} questions - verify your count!" if expected_count > 0 else ""}
+1. **EXTRACT ONLY ACTUAL QUESTIONS**. 
+   - DO NOT extract text that starts with "Instructions:", "Note:", "Directions:", "Section:", or "Date:".
+   - DO NOT extract rules about marking schemes (e.g., "+4 marks", "no negative marking").
+   - DO NOT extract text that describes how to use the OMR sheet.
+   - If a question number is found in a line of instructions, IGNORE IT.
+2. **SPLIT IN-LINE OPTIONS**: If you see `(A) option1 (B) option2`, you MUST produce `["option1", "option2"]`. NEVER put both in one string.
+3. LOOK AT SECTION HEADERS and the provided structure to determine question type.
+4. Extract EVERY question that ACTUALLY EXISTS in the content - don't invent or skip any.
+5. If the content only has Questions 1-30, DO NOT output Question 31, 61, or 91.
+6. **PRESERVE IMAGE LINKS**: If you see image links like `![](https://cdn.mathpix.com/...)`, include them EXACTLY as they are in the `question_text` or `solution`.
+7. **TOTAL EXPECTED: {expected_count} questions** - if you find significantly more or less, double-check your extraction!
 
 **OUTPUT FORMAT (JSON array):**
 ```json
 [
-  {{"question_number": 1, "question_text": "What is the acceleration? ![](https://cdn.mathpix.com/example.jpg)", "options": ["2 m/s", "5 m/s", "10 m/s", "20 m/s"], "correct_answer": "B", "solution": "a = F/m", "question_type": "single_mcq"}},
-  {{"question_number": 31, "question_text": "Calculate the velocity.", "options": [], "correct_answer": "20", "solution": "v = sqrt(2gh)", "question_type": "numerical"}}
+  {{
+    "question_number": 1, 
+    "question_text": "What is the acceleration? ![](https://cdn.mathpix.com/example.jpg)", 
+    "options": ["2 m/s", "5 m/s", "10 m/s", "20 m/s"], 
+    "correct_answer": "B", 
+    "solution": "a = F/m", 
+    "question_type": "single_mcq"
+  }}
 ]
 ```
 
@@ -448,13 +602,13 @@ The document has DIFFERENT SECTIONS with different question types. Look for sect
                 if not q.get('question_text', '').strip():
                     continue
                 
-                q.setdefault('question_type', 'single_mcq')
-                q.setdefault('options', [])
-                q.setdefault('correct_answer', '')
-                q.setdefault('solution', '')
-                q.setdefault('confidence', 0.85)
+                # Normalize the question data (split options, detect answer markers)
+                q = self._normalize_question_data(q)
                 
-                q['question_type'] = self._normalize_type(q['question_type'])
+                q.setdefault('question_type', 'single_mcq')
+                q.setdefault('confidence', 0.85)
+                q['question_type'] = self._normalize_type(q.get('question_type', 'single_mcq'))
+                
                 validated.append(q)
             
             return validated
@@ -462,6 +616,102 @@ The document has DIFFERENT SECTIONS with different question types. Look for sect
         except json.JSONDecodeError as e:
             logger.warning(f"JSON parse failed: {e}, using fallback extraction")
             return self._fallback_extraction(original_content, subject)
+
+    def _normalize_question_data(self, q: Dict) -> Dict:
+        """
+        Post-process AI extraction to fix common issues:
+        1. Split merged options (e.g., ["(A) 10m (B) 20m"])
+        2. Clean labels from options
+        3. Detect correct answers from visual markers (\boxtimes, bold, etc.)
+        """
+        options = q.get('options', [])
+        if not isinstance(options, list):
+            options = [str(options)] if options else []
+        
+        new_options = []
+        correct_answer_index = None
+
+        # 1. SPLIT MERGED OPTIONS
+        # If AI returns ["(A) 10m (B) 20m", "(C) 30m (D) 40m"], split them
+        for opt_text in options:
+            if not opt_text: continue
+            
+            # Pattern to find labels inside strings: (B) or (C) or (D)
+            # but only if preceded by some text to avoid splitting the legitimate first label
+            split_pattern = r'\s+[\(\[]?([B-Db-d2-4])[\)\]\.]\s+'
+            
+            if re.search(split_pattern, opt_text):
+                # Found merging. Use regex to find all segments starting with a label
+                # This pattern matches (A) text, (B) text, etc.
+                segments = re.split(r'\s*[\(\[]?[A-Da-d1-4][\)\]\.]\s*', ' ' + opt_text)
+                # Filter out empty segments from split
+                segments = [s.strip() for s in segments if s.strip()]
+                new_options.extend(segments)
+            else:
+                # Clean single label if present at start
+                cleaned = re.sub(r'^[\(\[]?[A-Da-d1-4][\)\]\.]\s*', '', opt_text).strip()
+                new_options.append(cleaned)
+
+        # 2. DETECT CORRECT ANSWER MARKERS (\boxtimes, bold, etc.)
+        # If answer is already set as a letter, keep it unless we find a specific marker
+        has_explicit_answer = bool(q.get('correct_answer'))
+        
+        # Labels for mapping index to A, B, C, D
+        labels = ['A', 'B', 'C', 'D', 'E', 'F']
+        
+        for i, opt in enumerate(new_options):
+            # Check for LaTeX checked box or bolding which often denotes the answer key in OCR
+            markers = [
+                r'\\boxtimes', 
+                r'\\checkmark', 
+                r'\\textbf', 
+                r'\\mathbf', 
+                r'\*\*.*?\*\*', # Markdown bold
+                r'\[x\]', 
+                r'\(x\)',
+                r'correct'
+            ]
+            
+            if any(re.search(m, opt, re.IGNORECASE) for m in markers):
+                if i < len(labels):
+                    correct_answer_index = i
+                    # Clean the marker after detection
+                    for m in markers:
+                        new_options[i] = re.sub(m, '', new_options[i], flags=re.IGNORECASE).strip()
+                    # Also clean bold syntax
+                    new_options[i] = re.sub(r'[\{\}\*]', '', new_options[i]).strip()
+
+        # Update question dict
+        q['options'] = new_options
+        
+        # 3. CLEAN CORRECT ANSWER
+        correct_answer = str(q.get('correct_answer', '')).strip()
+        if correct_answer:
+            # If answer is like "(B)" or "B.", simplify to "B"
+            match = re.search(r'[\(\[]?([A-Da-d1-4])[\)\]\.]', correct_answer)
+            if match:
+                q['correct_answer'] = match.group(1).upper()
+            elif len(correct_answer) > 2:
+                # If AI returned the whole text of the option as the answer, match it back
+                best_label = None
+                for i, opt in enumerate(new_options):
+                    if opt.lower() == correct_answer.lower() or correct_answer.lower() in opt.lower():
+                        if i < len(labels):
+                            best_label = labels[i]
+                            break
+                if best_label:
+                    q['correct_answer'] = best_label
+                else:
+                    # Keep it as is if no match
+                    pass
+            else:
+                q['correct_answer'] = correct_answer.upper()
+        
+        # If we found a marker (like \boxtimes) earlier, it takes priority
+        if correct_answer_index is not None:
+            q['correct_answer'] = labels[correct_answer_index]
+
+        return q
 
     def _normalize_type(self, q_type: str) -> str:
         """Normalize question type to standard values"""

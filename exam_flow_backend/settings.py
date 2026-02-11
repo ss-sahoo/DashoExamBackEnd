@@ -359,7 +359,7 @@ MATHPIX_APP_ID = CONFIG_MATHPIX_APP_ID or os.getenv('MATHPIX_APP_ID', '')
 MATHPIX_APP_KEY = CONFIG_MATHPIX_APP_KEY or os.getenv('MATHPIX_APP_KEY', '')
 
 # File Upload Settings for Question Extraction
-MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10MB
+MAX_UPLOAD_SIZE = 50 * 1024 * 1024  # 50MB
 ALLOWED_EXTRACTION_FILE_TYPES = [
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document',  # .docx
     'application/msword',  # .doc

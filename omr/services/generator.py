@@ -47,43 +47,100 @@ class OMRGeneratorService:
         ).select_related('question').order_by('question_number')
         
         if mappings.exists():
-            for i, mapping in enumerate(mappings, start=1):
+            # First, group by the determined section name
+            raw_questions = []
+            for mapping in mappings:
                 q = mapping.question
-                q_config = {
-                    'number': i,
+                
+                # Combine subject and section name for display
+                subject_name = q.subject or 'General'
+                section_name = mapping.section_name
+                
+                if section_name and section_name.lower() != subject_name.lower():
+                    if len(section_name) <= 2:
+                        display_name = f"{subject_name} - Section {section_name}"
+                    else:
+                        display_name = f"{subject_name} - {section_name}"
+                else:
+                    display_name = subject_name
+
+                q_data = {
+                    'original_number': mapping.question_number,
                     'type': self._map_question_type(q.question_type),
                     'marks': float(mapping.marks),
                     'negative_marks': float(mapping.negative_marks),
+                    'section': display_name,
+                    'question_obj': q
                 }
                 
-                # For MCQ questions, determine number of options
                 if q.question_type in ['single', 'multiple', 'single_mcq', 'multiple_mcq', 'true_false']:
                     options_count = len(q.options) if hasattr(q, 'options') and q.options else 4
-                    q_config['options'] = [chr(65 + j) for j in range(options_count)]  # ['A', 'B', 'C', 'D']
+                    q_data['options'] = [chr(65 + j) for j in range(options_count)]
                 
-                # For integer questions  
                 if q.question_type in ['numerical', 'integer', 'fill_blank']:
-                    q_config['digits'] = 4  # Default 4 digit integer
+                    q_data['digits'] = 4
+                
+                raw_questions.append(q_data)
+
+            # Sort by original number first to maintain absolute exam sequence across subjects
+            # This ensures Physics (1-20) always comes before Chemistry (21-40) regardless of section name
+            raw_questions.sort(key=lambda x: (x['original_number'], x['section']))
+            
+            # Assign NEW sequential numbers for OMR
+            for i, q_data in enumerate(raw_questions, start=1):
+                q_config = {
+                    'number': i, # Sequential number for OMR 1, 2, 3...
+                    'original_db_number': q_data['original_number'],
+                    'type': q_data['type'],
+                    'marks': q_data['marks'],
+                    'negative_marks': q_data['negative_marks'],
+                    'section': q_data['section'],
+                }
+                if 'options' in q_data:
+                    q_config['options'] = q_data['options']
+                if 'digits' in q_data:
+                    q_config['digits'] = q_data['digits']
                 
                 questions.append(q_config)
+
+
         elif self.exam.pattern:
             # Fallback to pattern sections to determine question counts and types
             from patterns.models import PatternSection
             sections = PatternSection.objects.filter(pattern=self.exam.pattern).order_by('start_question')
+            global_idx = 1
             for section in sections:
                 q_type = self._map_question_type(section.question_type)
+                # Combine subject and section name for display
+                subject_name = section.subject or 'General'
+                section_name = section.name
+                
+                if section_name and section_name.lower() != subject_name.lower():
+                    if len(section_name) <= 2:
+                        display_name = f"{subject_name} - Section {section_name}"
+                    else:
+                        display_name = f"{subject_name} - {section_name}"
+                else:
+                    display_name = subject_name
+
                 for i in range(section.start_question, section.end_question + 1):
                     q_config = {
-                        'number': i,
+                        'number': global_idx,
+                        'pattern_original_number': i,
                         'type': q_type,
                         'marks': float(section.marks_per_question),
                         'negative_marks': float(section.negative_marking),
+                        'section': display_name,
                     }
+
                     if 'mcq' in q_type:
                         q_config['options'] = ['A', 'B', 'C', 'D']
                     elif q_type == 'integer':
                         q_config['digits'] = 4
+                        
                     questions.append(q_config)
+                    global_idx += 1
+
         
         return questions
     
@@ -122,45 +179,49 @@ class OMRGeneratorService:
         """
         fields = self._build_candidate_fields(candidate_fields)
         
-        # Group questions by type
-        mcq_questions = []
-        integer_questions = []
-        
+        # Group questions by section
+        section_groups = {}
         for q in self.questions:
-            if q['type'] in ['mcq', 'mcq_multi']:
-                mcq_questions.append({
-                    'number': q['number'],
-                    'options': q.get('options', ['A', 'B', 'C', 'D']),
-                })
-            else:
-                integer_questions.append({
-                    'number': q['number'],
-                    'type': 'digits',
-                    'digits': q.get('digits', 4),
-                })
-        
-        # Build sections
+            s_name = q.get('section', 'General')
+            if s_name not in section_groups:
+                section_groups[s_name] = []
+            section_groups[s_name].append(q)
+            
+        # Build sections list
         sections = []
-        question_groups = []
+        for s_name, s_questions in section_groups.items():
+            mcq_group = []
+            integer_group = []
+            
+            for q in s_questions:
+                if q['type'] in ['mcq', 'mcq_multi']:
+                    mcq_group.append({
+                        'number': q['number'],
+                        'options': q.get('options', ['A', 'B', 'C', 'D']),
+                    })
+                else:
+                    integer_group.append({
+                        'number': q['number'],
+                        'type': 'digits',
+                        'digits': q.get('digits', 4),
+                    })
+            
+            groups = []
+            if mcq_group:
+                groups.append({'type': 'mcq', 'questions': mcq_group})
+            if integer_group:
+                groups.append({'type': 'integer', 'questions': integer_group})
+                
+            if groups:
+                sections.append({
+                    'name': s_name,
+                    'question_groups': groups
+                })
         
-        if mcq_questions:
-            question_groups.append({
-                'type': 'mcq',
-                'questions': mcq_questions,
-            })
-        
-        if integer_questions:
-            question_groups.append({
-                'type': 'integer',
-                'questions': integer_questions,
-            })
-        
-        if question_groups:
-            sections.append({
-                'name': self.exam.title,
-                'question_groups': question_groups,
-            })
-        else:
+        # Sort sections by their first question number
+        sections.sort(key=lambda s: min(q['number'] for g in s['question_groups'] for q in g['questions']))
+
+        if not sections:
             # Default section with 30 MCQ questions
             sections.append({
                 'name': self.exam.title,
@@ -172,6 +233,7 @@ class OMRGeneratorService:
                     ]
                 }]
             })
+
         
         return {
             'candidate_fields': fields,

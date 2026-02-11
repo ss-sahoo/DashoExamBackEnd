@@ -457,6 +457,22 @@ Look for section headers like:
             # No sections found, return single section
             return self._get_fallback_structure(subject, expected_count, instructions)
         
+        # Truncate content if Answer Key is found near the end
+        check_content = content
+        key_markers = [
+            r'##\s*Answer\s*Key',
+            r'ANSWER\s*KEY\s*SUMMARY',
+            r'Key\s*Results',
+            r'®\s*ANSWER\s*KEY',
+            r'Section\s*A\s*-\s*Single\s*Correct\s*MCQ\s*\|',
+        ]
+        for marker_regex in key_markers:
+            m = re.search(marker_regex, content, re.IGNORECASE)
+            if m and m.start() > len(content) * 0.5:
+                check_content = content[:m.start()]
+                logger.info(f"Sub-structure analysis: Truncated content at Answer Key ({m.start()})")
+                break
+
         # For each section, determine question range and type
         for i, marker in enumerate(unique_markers):
             section_letter = marker['letter']
@@ -466,46 +482,114 @@ Look for section headers like:
             if i + 1 < len(unique_markers):
                 end_pos = unique_markers[i + 1]['position']
             else:
-                end_pos = len(content)
+                end_pos = len(check_content)
             
-            section_content = content[start_pos:end_pos]
+            section_content = check_content[start_pos:end_pos]
+            header_text = marker['full_match'].lower()
             
             # Detect question range by finding question numbers in this section
             question_patterns = [
-                r'(?:^|\n)\s*(\d+)\.\s+',
-                r'(?:^|\n)\s*Q\.?\s*(\d+)',
-                r'(?:^|\n)\s*\((\d+)\)\s+',
+                r'(?:^|\n)\s*Q\.?\s*(\d+)[\.:\)\s]+',           # Q.1 or Q1.
+                r'(?:^|\n)\s*Question[\s:]*(\d+)[\.:\)\s]+',    # Question 1
+                r'(?:^|\n)\s*#{1,4}\s*(?:Q\.?\s*)?(\d+)[\.:\)\s]+', # ## 1. or ## Q1.
+                r'(?:^|\n)\s*(\d+)[\.\)]\s+[A-Za-z0-9\\\$]',    # 1. 
+                r'(?:^|\n)\s*\((\d+)\)\s+[A-Za-z0-9\\\$]',      # (1)
+                r'(?:^|\n|\|)\s*(\d+)\s*\|\s*[A-Za-z0-9\\\$]',   # | 31 | Newton's (table row)
             ]
             
             question_numbers = []
             for pattern in question_patterns:
                 matches = re.finditer(pattern, section_content, re.IGNORECASE | re.MULTILINE)
                 for match in matches:
-                    q_num = int(match.group(1))
-                    if q_num not in question_numbers:
-                        question_numbers.append(q_num)
+                    try:
+                        q_num = int(match.group(1))
+                        # Filter out numbers in instructions (e.g. "Q1 to Q10 carry 1 mark")
+                        line_start = section_content.rfind('\n', 0, match.start()) + 1
+                        line_content = section_content[line_start:match.end()].lower()
+                        if any(instr in line_content for instr in ['instruction', 'mark', 'carry', 'consist']):
+                            continue
+                            
+                        if q_num not in question_numbers:
+                            question_numbers.append(q_num)
+                    except: continue
             
             question_numbers.sort()
             
-            # Determine question type from content
+            # Determine question type from content - PRIORITIZE HEADER
             type_hint = 'mixed'
-            if 'numerical' in section_content.lower() or 'numeric' in section_content.lower():
-                type_hint = 'numerical'
-            elif 'multiple choice' in section_content.lower() or 'mcq' in section_content.lower():
+            content_lower = section_content.lower()
+            
+            # Check header first (most reliable)
+            if any(kw in header_text for kw in ['single correct', 'single choice', 'mcq']) and 'multiple' not in header_text:
                 type_hint = 'single_mcq'
-            elif 'true' in section_content.lower() and 'false' in section_content.lower():
+            elif any(kw in header_text for kw in ['multiple correct', 'multi correct', 'more than one', 'multiple choice']):
+                type_hint = 'multiple_mcq'
+            elif any(kw in header_text for kw in ['numerical', 'integer', 'integer type', 'value type']):
+                type_hint = 'numerical'
+            elif any(kw in header_text for kw in ['subjective', 'descriptive', 'theory']):
+                type_hint = 'subjective'
+            elif any(kw in header_text for kw in ['true', 'false', 'boolean']):
                 type_hint = 'true_false'
             
-            # Check answer format to determine type
-            if re.search(r'Answer\s*\((\d+)\)', section_content, re.IGNORECASE):
-                type_hint = 'numerical'
-            elif re.search(r'Answer\s*\(([A-D])\)', section_content, re.IGNORECASE):
-                type_hint = 'single_mcq'
+            # Fallback to content analysis if header is generic
+            if type_hint == 'mixed':
+                if any(kw in content_lower for kw in ['multiple correct', 'multi correct', 'more than one']):
+                    type_hint = 'multiple_mcq'
+                elif any(kw in content_lower for kw in ['numerical', 'numeric', 'integer']):
+                    type_hint = 'numerical'
+                elif any(kw in content_lower for kw in ['subjective', 'descriptive', 'long answer', 'explain']):
+                    type_hint = 'subjective'
+                elif any(kw in content_lower for kw in ['true/false', 't/f']): # More specific for content
+                    type_hint = 'true_false'
+                elif any(kw in content_lower for kw in ['multiple choice', 'mcq', 'objective']):
+                    type_hint = 'single_mcq'
+                
+                # Section-specific markers in content
+                if re.search(r'Answer\s*\((\d+|[\d\.]+)\)', section_content, re.IGNORECASE):
+                    type_hint = 'numerical'
+                elif re.search(r'Answer\s*\(?([A-E])\)?', section_content, re.IGNORECASE):
+                    type_hint = 'single_mcq'
             
             # Determine question range
-            if question_numbers:
-                question_range = f"{min(question_numbers)}-{max(question_numbers)}"
-                question_count = len(question_numbers)
+            header_range_match = re.search(r'Q?(\d+)\s*[-–—]\s*Q?(\d+)', marker['full_match'])
+            
+            if header_range_match:
+                start_q = int(header_range_match.group(1))
+                end_q = int(header_range_match.group(2))
+                question_range = f"{start_q}-{end_q}"
+                question_count = end_q - start_q + 1
+                logger.info(f"Using header-defined range for Section {section_letter}: {question_range}")
+            elif question_numbers:
+                # Filter question numbers to be sequential and within logic
+                # For later sections, ignore small numbers that might be referenced in instructions (like Q1)
+                prev_section_max = 0
+                if sections:
+                    try:
+                        prev_range = sections[-1]['question_range']
+                        if '-' in prev_range:
+                            prev_section_max = int(prev_range.split('-')[1])
+                    except: pass
+                
+                # Only accept numbers greater than previous section's max
+                valid_nums = [n for n in question_numbers if n > prev_section_max]
+                
+                if expected_count > 0:
+                    # Allow numbers up to expected_count * 1.2 to be safe
+                    valid_nums = [n for n in valid_nums if n <= expected_count * 1.2]
+                
+                if not valid_nums: 
+                    # If we filtered everything out, try being less strict but still ignore Q1 if it's Section > A
+                    if section_letter > 'A':
+                        valid_nums = [n for n in question_numbers if n > 1]
+                    else:
+                        valid_nums = question_numbers
+                
+                if valid_nums:
+                    question_range = f"{min(valid_nums)}-{max(valid_nums)}"
+                    question_count = len(valid_nums)
+                else:
+                    question_range = 'Unknown'
+                    question_count = 0
             else:
                 # Estimate based on expected count and number of sections
                 if expected_count > 0 and len(unique_markers) > 0:
