@@ -689,11 +689,19 @@ class DocumentPreAnalyzer:
                 'total_questions_detected': result.get('total_questions_detected', 0)
             }
             
-            # Calculate total questions from sections if not provided
-            if structure['total_questions_detected'] == 0:
-                structure['total_questions_detected'] = sum(
-                    s.get('question_count', 0) for s in valid_sections
-                )
+            # IMPROVED: Calculate total from sections and prefer that if reasonable
+            section_total = sum(s.get('question_count', 0) for s in valid_sections)
+            ai_total = structure['total_questions_detected']
+            
+            # If AI total is 0 or wildly different from section totals, use section count
+            if section_total > 0:
+                # Section total is almost always more reliable because it's based on explicit question ranges
+                if ai_total == 0 or abs(ai_total - section_total) > 2:
+                    logger.info(f"Using section-based total questions: {section_total} (AI said {ai_total})")
+                    structure['total_questions_detected'] = section_total
+            elif ai_total == 0:
+                # Last resort fallback if both are 0
+                structure['total_questions_detected'] = 0
             
             return structure
             
@@ -709,53 +717,50 @@ class DocumentPreAnalyzer:
         if not type_hint:
             return 'mixed'
         
-        type_lower = type_hint.lower().strip()
+        type_lower = type_hint.lower().strip().replace(' ', '_')
         
         # Map various names to standard types
         type_mapping = {
             # Single MCQ variants
             'single_mcq': 'single_mcq',
-            'single mcq': 'single_mcq',
-            'single correct': 'single_mcq',
+            'single_correct': 'single_mcq',
+            'single_correct_mcq': 'single_mcq',
             'mcq': 'single_mcq',
-            'multiple choice': 'single_mcq',
+            'multiple_choice': 'single_mcq',
             'objective': 'single_mcq',
             
             # Multiple MCQ variants
             'multiple_mcq': 'multiple_mcq',
-            'multiple mcq': 'multiple_mcq',
-            'multiple correct': 'multiple_mcq',
-            'multi correct': 'multiple_mcq',
-            'more than one': 'multiple_mcq',
+            'multiple_correct': 'multiple_mcq',
+            'multi_correct': 'multiple_mcq',
+            'more_than_one': 'multiple_mcq',
             
             # Numerical variants
             'numerical': 'numerical',
             'integer': 'numerical',
-            'integer type': 'numerical',
-            'numerical type': 'numerical',
+            'integer_type': 'numerical',
+            'numerical_type': 'numerical',
             'calculation': 'numerical',
             'numeric': 'numerical',
             
             # True/False variants
             'true_false': 'true_false',
-            'true false': 'true_false',
             'true/false': 'true_false',
             't/f': 'true_false',
             'boolean': 'true_false',
             
             # Fill in blanks variants
             'fill_blank': 'fill_blank',
-            'fill blank': 'fill_blank',
-            'fill in the blank': 'fill_blank',
-            'fill in the blanks': 'fill_blank',
+            'fill_in_the_blank': 'fill_blank',
+            'fill_in_the_blanks': 'fill_blank',
             'blanks': 'fill_blank',
             
             # Subjective variants
             'subjective': 'subjective',
             'descriptive': 'subjective',
-            'long answer': 'subjective',
+            'long_answer': 'subjective',
             'essay': 'subjective',
-            'short answer': 'subjective',
+            'short_answer': 'subjective',
             'written': 'subjective',
             
             # Match variants
@@ -763,7 +768,7 @@ class DocumentPreAnalyzer:
             'match': 'match_following',
             'matching': 'match_following',
             'matrix': 'match_following',
-            'matrix match': 'match_following',
+            'matrix_match': 'match_following',
             
             # Assertion-Reason
             'assertion_reason': 'assertion_reason',
@@ -773,7 +778,7 @@ class DocumentPreAnalyzer:
             # Comprehension
             'comprehension': 'comprehension',
             'passage': 'comprehension',
-            'passage based': 'comprehension',
+            'passage_based': 'comprehension',
             'reading': 'comprehension',
             
             # Mixed/Unknown
@@ -782,6 +787,14 @@ class DocumentPreAnalyzer:
             'unknown': 'mixed',
         }
         
+        # Priority mapping
+        if 'multiple' in type_lower and 'correct' in type_lower:
+            return 'multiple_mcq'
+        if 'single' in type_lower and 'correct' in type_lower:
+            return 'single_mcq'
+        if 'integer' in type_lower or 'numerical' in type_lower:
+            return 'numerical'
+            
         return type_mapping.get(type_lower, 'mixed')
 
     def detect_document_structure(self, text_content: str) -> Dict:
@@ -1082,26 +1095,26 @@ You MUST identify ALL sections present across the ENTIRE document.
         
         if any(kw in name_lower for kw in ['single', 'one correct', 'single correct']):
             return 'single_mcq'
-        elif any(kw in name_lower for kw in ['multiple', 'multi', 'more than one']):
+        elif any(kw in name_lower for kw in ['multiple', 'multi', 'more than one', 'multiple correct']):
             return 'multiple_mcq'
-        elif any(kw in name_lower for kw in ['numerical', 'integer', 'numeric']):
+        elif any(kw in name_lower for kw in ['numerical', 'integer', 'numeric', 'value']):
             return 'numerical'
         elif any(kw in name_lower for kw in ['true', 'false', 't/f']):
             return 'true_false'
         elif any(kw in name_lower for kw in ['fill', 'blank']):
             return 'fill_blank'
         elif any(kw in name_lower for kw in ['match', 'matrix', 'column']):
-            return 'matching'
+            return 'match_following'
         elif any(kw in name_lower for kw in ['assertion', 'reason']):
             return 'assertion_reason'
         elif any(kw in name_lower for kw in ['comprehension', 'passage', 'paragraph']):
             return 'comprehension'
-        elif any(kw in name_lower for kw in ['subjective', 'descriptive', 'long answer']):
+        elif any(kw in name_lower for kw in ['subjective', 'descriptive', 'long answer', 'short answer']):
             return 'subjective'
-        elif any(kw in name_lower for kw in ['mcq', 'objective']):
+        elif 'mcq' in name_lower or 'objective' in name_lower:
             return 'single_mcq'
         else:
-            return 'unknown'
+            return 'mixed'
     
     def _build_document_type_prompt(self, text_content: str) -> str:
         """Build prompt for document type detection"""
@@ -2018,54 +2031,128 @@ You MUST identify ALL sections present across the ENTIRE document.
         
         IMPORTANT: Only counts UNIQUE question numbers in SEQUENTIAL order to avoid
         counting answer options like (1), (2), (3), (4) as separate questions.
+        
+        ENHANCED: Now validates question patterns more strictly to avoid false positives
+        from step numbers, list items, and solution markers.
         """
         questions = []
         
         # Multiple patterns for question detection - ordered by specificity
+        # Pattern 1 & 2 are most reliable; Pattern 3 needs validation
         patterns = [
-            # Q1. or Q.1 or Q 1 - most specific
-            r'(?:^|\n)\s*Q\.?\s*(\d+)[\.\):\s]+',
+            # Q1. or Q.1 or Q 1 - most specific, HIGHEST confidence
+            (r'(?:^|\n)\s*Q\.?\s*(\d+)[\.:\)\s]+', 'q_prefix', 0.95),
             # Question 1 or Question: 1
-            r'(?:^|\n)\s*Question[\s:]*(\d+)[\.\):\s]+',
-            # Number followed by . and actual question content
-            # Matches: "61. The product..." or "89. 20 mL of..." 
-            r'(?:^|\n)\s*(\d+)\.\s+',
+            (r'(?:^|\n)\s*Question[\s:]*(\d+)[\.:\)\s]+', 'question_word', 0.95),
+            # Markdown heading style: ## Q1. or ## 1.
+            (r'(?:^|\n)\s*#{1,4}\s*(?:Q\.?\s*)?(\d+)[\.:\)\s]+', 'markdown_heading', 0.95),
+            # Number followed by . and actual question content (needs validation)
+            (r'(?:^|\n)\s*(\d+)[\.\)]\s+[A-Za-z0-9\\\$]', 'numbered', 0.70),
+            # Table row pattern: | 31 | Newton's ...
+            (r'(?:^|\n|\|)\s*(\d+)\s*\|\s*[A-Za-z0-9\\\$]', 'table_row', 0.90),
         ]
         
-        # Try each pattern
-        for pattern in patterns:
-            matches = list(re.finditer(pattern, text_content, re.IGNORECASE | re.MULTILINE))
-            if len(matches) >= 3:  # At least 3 questions found
-                # CRITICAL: Filter to only UNIQUE question numbers in APPROXIMATE sequence
-                # This prevents counting (1), (2), (3), (4) answer options multiple times
-                seen_numbers = set()
-                unique_matches = []
-                
+        # Truncate Answer Key / Solutions Summary to prevent double counting
+        # Checks for common headers near the end of the document
+        key_markers = [
+            r'##\s*Answer\s*Key',
+            r'ANSWER\s*KEY\s*SUMMARY',
+            r'Key\s*Results',
+            r'®\s*ANSWER\s*KEY',
+            r'Section\s*A\s*-\s*Single\s*Correct\s*MCQ\s*\|', # Table header style
+        ]
+        
+        check_text = text_content
+        for marker in key_markers:
+            match = re.search(marker, text_content, re.IGNORECASE)
+            if match:
+                # Only truncate if it's in the latter half of the document
+                if match.start() > len(text_content) * 0.5:
+                    check_text = text_content[:match.start()]
+                    logger.info(f"Truncated Answer Key section at position {match.start()}")
+                    break
+
+        # Try each pattern and collect candidates
+        all_unique_matches = []
+        seen_ranges = [] # To avoid overlapping matches for the same question
+        
+        for pattern, pattern_type, confidence in patterns:
+            matches = list(re.finditer(pattern, check_text, re.IGNORECASE | re.MULTILINE))
+            if len(matches) >= 3:
                 for match in matches:
-                    q_num = int(match.group(1))
-                    # Only count if we haven't seen this number yet
-                    if q_num not in seen_numbers:
-                        seen_numbers.add(q_num)
-                        unique_matches.append(match)
+                    try:
+                        q_num = match.group(1)
+                        m_start = match.start()
+                        m_end = match.end()
+                        
+                        # Filter out common false positives (Instructions, etc.)
+                        # Get the line content for context
+                        line_start = check_text.rfind('\n', 0, m_start) + 1
+                        line_end = check_text.find('\n', m_start)
+                        if line_end == -1: line_end = len(check_text)
+                        line_content = check_text[line_start:line_end].lower()
+                        
+                        # Skip if it looks like an instruction
+                        if any(wd in line_content for wd in ['instruction', 'consist', 'carry', 'mark', 'duration', 'attempt']):
+                            continue
+                        
+                        # Check if this question number at this position is already captured
+                        # (Allow small overlap but not identical starts)
+                        is_duplicate = False
+                        for s_start, s_end in seen_ranges:
+                            if abs(m_start - s_start) < 5: # Same starting point roughly
+                                is_duplicate = True
+                                break
+                        
+                        if not is_duplicate:
+                            if pattern_type == 'numbered':
+                                pre_context_start = max(0, m_start - 30)
+                                pre_context = text_content[pre_context_start:m_start].lower()
+                                if pre_context.rstrip().endswith(('step', 'sol.', 'sol')):
+                                    continue
+                                if 'step' in pre_context and '\n' not in pre_context:
+                                    continue
+                                if int(q_num) <= 4 and any(marker in pre_context for marker in ['option', '(a)', '(b)', '(c)', '(d)']):
+                                    continue
+                            
+                            all_unique_matches.append(match)
+                            seen_ranges.append((m_start, m_end))
+                    except:
+                        continue
+        
+        # Process all collected unique matches
+        if all_unique_matches:
+            # Sort all matches by their position in the document
+            all_unique_matches.sort(key=lambda m: m.start())
+            
+            # Remove duplicate question numbers that appear VERY close to each other 
+            # (different patterns matching the same thing)
+            final_matches = []
+            seen_nums_positions = {} # num -> last_pos
+            
+            for m in all_unique_matches:
+                num = m.group(1)
+                pos = m.start()
                 
-                # Extract questions from unique matches
-                for i, match in enumerate(unique_matches):
-                    q_num = match.group(1)
-                    start = match.end()
-                    
-                    if i + 1 < len(unique_matches):
-                        end = unique_matches[i + 1].start()
-                    else:
-                        end = len(text_content)
-                    
-                    q_text = text_content[start:end].strip()
-                    questions.append((q_num, q_text))
+                if num in seen_nums_positions:
+                    # If this number was seen recently (within 200 chars), it's likely a duplicate match
+                    if pos - seen_nums_positions[num] < 200:
+                        continue
                 
-                logger.info(f"Found {len(questions)} UNIQUE questions using pattern: {pattern[:30]}...")
-                return questions
+                final_matches.append(m)
+                seen_nums_positions[num] = pos
+            
+            logger.info(f"Collected {len(final_matches)} unique questions using merged patterns")
+            
+            for i, match in enumerate(final_matches):
+                q_num = match.group(1)
+                start = match.end()
+                end = final_matches[i+1].start() if i+1 < len(final_matches) else len(text_content)
+                q_text = text_content[start:end].strip()
+                questions.append((q_num, q_text))
+            return questions
         
         # FALLBACK: Use Answer pattern to count questions
-        # Many exam documents have "Answer (N)" or "Ans. (N)" patterns
         answer_patterns = [
             r'(?:Answer|Ans)\.?\s*[\(\[]?(\d+)[\)\]]?',
             r'##\s*Answer\s*[\(\[]?(\d+)[\)\]]?',
@@ -2076,7 +2163,6 @@ You MUST identify ALL sections present across the ENTIRE document.
             if len(matches) >= 3:
                 unique_nums = sorted(set(int(m) for m in matches if m.isdigit()))
                 logger.info(f"Found {len(unique_nums)} questions via Answer pattern")
-                # Return placeholder questions for counting purposes
                 return [(str(n), '') for n in unique_nums]
         
         # LAST RESORT: If no pattern worked, try splitting by double newlines
@@ -2086,7 +2172,6 @@ You MUST identify ALL sections present across the ENTIRE document.
                 questions.append((str(i + 1), block.strip()))
         
         return questions
-    
     def _build_separation_prompt(
         self,
         text_content: str,

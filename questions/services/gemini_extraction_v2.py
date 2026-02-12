@@ -97,6 +97,25 @@ class GeminiExtractionServiceV2:
         """
         start_time = time.time()
         
+        # Truncate Answer Key / Solutions Summary to prevent double counting
+        # Checks for common headers near the end of the document
+        key_markers = [
+            r'##\s*Answer\s*Key',
+            r'ANSWER\s*KEY\s*SUMMARY',
+            r'Key\s*Results',
+            r'®\s*ANSWER\s*KEY',
+            r'Section\s*A\s*-\s*Single\s*Correct\s*MCQ\s*\|',
+        ]
+        
+        for marker in key_markers:
+            match = re.search(marker, text_content, re.IGNORECASE)
+            if match:
+                # Only truncate if it's in the latter half of the document
+                if match.start() > len(text_content) * 0.5:
+                    logger.info(f"Truncating Answer Key section at position {match.start()}")
+                    text_content = text_content[:match.start()]
+                    break
+
         try:
             # Step 1: Get expected question count
             # CRITICAL: Use count from context if provided (from pre-analysis)
@@ -260,11 +279,12 @@ class GeminiExtractionServiceV2:
         question_patterns = [
             r'(?:^|\n)\s*Q\.?\s*(\d+)[\.\)\:]?\s',           # Q.1 or Q1. or Q 1:
             r'(?:^|\n)\s*Question\s+(\d+)[\.\)\:]?\s',       # Question 1
-            r'(?:^|\n)\s*#{1,4}\s*(\d+)[\.\)]\s',            # ### 1. markdown heading
+            r'(?:^|\n)\s*#{1,4}\s*(?:Q\.?\s*)?(\d+)[\.\)\:]?\s', # ## 1. or ## Q1.
             r'(?:^|\n)\s*\*\*(\d+)[\.\)]\s',                 # **1. bold numbered
-            r'(?:^|\n)\s*(\d+)\.\s+(?=[A-Z])',               # 1. followed by capital
-            r'(?:^|\n)\s*(\d+)\)\s+(?=[A-Z])',               # 1) followed by capital
-            r'(?:^|\n)\s*\((\d+)\)\s+(?=[A-Z])',             # (1) followed by capital
+            r'(?:^|\n)\s*(\d+)\.\s+(?=[A-Z]|[\\\$])',         # 1. followed by capital or LaTeX
+            r'(?:^|\n)\s*(\d+)\)\s+(?=[A-Z]|[\\\$])',         # 1) followed by capital or LaTeX
+            r'(?:^|\n)\s*\((\d+)\)\s+(?=[A-Z]|[\\\$])',       # (1) followed by capital or LaTeX
+            r'(?:^|\n|\|)\s*(\d+)\s*\|\s*[A-Z]',               # | 31 | Newton's (table row)
         ]
         
         # Collect all matches with their positions
@@ -520,9 +540,18 @@ class GeminiExtractionServiceV2:
         questions = []
         
         # Strategy 1: Try numbered question patterns first
-        # Matches: Q.1, Q1., Question 1, 1., 1), (1), ### 1., **1.
-        # ENHANCED regex: clearer boundaries and support for "Q. 1"
-        q_pattern = r'(?:^|\n)\s*(?:Q\.?\s*(\d+)|Question\s+(\d+)|#{1,4}\s*(\d+)[\.\)]|\*\*(\d+)[\.\)]|(\d+)[\.\)])\s*(.+?)(?=(?:\n\s*(?:Q\.?\s*\d+|Question\s+\d+|#{1,4}\s*\d+|\*\*\d+|\d+[\.\)]))|$)'
+        # Matches: Q.1, Q1., Question 1, 1., 1), (1), ### 1., **1., | 31 |
+        # ENHANCED regex: clearer boundaries and support for "Q. 1" and markdown/tables
+        q_pattern = r'(?i)(?:^|\n|\|)\s*(?:Q\.?\s*(\d+)|Question\s+(\d+)|#{1,4}\s*(?:Q\.?\s*)?(\d+)|(?:\*\*|\|)\s*(\d+)|(\d+))[\.\)\:\s\|]+'
+        
+        # We need a boundary to extract the question text
+        # Let's use a simpler approach for fallback splitting
+        parts = re.split(q_pattern, chunk_text)
+        # parts will be [header, num1, num2, num3, num4, num5, text1, ...]
+        # This is getting complicated. Let's stick to finditer but with better pattern.
+        
+        # Revised q_pattern for finditer
+        q_pattern = r'(?:^|\n|\|)\s*(?:Q\.?\s*(\d+)|Question\s+(\d+)|#{1,4}\s*(?:Q\.?\s*)?(\d+)|\*\*(\d+)|(\d+))[\.\)\:\s\|]+\s*(.+?)(?=(?:\n\s*(?:Q\.?\s*\d+|Question\s+\d+|#{1,4}\s*(?:Q\.?\s*)?\d+|\*\*\d+|\d+[\.\)\:]|\|\s*\d+))|$)'
         
         matches = list(re.finditer(q_pattern, chunk_text, re.IGNORECASE | re.DOTALL))
         
@@ -850,10 +879,12 @@ DO NOT skip any question. Count your output to verify you have extracted all que
 {section_info}{marking_info}{instructions_info}
 ## HOW TO IDENTIFY QUESTIONS
 A question block typically consists of:
-1. Question text (may end with ":" or "?")
-2. Options labeled A), B), C), D) or (A), (B), (C), (D) or a), b), c), d)
-3. Answer line: "Answer: X" or "Ans: X" where X is A, B, C, or D
-4. Solution line: "Solution: ..." (explanation) - optional
+1. Question text (may end with ":" or "?", AND may be inside a table row like "| 31 | Gravity | F=mg |")
+2. Options labeled A), B), C), D) or (A), (B), (C), (D) (Note: Options may be empty for numerical/subjective)
+3. Answer line: "Answer: X" or "Ans: X" or just "X" if in a table column
+4. Solution line: "Solution: ..." or "Sol: ..." or an explanation column in a table
+
+**IMPORTANT:** Some questions are listed in tables. Each row in a table might be a separate question. Extract them all!
 
 ## QUESTION TYPE CLASSIFICATION
 Based on the document structure detected above, classify each question:
@@ -1153,32 +1184,42 @@ Return JSON array with all questions:
         
         for i, q in enumerate(questions):
             # Skip duplicates
-            text_key = q.get('question_text', '')[:100].lower()
+            text_key = q.get('question_text', '')[:100].lower().strip()
+            if not text_key:
+                continue
+                
             if text_key in seen_texts:
                 continue
             seen_texts.add(text_key)
+            
+            # FIRST: Robustly split options and detect markers
+            # This must happen before normalization so we have clean data
+            q = self._post_process_option_splitting(q)
             
             # Normalize question
             normalized = self._normalize_question(q, i + 1)
             if not normalized:
                 continue
             
-            # Simple type detection based on options (skip complex classification for now)
-            # Type classification will be done later during import
+            # TRUST AI TYPE IF VALID, otherwise detect
+            # Note: _normalize_question already called _normalize_type
+            ai_type = normalized.get('question_type', 'unknown')
             options = normalized.get('options', [])
-            if len(options) >= 2:
-                normalized['question_type'] = 'single_mcq'  # Default MCQ type
-            elif not options:
-                # Check for fill blank or numerical patterns
-                q_text = normalized['question_text'].lower()
-                if '___' in q_text or '[blank]' in q_text:
-                    normalized['question_type'] = 'fill_blank'
-                elif any(kw in q_text for kw in ['calculate', 'find the value', 'compute']):
-                    normalized['question_type'] = 'numerical'
-                elif any(kw in q_text for kw in ['explain', 'describe', 'discuss']):
-                    normalized['question_type'] = 'subjective'
-                else:
+            
+            # Detect type if unknown or obviously wrong
+            if ai_type == 'unknown' or not ai_type:
+                if len(options) >= 2:
                     normalized['question_type'] = 'single_mcq'
+                else:
+                    q_text = normalized['question_text'].lower()
+                    if '___' in q_text or '[blank]' in q_text:
+                        normalized['question_type'] = 'fill_blank'
+                    elif any(kw in q_text for kw in ['calculate', 'find the value', 'compute', 'how many', 'how long']):
+                        normalized['question_type'] = 'numerical'
+                    elif any(kw in q_text for kw in ['explain', 'describe', 'discuss', 'write']):
+                        normalized['question_type'] = 'subjective'
+                    else:
+                        normalized['question_type'] = 'single_mcq'
             
             # Suggest subject mapping
             normalized['suggested_subject'] = self._suggest_subject(
@@ -1190,6 +1231,80 @@ Return JSON array with all questions:
         
         return processed
     
+    def _post_process_option_splitting(self, q: Dict) -> Dict:
+        """
+        Robustly split options that are merged in a single string,
+        and detect correct answers from markers like \boxtimes.
+        """
+        options = q.get('options', [])
+        if isinstance(options, str):
+            options = [options]
+        if not options:
+            return q
+            
+        # 1. Expand merged options
+        expanded_options = []
+        # Pattern matches: (A), [A], A. (with space), or just (A) without space
+        # We handle: (A) Text (B) Text, (A)Text(B)Text, A. Text B. Text
+        label_pattern = r'(\s*(?:[\(\[]\s*[A-Ea-e]\s*[\)\]]|\s+[A-Ea-e]\.\s+|^[A-Ea-e]\.\s+))'
+        
+        for opt in options:
+            if not opt: continue
+            opt = str(opt)
+            
+            # Split by label pattern
+            parts = re.split(label_pattern, opt)
+            
+            current_opt = ""
+            for part in parts:
+                if not part: continue
+                
+                # Check if it's a label
+                if re.match(label_pattern, part):
+                    if current_opt:
+                        expanded_options.append(current_opt.strip())
+                    current_opt = part # Start new option
+                else:
+                    current_opt += part
+            
+            if current_opt:
+                expanded_options.append(current_opt.strip())
+        
+        # 2. Clean labels and detect answers
+        final_options = []
+        detected_answer_index = None
+        
+        answer_markers = [
+            r'\\boxtimes', r'\\checkmark', r'\[x\]', r'\(x\)', 
+            r'\s+correct\s*', r'\(correct\)'
+        ]
+        
+        for i, opt in enumerate(expanded_options):
+            # Check markers
+            is_correct = False
+            for marker in answer_markers:
+                if re.search(marker, opt, re.IGNORECASE):
+                    is_correct = True
+                    opt = re.sub(marker, '', opt, flags=re.IGNORECASE)
+            
+            # Clean label found at START of option
+            clean_pattern = r'^[\(\[]\s*[A-Ea-e]\s*[\)\]]\s*|^[A-Ea-e]\.\s*'
+            opt = re.sub(clean_pattern, '', opt).strip()
+            
+            final_options.append(opt)
+            
+            if is_correct:
+                detected_answer_index = i
+                
+        q['options'] = final_options
+        
+        # Update answer if marker found
+        letters = ['A', 'B', 'C', 'D', 'E']
+        if detected_answer_index is not None and detected_answer_index < len(letters):
+            q['correct_answer'] = letters[detected_answer_index]
+            
+        return q
+    
     def _normalize_question(self, q: dict, index: int) -> Optional[Dict]:
         """
         Normalize a single question.
@@ -1197,14 +1312,34 @@ Return JSON array with all questions:
         """
         try:
             question_text = str(q.get('question_text', '')).strip()
+            
+            # Clean unwanted metadata from text (Answer/Solution lines)
+            # This prevents AI from including the answer key in the question text
+            question_text = re.sub(r'\n\s*(?:Answer|Ans)[\s:].*', '', question_text, flags=re.IGNORECASE | re.DOTALL)
+            question_text = re.sub(r'\n\s*(?:Solution|Explanation)[\s:].*', '', question_text, flags=re.IGNORECASE | re.DOTALL)
+            question_text = question_text.strip()
+            
             if not question_text:
                 return None
             
-            correct_answer = q.get('correct_answer', '')
-            if isinstance(correct_answer, list):
+            # Handle correct_answer carefully (don't skip 0)
+            correct_answer = q.get('correct_answer')
+            if correct_answer is None:
+                correct_answer = ''
+            elif isinstance(correct_answer, list):
                 correct_answer = ', '.join(str(a) for a in correct_answer)
             else:
-                correct_answer = str(correct_answer).strip() if correct_answer else ''
+                correct_answer = str(correct_answer).strip()
+            
+            # Normalize confidence score safely
+            confidence = q.get('confidence')
+            if confidence is None:
+                confidence = q.get('confidence_score', 0.8)
+            
+            try:
+                confidence_score = float(confidence)
+            except (ValueError, TypeError):
+                confidence_score = 0.8
             
             normalized = {
                 'question_number': q.get('question_number', index),
@@ -1216,11 +1351,20 @@ Return JSON array with all questions:
                 'explanation': str(q.get('explanation', '')).strip(),
                 'subject': str(q.get('subject', '')).strip(),
                 'difficulty': self._normalize_difficulty(q.get('difficulty', 'medium')),
-                'confidence_score': float(q.get('confidence', 0.8)),
+                'confidence_score': confidence_score,
                 'has_latex': q.get('has_latex', False),
                 # NEW: Preserve detected section from AI response
                 'detected_section': str(q.get('detected_section', '')).strip(),
             }
+            
+            # IMPROVEMENT: If type is numerical, try to extract a clean number
+            if normalized['question_type'] == 'numerical':
+                # Remove units like "m", "kg", "m/s^2", "V", "A", "Hz"
+                # Pattern: matches a number followed by optional units
+                num_match = re.search(r'([+\-]?\d*\.?\d+)', str(correct_answer))
+                if num_match:
+                    logger.debug(f"Normalized numerical answer: '{correct_answer}' -> '{num_match.group(1)}'")
+                    normalized['correct_answer'] = num_match.group(1)
             
             # Validate MCQ options
             if normalized['question_type'] in ['single_mcq', 'multiple_mcq']:
@@ -1233,30 +1377,57 @@ Return JSON array with all questions:
             return normalized
             
         except Exception as e:
-            logger.warning(f"Failed to normalize question: {e}")
+            logger.warning(f"Failed to normalize question: {e}", exc_info=True)
             return None
     
     def _normalize_type(self, q_type: str) -> str:
         """Normalize question type string"""
+        if not q_type:
+            return 'unknown'
+            
         type_mapping = {
-            'single mcq': 'single_mcq',
+            # Single MCQ
+            'single_mcq': 'single_mcq',
+            'single correct': 'single_mcq',
             'single correct mcq': 'single_mcq',
             'single_correct_mcq': 'single_mcq',
             'mcq': 'single_mcq',
-            'multiple mcq': 'multiple_mcq',
+            'objective': 'single_mcq',
+            
+            # Multiple MCQ
+            'multiple_mcq': 'multiple_mcq',
+            'multiple correct': 'multiple_mcq',
+            'multiple choice': 'multiple_mcq', # Can be multiple
             'multiple correct mcq': 'multiple_mcq',
             'multiple_correct_mcq': 'multiple_mcq',
             'multi_mcq': 'multiple_mcq',
+            'multi correct': 'multiple_mcq',
+            'more than one': 'multiple_mcq',
+            
+            # Numerical
             'numerical': 'numerical',
             'numeric': 'numerical',
             'integer': 'numerical',
+            'integer type': 'numerical',
+            'value': 'numerical',
+            'calculation': 'numerical',
+            
+            # Subjective
             'subjective': 'subjective',
             'descriptive': 'subjective',
             'essay': 'subjective',
+            'short answer': 'subjective',
+            'long answer': 'subjective',
+            
+            # True/False
+            'true_false': 'true_false',
             'true/false': 'true_false',
             'true false': 'true_false',
             'truefalse': 'true_false',
             'tf': 'true_false',
+            
+            # Fill Blank
+            'fill_blank': 'fill_blank',
             'fill in the blanks': 'fill_blank',
             'fill blank': 'fill_blank',
             'fill_in_blank': 'fill_blank',
@@ -1264,8 +1435,21 @@ Return JSON array with all questions:
             'blanks': 'fill_blank',
         }
         
-        normalized = str(q_type).lower().strip()
-        return type_mapping.get(normalized, normalized if normalized in type_mapping.values() else 'single_mcq')
+        normalized = str(q_type).lower().strip().replace(' ', '_')
+        # Check direct mapping first
+        if normalized in type_mapping:
+            return type_mapping[normalized]
+            
+        # Try some fuzzy matching
+        orig_lower = str(q_type).lower()
+        if 'multiple' in orig_lower and 'correct' in orig_lower:
+            return 'multiple_mcq'
+        if 'single' in orig_lower and 'correct' in orig_lower:
+            return 'single_mcq'
+        if 'integer' in orig_lower or 'numerical' in orig_lower:
+            return 'numerical'
+            
+        return type_mapping.get(normalized, normalized if normalized in type_mapping.values() else 'unknown')
     
     def _normalize_difficulty(self, difficulty: str) -> str:
         """Normalize difficulty level"""

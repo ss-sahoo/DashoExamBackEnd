@@ -349,9 +349,9 @@ def add_student_to_batch(request):
             status=status.HTTP_400_BAD_REQUEST,
         )
     
-    # Find batch in admin's center
+    # Find batch in admin's center (using direct center field)
     try:
-        batch = Batch.objects.get(code=batch_code, program__center=center)
+        batch = Batch.objects.get(code=batch_code, center=center)
     except Batch.DoesNotExist:
         return Response(
             {"detail": f"Batch with code '{batch_code}' not found in your center."},
@@ -538,7 +538,8 @@ def list_batches(request):
     if user.role in ['super_admin', 'SUPER_ADMIN']:
         batches = Batch.objects.all()
         if center_name:
-            batches = batches.filter(program__center__name__icontains=center_name)
+            # Filter by direct center field
+            batches = batches.filter(center__name__icontains=center_name)
         if program_name:
             batches = batches.filter(program__name__icontains=program_name)
     elif user.role in ['admin', 'ADMIN', 'institute_admin']:

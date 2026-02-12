@@ -162,8 +162,54 @@ class QuestionBankDetailView(generics.RetrieveUpdateDestroyAPIView):
 
 class ExamQuestionListView(generics.ListCreateAPIView):
     """List and create exam questions"""
-    serializer_class = ExamQuestionSerializer
     permission_classes = [permissions.IsAuthenticated]
+
+    def get_serializer_class(self):
+        # Use different serializers for different response types
+        if self.request.method == 'POST':
+            return ExamQuestionSerializer
+        # For GET, we'll handle serialization manually in list()
+        return ExamQuestionSerializer
+
+    def list(self, request, *args, **kwargs):
+        """
+        Override list to return questions from either ExamQuestion model 
+        or directly from Question model (fallback).
+        """
+        exam_id = self.kwargs.get('exam_id')
+        
+        # First, try to get questions from ExamQuestion table
+        exam_questions = ExamQuestion.objects.filter(exam_id=exam_id).order_by('question_number')
+        
+        if exam_questions.exists():
+            # Use ExamQuestion data
+            serializer = ExamQuestionSerializer(exam_questions, many=True)
+            return Response(serializer.data)
+        
+        # Fallback: Get questions directly from Question model
+        questions = Question.objects.filter(exam_id=exam_id, is_active=True).order_by('question_number', 'question_number_in_pattern')
+        
+        if questions.exists():
+            # Return questions in a format similar to ExamQuestion serializer
+            result = []
+            for q in questions:
+                # Get pattern section info for section_name
+                section_name = q.pattern_section_name or q.subject or 'General'
+                
+                result.append({
+                    'id': q.id,
+                    'exam': exam_id,
+                    'question': QuestionSerializer(q).data,
+                    'question_id': q.id,
+                    'question_number': q.question_number or q.question_number_in_pattern or 0,
+                    'section_name': section_name,
+                    'marks': q.marks,
+                    'negative_marks': float(q.negative_marks) if q.negative_marks else 0.25,
+                    'order': q.question_number_in_pattern or q.question_number or 0
+                })
+            return Response(result)
+        
+        return Response([])
 
     def get_queryset(self):
         exam_id = self.kwargs.get('exam_id')

@@ -509,8 +509,8 @@ def create_student(request):
         )
     
     try:
-        batch = Batch.objects.select_related('program', 'program__center').get(code=batch_code)
-        center = batch.program.center
+        batch = Batch.objects.select_related('program', 'center').get(code=batch_code)
+        center = batch.center  # Use direct center field
     except Batch.DoesNotExist:
         return Response(
             {"detail": f"Batch with code '{batch_code}' not found. Please create the batch first."},

@@ -364,7 +364,7 @@ class FileParserService:
         except Exception as e:
             raise FileParsingError(f"Failed to read text file: {str(e)}")
     
-    def validate_file_size(self, file_path: str, max_size_mb: int = 10) -> bool:
+    def validate_file_size(self, file_path: str, max_size_mb: int = 50) -> bool:
         """
         Validate file size
         

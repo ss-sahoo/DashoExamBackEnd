@@ -101,6 +101,22 @@ class OMRSheetViewSet(viewsets.ModelViewSet):
             exam.omr_metadata = omr_sheet.metadata
             exam.save()
             
+            # 4. Auto-sync answer key from questions to ensure consistency
+            try:
+                evaluator = OMREvaluatorService(None)
+                evaluator.exam = exam 
+                answer_key_data = evaluator._build_answer_key_from_questions()
+                
+                AnswerKey.objects.update_or_create(
+                    exam=exam,
+                    defaults={
+                        'answers': answer_key_data,
+                        'created_by': request.user
+                    }
+                )
+            except Exception as e:
+                print(f"[OMR GENERATE] Answer key auto-sync failed: {e}")
+
             return Response(
                 OMRSheetSerializer(omr_sheet, context={'request': request}).data,
                 status=status.HTTP_201_CREATED

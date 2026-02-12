@@ -1742,15 +1742,16 @@ def assign_batch_to_timetable(request):
     
     # Get batch
     try:
-        batch = Batch.objects.select_related("program", "program__center").get(code=batch_code)
+        batch = Batch.objects.select_related("program", "center").get(code=batch_code)
     except Batch.DoesNotExist:
         return Response(
             {"detail": f"Batch with code '{batch_code}' not found."},
             status=status.HTTP_404_NOT_FOUND,
         )
     
-    # Verify batch belongs to the same center as timetable (if batch has a program)
-    if batch.program and batch.program.center != timetable.center:
+    # Verify batch belongs to the same center as timetable
+    # Check direct center field (batch.center) since Program doesn't have center
+    if batch.center and batch.center != timetable.center:
         return Response(
             {"detail": f"Batch '{batch_code}' does not belong to the same center as the timetable."},
             status=status.HTTP_400_BAD_REQUEST,
@@ -1866,15 +1867,16 @@ def assign_teacher_to_batch(request):
     
     # Get batch
     try:
-        batch = Batch.objects.select_related("program", "program__center").get(code=batch_code)
+        batch = Batch.objects.select_related("program", "center").get(code=batch_code)
     except Batch.DoesNotExist:
         return Response(
             {"detail": f"Batch with code '{batch_code}' not found."},
             status=status.HTTP_404_NOT_FOUND,
         )
     
-    # Verify batch belongs to the same center as timetable (if batch has a program)
-    if batch.program and batch.program.center != timetable.center:
+    # Verify batch belongs to the same center as timetable
+    # Check direct center field (batch.center) since Program doesn't have center
+    if batch.center and batch.center != timetable.center:
         return Response(
             {"detail": f"Batch '{batch_code}' does not belong to the same center as the timetable."},
             status=status.HTTP_400_BAD_REQUEST,
@@ -2870,15 +2872,16 @@ def assign_fixed_slot(request):
     
     # Get batch
     try:
-        batch = Batch.objects.select_related("program", "program__center").get(code=batch_code)
+        batch = Batch.objects.select_related("program", "center").get(code=batch_code)
     except Batch.DoesNotExist:
         return Response(
             {"detail": f"Batch with code '{batch_code}' not found."},
             status=status.HTTP_404_NOT_FOUND,
         )
     
-    # Verify batch belongs to the same center as timetable (if batch has a program)
-    if batch.program and batch.program.center != timetable.center:
+    # Verify batch belongs to the same center as timetable
+    # Check direct center field (batch.center) since Program doesn't have center
+    if batch.center and batch.center != timetable.center:
         return Response(
             {"detail": f"Batch '{batch_code}' does not belong to the same center as the timetable."},
             status=status.HTTP_400_BAD_REQUEST,

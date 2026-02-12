@@ -34,14 +34,16 @@ class PreAnalyzer:
         (r'(?:^|\n)\s*Q\.?\s*(\d+)[\.\)\:]?\s', 'q_prefix'),
         # Question 1: or Question 1. patterns
         (r'(?:^|\n)\s*Question\s+(\d+)[\.\)\:]?\s', 'question_word'),
-        # Markdown heading style: ### 1. or ## 1. or # 1.
-        (r'(?:^|\n)\s*#{1,4}\s*(\d+)[\.\)]\s', 'markdown_heading'),
-        # 1. or 1) at start of line (most common)
-        (r'(?:^|\n)\s*(\d+)[\.\)]\s+[A-Z]', 'numbered'),
+        # Markdown heading style: ### 1. or ## Q.1 or ## 1.
+        (r'(?:^|\n)\s*#{1,4}\s*(?:Q\.?\s*)?(\d+)[\.\)\:]?\s', 'markdown_heading'),
+        # 1. or 1) at start of line
+        (r'(?:^|\n)\s*(\d+)[\.\)]\s+[A-Za-z0-9\\\$]', 'numbered'),
         # (1) pattern
-        (r'(?:^|\n)\s*\((\d+)\)\s+[A-Z]', 'parenthesis'),
+        (r'(?:^|\n)\s*\((\d+)\)\s+[A-Za-z0-9\\\$]', 'parenthesis'),
         # **1. or **1) bold numbered pattern
         (r'(?:^|\n)\s*\*\*(\d+)[\.\)]\s', 'bold_numbered'),
+        # Table row pattern: | 31 | Newton's ...
+        (r'(?:^|\n|\|)\s*(\d+)\s*\|\s*[A-Za-z0-9\\\$]', 'table_row'),
     ]
     
     # MCQ option patterns
@@ -188,11 +190,31 @@ class PreAnalyzer:
         Returns:
             Tuple of (estimated_count, list of detected patterns)
         """
+        # Truncate Answer Key / Solutions Summary to prevent double counting
+        # Checks for common headers near the end of the document
+        key_markers = [
+            r'##\s*Answer\s*Key',
+            r'ANSWER\s*KEY\s*SUMMARY',
+            r'Key\s*Results',
+            r'®\s*ANSWER\s*KEY',
+            r'Section\s*A\s*-\s*Single\s*Correct\s*MCQ\s*\|', # Table header style
+        ]
+        
+        check_text = text
+        for marker in key_markers:
+            match = re.search(marker, text, re.IGNORECASE)
+            if match:
+                # Only truncate if it's in the latter half of the document
+                if match.start() > len(text) * 0.5:
+                    check_text = text[:match.start()]
+                    logger.info(f"Truncated Answer Key section at position {match.start()}")
+                    break
+
         detected_patterns = []
         all_question_numbers = set()
         
         for pattern_regex, pattern_type in self.QUESTION_PATTERNS:
-            matches = list(re.finditer(pattern_regex, text, re.IGNORECASE | re.MULTILINE))
+            matches = list(re.finditer(pattern_regex, check_text, re.IGNORECASE | re.MULTILINE))
             
             if matches:
                 # Extract question numbers to verify sequence
@@ -201,13 +223,24 @@ class PreAnalyzer:
                 for m in matches:
                     try:
                         num = int(m.group(1))
+                        
+                        # Filter out common false positives (Instructions, etc.)
+                        # Get the line content for context
+                        start_pos = m.start()
+                        line_start = check_text.rfind('\n', 0, start_pos) + 1
+                        line_end = check_text.find('\n', start_pos)
+                        if line_end == -1: line_end = len(check_text)
+                        line_content = check_text[line_start:line_end].lower()
+                        
+                        # Skip if it looks like an instruction
+                        if any(wd in line_content for wd in ['instruction', 'consist', 'carry', 'mark', 'duration', 'attempt']):
+                            continue
+
                         numbers.append(num)
                         all_question_numbers.add(num)
                         # Get context around match (only for first 10)
                         if len(examples) < 10:
-                            start = max(0, m.start() - 10)
-                            end = min(len(text), m.end() + 50)
-                            examples.append(text[start:end].strip()[:80])
+                            examples.append(check_text[max(0, start_pos - 10):min(len(check_text), m.end() + 50)].strip()[:80])
                     except (ValueError, IndexError):
                         continue
                 
@@ -215,7 +248,7 @@ class PreAnalyzer:
                     detected_patterns.append(QuestionPattern(
                         pattern_type=pattern_type,
                         regex=pattern_regex,
-                        count=len(matches),
+                        count=len(numbers), # Use filtered count
                         examples=examples
                     ))
         

@@ -43,8 +43,10 @@ FIELD_HEIGHT_OPTIONS = 6 * mm
 FIELD_HEIGHT_DIGITS = 2*FIELD_HEIGHT_OPTIONS + 29 * mm  + 2 * mm# Height for title and box + digit hieght + one more height equal of title
 QUESTION_HEIGHT_MCQ = 4 * mm
 QUESTION_HEIGHT_INTEGER = 2*QUESTION_HEIGHT_MCQ + 29 * mm + 2 * mm # Height for title and box + digit hieght + one more height equal of title + 2mm row spacing
-SECTION_HEADER_HEIGHT = 0 * mm
-SUBSECTION_HEADER_HEIGHT = 0 * mm
+SECTION_HEADER_HEIGHT = 10 * mm
+
+SUBSECTION_HEADER_HEIGHT = 4 * mm
+
 INSTRUCTIONS_BOX_HEIGHT = 18 * mm
 SIGNATURE_BOX_HEIGHT = 12 * mm
 MIN_FIELD_WIDTH = 14 * mm
@@ -680,9 +682,11 @@ def render_response_header(c: canvas.Canvas, block: Block, y_start: float):
 
 def render_section_header(c: canvas.Canvas, block: Block, y_start: float):
     section_name = block.content['name']
-    c.setFont("Helvetica-Bold", 9)
-    c.drawString(MARGIN_LEFT + block.x_offset, y_start - 3*mm, section_name)
-    c.line(MARGIN_LEFT + block.x_offset, y_start - 3.5*mm, MARGIN_LEFT + block.x_offset + block.width, y_start - 3.5*mm)
+    c.setFont("Helvetica-Bold", 10)
+    c.drawString(MARGIN_LEFT + block.x_offset, y_start - 4*mm, section_name.upper())
+    c.setLineWidth(1)
+    c.line(MARGIN_LEFT + block.x_offset, y_start - 5*mm, MARGIN_LEFT + block.x_offset + block.width, y_start - 5*mm)
+
 
 
 def render_subsection_header(c: canvas.Canvas, block: Block, y_start: float):
@@ -990,16 +994,18 @@ def create_omr_blocks(exam_config: Dict) -> List[Block]:
             content={}
         ))
 
-    # Add Response section header before questions
-    blocks.append(Block(
-        height=5*mm,
-        width=USABLE_WIDTH,
-        block_type='response_header',
-        content={}
-    ))
-
     # Phase 1B: Optimize questions section-wise
+
     for section in exam_config.get('sections', []):
+        # Add section header
+        if section.get('name'):
+            blocks.append(Block(
+                height=SECTION_HEADER_HEIGHT,
+                width=USABLE_WIDTH,
+                block_type='section_header',
+                content={'name': section['name']}
+            ))
+
         for group in section.get('question_groups', []):
             question_type = group['type']
 
@@ -1008,6 +1014,15 @@ def create_omr_blocks(exam_config: Dict) -> List[Block]:
                 question_type
             )
             blocks.append(question_block)
+        
+        # Add a small spacing after each section
+        blocks.append(Block(
+            height=2 * mm,
+            width=USABLE_WIDTH,
+            block_type='spacing',
+            content={}
+        ))
+
 
     # Add signature boxes at the end
     blocks.append(Block(

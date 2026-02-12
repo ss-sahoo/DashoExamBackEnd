@@ -4,9 +4,12 @@ API views for question extraction
 import os
 import logging
 from uuid import UUID
+from datetime import timedelta
+from decimal import Decimal
 from django.conf import settings
 from django.core.files.storage import default_storage
 from django.utils import timezone
+from django.db import transaction
 from rest_framework import status, viewsets
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
@@ -1283,6 +1286,7 @@ def get_import_preview(request, job_id):
 
 from questions.services.section_question_extractor import SectionQuestionExtractor, SectionExtractionError
 from questions.services.section_mapper import SectionMapper, ImportConfirmationFlow
+from questions.services.subject_section_detector import SubjectSectionDetector
 
 
 @api_view(['POST'])
@@ -1352,8 +1356,22 @@ def extract_questions_by_section(request):
                 status=status.HTTP_403_FORBIDDEN
             )
         
-        # Get subject content (handle new format with instructions)
-        subject_data = job.subject_separated_content.get(subject, {})
+        # Get subject data with case-insensitive lookup
+        subject_data = None
+        actual_subject_key = subject
+        
+        for key in job.subject_separated_content.keys():
+            if key.lower() == subject.lower():
+                subject_data = job.subject_separated_content[key]
+                actual_subject_key = key
+                break
+        
+        if subject_data is None:
+            return Response(
+                {'error': f'No content found for subject: {subject}'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+            
         if isinstance(subject_data, dict):
             subject_content = subject_data.get('content', '')
             subject_instructions = subject_data.get('instructions', '')
@@ -1368,12 +1386,15 @@ def extract_questions_by_section(request):
                 status=status.HTTP_404_NOT_FOUND
             )
         
+        # Use the matched key for question counts as well
+        expected_count = job.subject_question_counts.get(actual_subject_key, 0)
+        if expected_count == 0 and actual_subject_key != subject:
+            # Try original key if not found under matched key
+            expected_count = job.subject_question_counts.get(subject, 0)
+            
         # ALWAYS detect sections at subject level using subject-specific content and instructions
         # This ensures accurate section detection per subject, not at document level
-        logger.info(f"Detecting sections for {subject} using subject-specific content and instructions")
-        
-        # Get expected question count for this subject
-        expected_count = job.subject_question_counts.get(subject, 0)
+        logger.info(f"Detecting sections for {actual_subject_key} using subject-specific content and instructions")
         
         try:
             from questions.services.subject_section_detector import SubjectSectionDetector
@@ -1381,23 +1402,23 @@ def extract_questions_by_section(request):
             # Use the new subject-level section detector
             detector = SubjectSectionDetector()
             document_structure = detector.detect_sections_for_subject(
-                subject=subject,
+                subject=actual_subject_key,
                 subject_content=subject_content,
                 subject_instructions=subject_instructions,
                 expected_question_count=expected_count
             )
             
             logger.info(
-                f"Detected {len(document_structure.get('sections', []))} sections for {subject}: "
+                f"Detected {len(document_structure.get('sections', []))} sections for {actual_subject_key}: "
                 f"{[s.get('name', 'Unknown') for s in document_structure.get('sections', [])]}"
             )
             
         except Exception as e:
-            logger.error(f"Failed to detect sections for {subject}: {e}", exc_info=True)
+            logger.error(f"Failed to detect sections for {actual_subject_key}: {e}", exc_info=True)
             # Fallback to basic structure
             document_structure = {
                 'sections': [{
-                    'name': f'{subject} - General',
+                    'name': f'{actual_subject_key} - General',
                     'type_hint': 'mixed',
                     'question_range': f'1-{expected_count}' if expected_count > 0 else 'All',
                     'format_description': 'Mixed questions',
@@ -1407,16 +1428,14 @@ def extract_questions_by_section(request):
                 'instructions_text': subject_instructions[:1000] if subject_instructions else ''
             }
         
-        # Get expected question count for this subject from pre-analysis
-        expected_count = job.subject_question_counts.get(subject, 0)
-        logger.info(f"Expected question count for {subject}: {expected_count}")
+        logger.info(f"Expected question count for {actual_subject_key}: {expected_count}")
         
         # Extract questions by section
         extractor = SectionQuestionExtractor()
         result = extractor.extract_questions_by_sections(
             subject_content,
             document_structure,
-            subject,
+            actual_subject_key,
             expected_question_count=expected_count  # Pass expected count
         )
         
@@ -1435,7 +1454,7 @@ def extract_questions_by_section(request):
         
         response_data = {
             'success': True,
-            'subject': subject,
+            'subject': actual_subject_key,
             'document_structure': document_structure,  # Include structure in response
             'sections': sections_data,
             'total_extracted': result['total_extracted'],
@@ -2058,6 +2077,534 @@ def full_extraction_flow(request):
         )
 
 
+REPLACE
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def auto_create_exam_from_pdf(request):
+    """
+    Upload a PDF/document, detect structure, create pattern + draft exam,
+    extract questions (including options/answers/types), and import directly.
+
+    POST /api/questions/auto-create-exam-from-pdf/
+    form-data:
+      - file (required)
+      - exam_title (optional)
+      - pattern_name (optional)
+      - total_duration (optional, minutes)
+      - start_in_hours (optional, default 24)
+    """
+    try:
+        uploaded_file = request.FILES.get('file')
+        if not uploaded_file:
+            return Response({'error': 'No file uploaded'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Save upload
+        upload_dir = os.path.join(settings.MEDIA_ROOT, 'auto_exam_uploads')
+        os.makedirs(upload_dir, exist_ok=True)
+        file_path = os.path.join(upload_dir, f"{timezone.now().timestamp()}_{uploaded_file.name}")
+        with open(file_path, 'wb+') as destination:
+            for chunk in uploaded_file.chunks():
+                destination.write(chunk)
+
+        # Parse raw text from file (PDF/DOCX/TXT/Image)
+        from questions.services.file_parser import FileParserService
+        parser = FileParserService()
+        text_content = parser.parse_file(file_path, uploaded_file.content_type)
+        if not text_content or not text_content.strip():
+            return Response({'error': 'Could not extract text from uploaded file'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Pre-analyze document
+        pre_analyzer = DocumentPreAnalyzer()
+        pre_result = pre_analyzer.analyze_document(text_content, pattern_subjects=[])
+        if not pre_result.is_valid:
+            return Response(
+                {
+                    'error': pre_result.error_message or 'Invalid question document',
+                    'reason': pre_result.reason or ''
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        subjects = pre_result.matched_subjects or pre_result.detected_subjects
+        if not subjects:
+            return Response({'error': 'No subjects detected from uploaded document'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Detect sections per subject and build pattern section config
+        try:
+            section_detector = SubjectSectionDetector()
+        except Exception:
+            section_detector = None
+
+        sections_by_subject = {}
+        for subject in subjects:
+            subject_data = pre_result.subject_separated_content.get(subject, {})
+            if isinstance(subject_data, dict):
+                subject_content = subject_data.get('content', '')
+                subject_instructions = subject_data.get('instructions', '')
+            else:
+                subject_content = str(subject_data or '')
+                subject_instructions = ''
+
+            expected = int((pre_result.subject_question_counts or {}).get(subject, 0) or 0)
+
+            if section_detector:
+                try:
+                    detected_structure = section_detector.detect_sections_for_subject(
+                        subject=subject,
+                        subject_content=subject_content,
+                        subject_instructions=subject_instructions,
+                        expected_question_count=expected,
+                    )
+                except Exception:
+                    detected_structure = {'sections': []}
+            else:
+                detected_structure = {'sections': []}
+
+            sections_by_subject[subject] = _build_subject_sections_for_pattern(
+                subject=subject,
+                section_structure=detected_structure,
+                fallback_count=max(1, expected),
+            )
+
+        # Create pattern + exam
+        from patterns.models import ExamPattern, PatternSection
+        from exams.models import Exam
+        from questions.models import Question
+
+        pattern_name = request.data.get('pattern_name') or f"Auto Pattern - {uploaded_file.name}"
+        exam_title = request.data.get('exam_title') or f"Auto Exam - {uploaded_file.name}"
+        requested_duration = int(request.data.get('total_duration') or 0)
+
+        with transaction.atomic():
+            total_questions = sum(
+                (sec['end_question'] - sec['start_question'] + 1)
+                for subject_secs in sections_by_subject.values()
+                for sec in subject_secs
+            )
+            if total_questions <= 0:
+                total_questions = max(1, int(pre_result.total_estimated_questions or 1))
+
+            default_duration = max(30, total_questions * 2)
+            total_duration = requested_duration if requested_duration > 0 else default_duration
+
+            pattern = ExamPattern.objects.create(
+                name=pattern_name[:200],
+                description='Auto-created from uploaded PDF/document',
+                institute=request.user.institute,
+                total_questions=total_questions,
+                total_duration=total_duration,
+                total_marks=total_questions,
+                created_by=request.user,
+                is_active=True,
+            )
+
+            created_sections = []
+            for subject, subject_sections in sections_by_subject.items():
+                for order_idx, sec in enumerate(subject_sections, start=1):
+                    ps = PatternSection.objects.create(
+                        pattern=pattern,
+                        name=sec['name'][:100],
+                        subject=subject[:100],
+                        question_type=_normalize_qtype_for_models(sec['question_type']),
+                        start_question=int(sec['start_question']),
+                        end_question=int(sec['end_question']),
+                        marks_per_question=int(sec['marks_per_question']),
+                        negative_marking=sec['negative_marking'],
+                        min_questions_to_attempt=int(sec['end_question']) - int(sec['start_question']) + 1,
+                        is_compulsory=True,
+                        order=order_idx,
+                    )
+                    created_sections.append(ps)
+
+            # Recompute totals from created sections
+            actual_total_questions = sum(s.total_questions for s in created_sections)
+            actual_total_marks = sum(s.total_questions * s.marks_per_question for s in created_sections)
+            if actual_total_questions > 0:
+                pattern.total_questions = actual_total_questions
+                pattern.total_marks = actual_total_marks
+                pattern.save(update_fields=['total_questions', 'total_marks'])
+
+            start_in_hours = int(request.data.get('start_in_hours') or 24)
+            start_at = timezone.now() + timedelta(hours=max(0, start_in_hours))
+            end_at = start_at + timedelta(minutes=pattern.total_duration)
+
+            exam = Exam.objects.create(
+                title=exam_title[:200],
+                description='Auto-created from uploaded PDF/document',
+                institute=request.user.institute,
+                pattern=pattern,
+                status='draft',
+                start_date=start_at,
+                end_date=end_at,
+                duration_minutes=pattern.total_duration,
+                created_by=request.user,
+            )
+
+        # Extract + import questions into exam
+        extractor = SectionQuestionExtractor()
+        mapper = SectionMapper()
+
+        imported_total = 0
+        failed_total = 0
+        subject_stats = []
+
+        for subject in subjects:
+            subject_data = pre_result.subject_separated_content.get(subject, {})
+            if isinstance(subject_data, dict):
+                subject_content = subject_data.get('content', '')
+            else:
+                subject_content = str(subject_data or '')
+
+            expected = int((pre_result.subject_question_counts or {}).get(subject, 0) or 0)
+            extracted = extractor.extract_questions_by_sections(
+                text_content=subject_content,
+                document_structure={'sections': [
+                    {
+                        'name': s['name'],
+                        'type_hint': s['question_type'],
+                        'question_range': f"{s['start_question']}-{s['end_question']}",
+                        'question_count': int(s['end_question']) - int(s['start_question']) + 1,
+                        'format_description': '',
+                    }
+                    for s in sections_by_subject.get(subject, [])
+                ]},
+                subject=subject,
+                expected_question_count=expected,
+            )
+
+            extracted_sections = []
+            for r in extracted.get('sections', []):
+                extracted_sections.append({
+                    'section_name': r.section_name,
+                    'section_type': r.section_type,
+                    'questions': r.questions,
+                    'total_extracted': r.total_extracted,
+                })
+
+            preview = mapper.map_questions_to_sections(
+                exam_id=exam.id,
+                pattern_id=pattern.id,
+                subject=subject,
+                extracted_sections=extracted_sections,
+            )
+            mappings = mapper.prepare_import_mappings(preview)
+
+            imported_subject = 0
+            failed_subject = 0
+            for mapping in mappings:
+                q_data = mapping.get('question_data', {})
+                section_id = mapping.get('section_id')
+
+                try:
+                    section = PatternSection.objects.get(id=section_id)
+
+                    existing_in_section = Question.objects.filter(
+                        exam=exam,
+                        pattern_section_id=section_id,
+                        is_active=True,
+                    ).count()
+                    actual_question_number = section.start_question + existing_in_section
+
+                    options = q_data.get('options', [])
+                    if not isinstance(options, list):
+                        options = []
+
+                    correct_answer = q_data.get('correct_answer', '') or q_data.get('answer', '') or ''
+                    if isinstance(correct_answer, list):
+                        correct_answer = ', '.join(str(x) for x in correct_answer if x)
+                    correct_answer = str(correct_answer).strip()
+
+                    Question.objects.create(
+                        exam=exam,
+                        question_text=str(q_data.get('question_text', '') or '').strip(),
+                        question_type=_normalize_qtype_for_models(q_data.get('question_type', section.question_type)),
+                        difficulty=str(q_data.get('difficulty', 'medium') or 'medium'),
+                        options=options,
+                        structure=q_data.get('structure', {}) if isinstance(q_data.get('structure', {}), dict) else {},
+                        correct_answer=correct_answer,
+                        solution=str(q_data.get('solution', '') or ''),
+                        explanation=str(q_data.get('explanation', '') or ''),
+                        marks=section.marks_per_question,
+                        negative_marks=section.negative_marking,
+                        subject=subject,
+                        question_number=actual_question_number,
+                        question_number_in_pattern=actual_question_number,
+                        pattern_section_id=section_id,
+                        pattern_section_name=section.name,
+                        institute=exam.institute,
+                        created_by=request.user,
+                        is_active=True,
+                    )
+                    imported_subject += 1
+                except Exception:
+                    failed_subject += 1
+
+            imported_total += imported_subject
+            failed_total += failed_subject
+            subject_stats.append({
+                'subject': subject,
+                'imported': imported_subject,
+                'failed': failed_subject,
+                'extracted': int(extracted.get('total_extracted', 0) or 0),
+            })
+
+        return Response(
+            {
+                'success': True,
+                'message': 'PDF processed successfully. Pattern, exam, and questions created.',
+                'pattern': {
+                    'id': pattern.id,
+                    'name': pattern.name,
+                    'total_questions': pattern.total_questions,
+                    'total_marks': pattern.total_marks,
+                    'total_duration': pattern.total_duration,
+                },
+                'exam': {
+                    'id': exam.id,
+                    'title': exam.title,
+                    'status': exam.status,
+                },
+                'import_summary': {
+                    'subjects': subject_stats,
+                    'total_imported': imported_total,
+                    'total_failed': failed_total,
+                }
+            },
+            status=status.HTTP_201_CREATED
+        )
+
+    except Exception as e:
+        logger.error(f"Auto create exam from PDF failed: {e}", exc_info=True)
+        return Response(
+            {'error': f'Failed to create exam from PDF: {str(e)}'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+# ===========================
+# Parse Nested Question Structure
+# ===========================
+
+def parse_nested_question_structure(extracted_text):
+    """
+    Parse extracted text to identify nested question structures.
+    
+    Identifies patterns like:
+    - Main parts: (a), (b), (c) or a), b), c)
+    - Sub-parts: (i), (ii), (iii) or i), ii), iii)
+    - Internal choice: OR or (OR)
+    - MCQ options: (A), (B), (C), (D) or A), B), C), D) or (1), (2), (3), (4)
+    
+    Returns a structure dict compatible with frontend expectations.
+    """
+    import re
+    
+    if not extracted_text or not extracted_text.strip():
+        return {
+            'question_text': '',
+            'options': [],
+            'is_nested': False,
+            'structure': None
+        }
+    
+    text = extracted_text.strip()
+    
+    # First, detect if this is a nested/structured question or simple MCQ
+    
+    # Check for internal choice pattern (OR between parts)
+    has_or_separator = bool(re.search(r'\n\s*OR\s*\n|\n\s*\(OR\)\s*\n', text, re.IGNORECASE))
+    
+    # Check for alpha parts: (a), (b) or a), b)
+    alpha_parts_pattern = r'(?:^|\n)\s*\(?([a-c])\)?[\.\)]\s'
+    alpha_parts = re.findall(alpha_parts_pattern, text, re.IGNORECASE | re.MULTILINE)
+    has_alpha_parts = len(set([p.lower() for p in alpha_parts])) >= 2
+    
+    # Check for roman numeral sub-parts: (i), (ii), (iii)
+    roman_pattern = r'\(?(i{1,4}|iv|v|vi|vii|viii|ix|x)\)[\.\)]?\s'
+    roman_parts = re.findall(roman_pattern, text, re.IGNORECASE)
+    has_roman_subparts = len(roman_parts) >= 2
+    
+    # Check for standard MCQ options: (A), (B), (C), (D) or (1), (2), (3), (4)
+    mcq_letter_pattern = r'(?:^|\n)\s*\(?([A-D])\)?[\.\)]\s'
+    mcq_number_pattern = r'(?:^|\n)\s*\(?([1-4])\)[\.\)]?\s'
+    mcq_letters = re.findall(mcq_letter_pattern, text, re.IGNORECASE | re.MULTILINE)
+    mcq_numbers = re.findall(mcq_number_pattern, text, re.MULTILINE)
+    has_mcq_options = len(mcq_letters) >= 2 or len(mcq_numbers) >= 2
+    
+    # Determine question type
+    is_nested = has_or_separator or (has_alpha_parts and has_roman_subparts)
+    
+    # If it's a simple MCQ (has options but no nested structure)
+    if has_mcq_options and not is_nested and not has_alpha_parts:
+        return parse_simple_mcq(text)
+    
+    # If it's a nested question
+    if is_nested or has_alpha_parts:
+        return parse_nested_parts(text, has_or_separator)
+    
+    # Default: return as simple question text
+    return {
+        'question_text': text,
+        'options': [],
+        'is_nested': False,
+        'structure': None
+    }
+
+
+def parse_simple_mcq(text):
+    """
+    Parse a simple MCQ with options (A), (B), (C), (D) or (1), (2), (3), (4).
+    """
+    import re
+    
+    # Try to find the main question (before options)
+    # Pattern for options: (A), (B), (C), (D) or (1), (2), (3), (4)
+    option_patterns = [
+        r'(?:^|\n)\s*\(?([A-D])\)?[\.\)]\s*(.*?)(?=(?:\n\s*\(?[A-D]\)?[\.\)]|$))',  # Letter options
+        r'(?:^|\n)\s*\(([1-4])\)\s*(.*?)(?=(?:\n\s*\([1-4]\)|$))',  # Number options
+    ]
+    
+    options = []
+    option_start = len(text)
+    
+    for pattern in option_patterns:
+        matches = list(re.finditer(pattern, text, re.IGNORECASE | re.DOTALL | re.MULTILINE))
+        if matches and len(matches) >= 2:
+            options = [m.group(2).strip() for m in matches]
+            option_start = matches[0].start()
+            break
+    
+    # Get question text (everything before options)
+    question_text = text[:option_start].strip()
+    
+    # Remove question number from start if present (e.g., "22." or "Q.22")
+    question_text = re.sub(r'^(?:Q\.?\s*)?\d+\.?\s*', '', question_text).strip()
+    
+    return {
+        'question_text': question_text,
+        'options': options if options else [],
+        'is_nested': False,
+        'structure': None,
+        'correct_answer': '',
+        'solution': ''
+    }
+
+
+def parse_nested_parts(text, has_or_separator):
+    """
+    Parse text with nested parts (a), (b) and sub-parts (i), (ii).
+    """
+    import re
+    
+    # Remove question number from start
+    text = re.sub(r'^(?:Q\.?\s*)?\d+\.?\s*', '', text).strip()
+    
+    nested_parts = []
+    
+    # Split by OR if present (internal choice)
+    if has_or_separator:
+        or_split = re.split(r'\n\s*OR\s*\n|\n\s*\(OR\)\s*\n', text, flags=re.IGNORECASE)
+        
+        for idx, part_text in enumerate(or_split):
+            part_text = part_text.strip()
+            if not part_text:
+                continue
+            
+            # Parse this part
+            label = chr(ord('a') + idx)  # a, b, c...
+            part_data = parse_single_part(part_text, label, idx == 0)
+            
+            if idx > 0:
+                part_data['type'] = 'choice'  # Mark as internal choice option
+            
+            nested_parts.append(part_data)
+    else:
+        # Split by (a), (b), (c) pattern
+        part_pattern = r'(?:^|\n)\s*\(?([a-c])\)[\.\)]?\s*'
+        parts = re.split(part_pattern, text, flags=re.IGNORECASE | re.MULTILINE)
+        
+        # First element might be intro/main question text
+        intro_text = parts[0].strip() if parts else ''
+        
+        # Process pairs (label, content)
+        i = 1
+        while i < len(parts) - 1:
+            label = parts[i].lower()
+            content = parts[i + 1].strip() if i + 1 < len(parts) else ''
+            
+            part_data = parse_single_part(content, label, True)
+            nested_parts.append(part_data)
+            i += 2
+        
+        # If no parts found but has roman numerals, treat whole as single part with sub-parts
+        if not nested_parts and re.search(r'\(i+\)', text, re.IGNORECASE):
+            part_data = parse_single_part(text, 'a', True)
+            nested_parts.append(part_data)
+    
+    # Extract main question text (if any)
+    # Usually nested questions have the main text before (a) or include it in part (a)
+    main_question_text = ''
+    if nested_parts and nested_parts[0].get('text'):
+        # Check if first part has a clear question intro
+        first_text = nested_parts[0].get('text', '')
+        if first_text and not first_text.startswith('('):
+            # Use first sentence as main question if it looks like an intro
+            sentences = re.split(r'(?<=[.?:])\s+', first_text)
+            if len(sentences) > 1 and len(sentences[0]) > 20:
+                main_question_text = sentences[0]
+    
+    return {
+        'question_text': main_question_text,
+        'options': [],
+        'is_nested': True,
+        'structure': {
+            'nested_parts': nested_parts
+        },
+        'correct_answer': '',
+        'solution': ''
+    }
+
+
+def parse_single_part(text, label, is_first=False):
+    """
+    Parse a single part, extracting any sub-parts (i), (ii), (iii).
+    """
+    import re
+    
+    # Check for roman numeral sub-parts
+    subpart_pattern = r'\s*\(?(i{1,4}|iv|v|vi|vii|viii|ix|x)\)\s*'
+    subpart_splits = re.split(subpart_pattern, text, flags=re.IGNORECASE)
+    
+    sub_parts = []
+    main_text = subpart_splits[0].strip() if subpart_splits else text
+    
+    # Process pairs (label, content)
+    i = 1
+    while i < len(subpart_splits) - 1:
+        roman_label = subpart_splits[i].lower()
+        content = subpart_splits[i + 1].strip() if i + 1 < len(subpart_splits) else ''
+        
+        if content:
+            sub_parts.append({
+                'label': roman_label,
+                'text': content.strip()
+            })
+        i += 2
+    
+    result = {
+        'label': label,
+        'text': main_text,
+        'type': 'compulsory'
+    }
+    
+    if sub_parts:
+        result['sub_parts'] = sub_parts
+    
+    return result
+
+
 # ===========================
 # Image to Text Extraction (Mathpix OCR)
 # ===========================
@@ -2136,12 +2683,16 @@ def extract_text_from_image(request):
             
             logger.info(f"Successfully extracted {len(extracted_text)} chars from image via Mathpix")
             
+            # Parse the extracted text to identify nested question structures
+            parsed_structure = parse_nested_question_structure(extracted_text)
+            
             return Response({
                 'success': True,
                 'extracted_text': extracted_text,
                 'has_latex': has_latex,
                 'confidence': 0.95,
-                'message': 'Successfully extracted text from image'
+                'message': 'Successfully extracted text from image',
+                'parsed_structure': parsed_structure
             }, status=status.HTTP_200_OK)
             
         except MathpixError as e:

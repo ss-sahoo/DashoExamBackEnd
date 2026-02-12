@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import re
+import tempfile
 from io import BytesIO
 from typing import Any, Dict, List, Optional
 
@@ -25,6 +27,209 @@ from .models import QuestionEvaluation
 
 LOGO_COLOR_HEX = "#094fb5"
 LOGO_COLOR = colors.HexColor(LOGO_COLOR_HEX)
+
+
+# ============================================================
+# LaTeX Rendering Functions
+# ============================================================
+
+def render_latex_to_image(latex_text, fontsize=12, dpi=150):
+    """
+    Render a LaTeX formula to an image file using matplotlib.
+    Returns the path to the generated PNG image, or None if rendering fails.
+    """
+    try:
+        import matplotlib
+        matplotlib.use('Agg')  # Non-GUI backend
+        import matplotlib.pyplot as plt
+        
+        # Clean up the LaTeX text
+        latex_text = latex_text.strip()
+        
+        # Add $ signs if not present (matplotlib needs them for math mode)
+        if not latex_text.startswith('$'):
+            latex_text = f'${latex_text}$'
+        
+        # Create figure with minimal size
+        fig, ax = plt.subplots(figsize=(0.01, 0.01))
+        ax.axis('off')
+        
+        # Render the LaTeX text
+        text = ax.text(0.5, 0.5, latex_text, fontsize=fontsize, 
+                      ha='center', va='center', transform=ax.transAxes)
+        
+        # Draw to get bounding box
+        fig.canvas.draw()
+        bbox = text.get_window_extent()
+        
+        # Resize figure to fit text with padding
+        width = bbox.width / dpi + 0.15
+        height = bbox.height / dpi + 0.1
+        fig.set_size_inches(max(0.5, width), max(0.3, height))
+        
+        # Save to temp file
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
+        fig.savefig(tmp.name, dpi=dpi, bbox_inches='tight', 
+                   pad_inches=0.02, transparent=False, facecolor='white')
+        plt.close(fig)
+        
+        return tmp.name
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"LaTeX render failed for '{latex_text[:50]}...': {e}")
+        return None
+
+
+def has_complex_latex(text):
+    """
+    Check if text contains LaTeX that needs image rendering.
+    Returns True for complex formulas (fractions, roots, vectors, etc.)
+    """
+    if not text:
+        return False
+    
+    # Patterns that indicate complex LaTeX needing image rendering
+    complex_patterns = [
+        r'\\frac\{',      # Fractions
+        r'\\sqrt',        # Square roots
+        r'\\vec\{',       # Vectors
+        r'\\hat\{',       # Unit vectors
+        r'\\int',         # Integrals
+        r'\\sum',         # Summation
+        r'\\prod',        # Product
+        r'\\lim',         # Limits
+        r'\\begin\{',     # Environments (matrix, array, etc.)
+        r'\\overline',    # Overline
+        r'\\underline',   # Underline
+        r'\\bar\{',       # Bar accent
+    ]
+    
+    for pattern in complex_patterns:
+        if re.search(pattern, text):
+            return True
+    return False
+
+
+def extract_latex_segments(text):
+    """
+    Extract LaTeX segments from text.
+    Returns list of (is_latex, content) tuples.
+    """
+    if not text:
+        return [('text', '')]
+    
+    segments = []
+    
+    # Pattern to match $...$ or $$...$$ LaTeX blocks
+    pattern = r'(\$\$[^$]+\$\$|\$[^$]+\$)'
+    
+    last_end = 0
+    for match in re.finditer(pattern, text):
+        # Add text before this match
+        if match.start() > last_end:
+            segments.append(('text', text[last_end:match.start()]))
+        
+        # Add the LaTeX segment
+        latex_content = match.group(1)
+        # Remove $ delimiters for processing
+        if latex_content.startswith('$$'):
+            latex_content = latex_content[2:-2]
+        else:
+            latex_content = latex_content[1:-1]
+        
+        if has_complex_latex(latex_content):
+            segments.append(('latex', latex_content))
+        else:
+            # Simple LaTeX - just convert symbols inline
+            segments.append(('simple_latex', latex_content))
+        
+        last_end = match.end()
+    
+    # Add remaining text
+    if last_end < len(text):
+        remaining = text[last_end:]
+        # Check if remaining text has undelimited LaTeX
+        if has_complex_latex(remaining):
+            segments.append(('latex', remaining))
+        else:
+            segments.append(('text', remaining))
+    
+    return segments if segments else [('text', text)]
+
+
+def render_text_with_latex(text, sanitize_func):
+    """
+    Render text that may contain LaTeX formulas.
+    Returns a list of flowables (paragraphs and images) that can be combined.
+    
+    For complex LaTeX ($\\frac{...}$ etc), renders as images.
+    For simple text and simple LaTeX, uses text rendering.
+    """
+    from reportlab.platypus import Image as RLImage
+    import tempfile
+    
+    if not text:
+        return []
+    
+    # Check if text contains any complex LaTeX
+    if not has_complex_latex(text):
+        # No complex LaTeX - just return None to indicate normal text processing
+        return None
+    
+    # Extract LaTeX segments
+    segments = extract_latex_segments(text)
+    
+    flowables = []
+    current_text = ""
+    
+    for seg_type, content in segments:
+        if seg_type == 'text' or seg_type == 'simple_latex':
+            # Accumulate text segments
+            current_text += content
+        elif seg_type == 'latex':
+            # Render accumulated text first (if any)
+            # Then render LaTeX as image
+            # For now, we'll just track that there's complex LaTeX
+            # and return None to use fallback approach
+            pass
+    
+    # For question text with complex LaTeX, we'll render the entire LaTeX portion as an image
+    # and return it as a separate flowable
+    
+    # Find all $...$ blocks and render them as images
+    import re
+    pattern = r'(\$[^$]+\$)'
+    parts = re.split(pattern, text)
+    
+    result_flowables = []
+    text_parts = []
+    
+    for part in parts:
+        if part.startswith('$') and part.endswith('$'):
+            # This is a LaTeX block
+            latex_content = part[1:-1]  # Remove $ signs
+            if has_complex_latex(latex_content):
+                # Render as image
+                img_path = render_latex_to_image(latex_content, fontsize=11, dpi=150)
+                if img_path:
+                    # Store the image path for later inclusion
+                    result_flowables.append(('image', img_path))
+                else:
+                    # Fallback to text
+                    text_parts.append(sanitize_func(part))
+            else:
+                # Simple LaTeX - just sanitize
+                text_parts.append(sanitize_func(part))
+        else:
+            # Regular text
+            text_parts.append(sanitize_func(part))
+    
+    # If we have images, return the list of flowables
+    # Otherwise return None to use normal processing
+    if any(f[0] == 'image' for f in result_flowables):
+        return result_flowables
+    return None
+
 
 
 def ensure_answer_sheet_pdf(attempt, force_regenerate: bool = False) -> Optional[Dict[str, Any]]:
@@ -688,18 +893,23 @@ def generate_question_paper_pdf(exam) -> BytesIO:
         }
         for lat, sym in symbols.items():
             text = text.replace(lat, sym)
-            
-        # 3.5 Convert fractions \frac{a}{b} -> (a)/(b) RECURSIVELY
-        # We need to loop this because nested fractions exist
+        
+        # 3.5 Handle \text, \mathrm, \mathbf FIRST (simplify the structure)
         for _ in range(3):
-            text = re.sub(r'\\frac\{([^{}]+)\}\{([^{}]+)\}', r'(\1)/(\2)', text)
+            text = re.sub(r'\\(?:text|mathrm|mathbf|mathit|bf|it)\{([^{}]+)\}', r'\1', text)
             
-        # 3.6 Handle \sqrt
-        text = re.sub(r'\\sqrt\{([^{}]+)\}', r'√(\1)', text)
-        text = re.sub(r'\\sqrt\[([^{}]+)\]\{([^{}]+)\}', r'(\2)^(1/\1)', text)
-
-        # 3.7 Handle \text, \mathrm, \mathbf
-        text = re.sub(r'\\(?:text|mathrm|mathbf|mathit|bf|it)\{([^{}]+)\}', r'\1', text)
+        # 3.6 Handle \sqrt BEFORE fractions (inner structures first)
+        for _ in range(3):
+            text = re.sub(r'\\sqrt\{([^{}]+)\}', r'√(\1)', text)
+            text = re.sub(r'\\sqrt\[([^{}]+)\]\{([^{}]+)\}', r'(\2)^(1/\1)', text)
+            
+        # 3.7 Convert fractions \frac{a}{b} -> (a)/(b) RECURSIVELY
+        # Now that sqrt is converted, the inner braces should be simpler
+        for _ in range(5):
+            new_text = re.sub(r'\\frac\{([^{}]+)\}\{([^{}]+)\}', r'(\1)/(\2)', text)
+            if new_text == text:
+                break
+            text = new_text
         
         # 3.8 Handle spacing commands
         text = re.sub(r'\\[;,!]', ' ', text)
@@ -780,6 +990,198 @@ def generate_question_paper_pdf(exam) -> BytesIO:
             text = text[:15000] + '...'
         return text
 
+    def extract_and_download_images(text):
+        """
+        Extract images from text, download them, and return:
+        - cleaned_text: Text with image markdown removed
+        - image_paths: List of (local_path, width, height) tuples for each image
+        
+        This allows images to be rendered separately from text to prevent overlapping.
+        """
+        if text is None:
+            return "", []
+            
+        import re
+        import tempfile
+        import urllib.request
+        import base64
+        
+        text = str(text)
+        image_paths = []
+        
+        # Pattern for markdown images: ![alt](url)
+        pattern = r'!\[(.*?)\]\s*\((https?://[^\s\)]+)\)'
+        
+        def download_image(match):
+            alt = match.group(1)
+            url = match.group(2).strip().strip('[]"\' ')
+            
+            try:
+                if not url.startswith('http'):
+                    return ''
+                    
+                ext = '.jpg'
+                if '.png' in url.lower(): ext = '.png'
+                elif '.gif' in url.lower(): ext = '.gif'
+                    
+                with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
+                    try:
+                        req = urllib.request.Request(
+                            url, 
+                            headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+                        )
+                        with urllib.request.urlopen(req, timeout=8) as response:
+                            tmp.write(response.read())
+                            tmp.flush()
+                            
+                            width = 200  # Default width
+                            height = 150  # Default height
+                            
+                            try:
+                                from PIL import Image as PILImage
+                                with PILImage.open(tmp.name) as img:
+                                    orig_w, orig_h = img.size
+                                    
+                                    # Max size for question images - make them reasonably sized
+                                    MAX_W = 280
+                                    MAX_H = 200
+                                    
+                                    scale_w = MAX_W / orig_w if orig_w > 0 else 1
+                                    scale_h = MAX_H / orig_h if orig_h > 0 else 1
+                                    scale = min(scale_w, scale_h, 1.0)
+                                    
+                                    width = int(orig_w * scale)
+                                    height = int(orig_h * scale)
+                            except Exception:
+                                pass
+                            
+                            image_paths.append((tmp.name, width, height))
+                            return ''  # Remove from text
+                    except Exception as e:
+                        import logging
+                        logging.error(f"Failed to download image {url}: {e}")
+                        return ''
+            except Exception:
+                return ''
+        
+        # Replace all markdown images with empty string and collect paths
+        if '![' in text and 'http' in text:
+            cleaned_text = re.sub(pattern, download_image, text, flags=re.IGNORECASE)
+        else:
+            cleaned_text = text
+            
+        return cleaned_text, image_paths
+
+    def sanitize_pdf_text_no_images(text):
+        """
+        Clean text for PDF rendering but REMOVE images entirely.
+        Images should be rendered separately using extract_and_download_images.
+        """
+        if text is None:
+            return ""
+        
+        import re
+        
+        # First, remove markdown images from the raw text (before processing)
+        text = re.sub(r'!\[.*?\]\s*\(https?://[^\)]+\)', '', str(text), flags=re.IGNORECASE)
+        
+        # Now use the full sanitize_pdf_text for proper LaTeX processing
+        text = sanitize_pdf_text(text)
+        
+        # Finally, remove any remaining <img> tags that might have been left
+        text = re.sub(r'<img[^>]*/?>', '', text, flags=re.IGNORECASE)
+        
+        # Remove image placeholder markers if any
+        text = re.sub(r'\[IMGURL\].*?\[ENDIMGURL\]', '', text, flags=re.DOTALL)
+        
+        return text
+
+    def render_option_with_latex(option_text, label, style):
+        """
+        Render an MCQ option with LaTeX formulas as images.
+        Returns a list of flowables (Table rows with text/images).
+        """
+        from reportlab.platypus import Image as RLImage
+        import re
+        
+        flowables = []
+        text = str(option_text)
+        
+        # Check if option contains complex LaTeX
+        if not has_complex_latex(text):
+            # No complex LaTeX - use regular text rendering
+            clean_text = sanitize_pdf_text_no_images(text)
+            para = Paragraph(f"<b>{label}</b> {clean_text}", style)
+            return [para]
+        
+        # Has complex LaTeX - render formula as image
+        # Extract the LaTeX portion (usually the whole option for math formulas)
+        
+        # Try to find $...$ delimited content
+        latex_match = re.search(r'\$([^$]+)\$', text)
+        if latex_match:
+            latex_content = latex_match.group(1)
+            prefix = text[:latex_match.start()].strip()
+            suffix = text[latex_match.end():].strip()
+        else:
+            # Entire option is LaTeX
+            latex_content = text
+            prefix = ""
+            suffix = ""
+        
+        # Render LaTeX to image
+        img_path = render_latex_to_image(latex_content, fontsize=11, dpi=150)
+        
+        if img_path:
+            try:
+                from PIL import Image as PILImage
+                with PILImage.open(img_path) as pil_img:
+                    w, h = pil_img.size
+                    # Scale down if too large for option column
+                    max_w, max_h = 180, 60
+                    scale = min(max_w/w, max_h/h, 1.0)
+                    final_w = int(w * scale * 0.75)  # 0.75 for pt to pixel ratio
+                    final_h = int(h * scale * 0.75)
+                
+                img = RLImage(img_path, width=final_w, height=final_h)
+                
+                # Create a compound element with label + prefix + image + suffix
+                label_text = f"<b>{label}</b>"
+                if prefix:
+                    label_text += f" {sanitize_pdf_text(prefix)}"
+                
+                # Use a style that prevents word wrapping for the label
+                from reportlab.lib.styles import ParagraphStyle
+                label_style = ParagraphStyle(
+                    'OptionLabel',
+                    parent=style,
+                    wordWrap='CJK',  # Character-level wrapping to prevent breaking (1) into separate lines
+                    fontSize=style.fontSize if hasattr(style, 'fontSize') else 11,
+                )
+                label_para = Paragraph(label_text, label_style)
+                
+                # Return as table for alignment - use wider label column to fit "(1)" etc
+                elements = [[label_para, img]]
+                if suffix:
+                    elements[0].append(Paragraph(sanitize_pdf_text(suffix), style))
+                
+                # Increase label column width from 0.4 to 0.5 inches to fit "(1)" properly
+                opt_table = Table(elements, colWidths=[0.5*inch, 2.0*inch, 1.0*inch] if suffix else [0.5*inch, 3.0*inch])
+                opt_table.setStyle(TableStyle([
+                    ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+                    ('LEFTPADDING', (0,0), (-1,-1), 2),
+                    ('RIGHTPADDING', (0,0), (-1,-1), 2),
+                ]))
+                return [opt_table]
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning(f"Failed to create LaTeX image: {e}")
+        
+        # Fallback to text rendering
+        clean_text = sanitize_pdf_text_no_images(text)
+        para = Paragraph(f"<b>{label}</b> {clean_text}", style)
+        return [para]
+
     def to_roman(n):
         """Convert integer to lowercase roman numeral."""
         try:
@@ -789,27 +1191,130 @@ def generate_question_paper_pdf(exam) -> BytesIO:
         except:
             return str(n)
 
+    # Style for question text (without leading - used with table)
+    board_question_text = ParagraphStyle("BoardQuestionText", parent=styles["Normal"], fontSize=11, leading=14, fontName="Helvetica")
+
     # Standard board question rendering
     def render_simple_question(q, index, marks_per_question):
+        from reportlab.platypus import Image as RLImage
+        import re
         story_elements = []
         
-        # Question text and marks
-        q_text = f"Q.{index} {sanitize_pdf_text(q.question_text)}"
-        story_elements.append(Table([[Paragraph(q_text, board_question_text), Paragraph(f"[{marks_per_question}]", board_marks)]], colWidths=[5.8 * inch, 0.7 * inch], style=TableStyle([('VALIGN', (0,0), (-1,-1), 'TOP'), ('LEFTPADDING', (0,0), (-1,-1), 0), ('RIGHTPADDING', (0,0), (-1,-1), 0)])))
+        # STEP 1: Extract images from question text first
+        cleaned_text, image_paths = extract_and_download_images(q.question_text)
         
-        # Draw options for MCQs
+        # STEP 2: Render question text (without images) and marks
+        # Check if question text contains complex LaTeX that needs image rendering
+        if has_complex_latex(cleaned_text):
+            # Question has complex LaTeX - render text part and LaTeX images separately
+            # First, split by $...$ patterns to separate text and LaTeX
+            pattern = r'(\$[^$]+\$)'
+            parts = re.split(pattern, cleaned_text)
+            
+            # Render question number and first text part
+            first_text = parts[0] if parts else ""
+            q_prefix = f"Q.{index} {sanitize_pdf_text_no_images(first_text)}"
+            
+            # Create the question text paragraph with marks
+            story_elements.append(Table(
+                [[Paragraph(q_prefix, board_question_text), Paragraph(f"[{marks_per_question}]", board_marks)]], 
+                colWidths=[5.8 * inch, 0.7 * inch], 
+                style=TableStyle([
+                    ('VALIGN', (0,0), (-1,-1), 'TOP'), 
+                    ('LEFTPADDING', (0,0), (-1,-1), 0), 
+                    ('RIGHTPADDING', (0,0), (-1,-1), 0)
+                ])
+            ))
+            
+            # Now render LaTeX parts as images and remaining text
+            for i, part in enumerate(parts[1:], 1):
+                if part.startswith('$') and part.endswith('$'):
+                    # LaTeX content - render as image
+                    latex_content = part[1:-1]  # Remove $ signs
+                    
+                    if has_complex_latex(latex_content):
+                        img_path = render_latex_to_image(latex_content, fontsize=11, dpi=150)
+                        if img_path:
+                            try:
+                                from PIL import Image as PILImage
+                                with PILImage.open(img_path) as pil_img:
+                                    w, h = pil_img.size
+                                    # Scale appropriately
+                                    max_w, max_h = 300, 80
+                                    scale = min(max_w/w, max_h/h, 1.0)
+                                    final_w = int(w * scale * 0.75)
+                                    final_h = int(h * scale * 0.75)
+                                img = RLImage(img_path, width=final_w, height=final_h)
+                                # Inline latex image
+                                img_table = Table([[img]], colWidths=[6.0 * inch])
+                                img_table.setStyle(TableStyle([
+                                    ('LEFTPADDING', (0,0), (-1,-1), 20),
+                                    ('TOPPADDING', (0,0), (-1,-1), 2),
+                                    ('BOTTOMPADDING', (0,0), (-1,-1), 2),
+                                ]))
+                                story_elements.append(img_table)
+                            except Exception as e:
+                                # Fallback to text
+                                story_elements.append(Paragraph(sanitize_pdf_text_no_images(part), board_question_text))
+                        else:
+                            # Image rendering failed, use text
+                            story_elements.append(Paragraph(sanitize_pdf_text_no_images(part), board_question_text))
+                    else:
+                        # Simple LaTeX - just use text
+                        story_elements.append(Paragraph(sanitize_pdf_text_no_images(part), board_question_text))
+                else:
+                    # Regular text part
+                    if part.strip():
+                        story_elements.append(Paragraph(sanitize_pdf_text_no_images(part), board_question_text))
+        else:
+            # No complex LaTeX - standard text rendering
+            q_text = f"Q.{index} {sanitize_pdf_text_no_images(cleaned_text)}"
+            story_elements.append(Table(
+                [[Paragraph(q_text, board_question_text), Paragraph(f"[{marks_per_question}]", board_marks)]], 
+                colWidths=[5.8 * inch, 0.7 * inch], 
+                style=TableStyle([
+                    ('VALIGN', (0,0), (-1,-1), 'TOP'), 
+                    ('LEFTPADDING', (0,0), (-1,-1), 0), 
+                    ('RIGHTPADDING', (0,0), (-1,-1), 0)
+                ])
+            ))
+        
+        # STEP 3: Render any extracted images as separate block elements
+        if image_paths:
+            story_elements.append(Spacer(1, 6))
+            for img_path, img_width, img_height in image_paths:
+                try:
+                    # Create ReportLab Image with proper sizing
+                    img = RLImage(img_path, width=img_width, height=img_height)
+                    # Wrap in a table for left-indent positioning
+                    img_table = Table([[img]], colWidths=[6.5 * inch])
+                    img_table.setStyle(TableStyle([
+                        ('LEFTPADDING', (0,0), (-1,-1), 20),
+                        ('TOPPADDING', (0,0), (-1,-1), 4),
+                        ('BOTTOMPADDING', (0,0), (-1,-1), 8),
+                        ('VALIGN', (0,0), (-1,-1), 'TOP'),
+                    ]))
+                    story_elements.append(img_table)
+                except Exception as img_err:
+                    import logging
+                    logging.error(f"Failed to add image to PDF: {img_err}")
+        
+        # STEP 4: Draw options for MCQs
         if q.question_type in ['single_mcq', 'multiple_mcq'] and q.options:
-            option_labels = ['(1)', '(2)', '(3)', '(4)', '(5)', '(6)'] # Use numbers as per instruction
+            option_labels = ['(1)', '(2)', '(3)', '(4)', '(5)', '(6)']
             
-            # Heuristic: Use vertical layout only if ANY option text is VERY long
-            # (diagrams/images should stay in grid if possible as per user reference)
-            force_vertical = False
-            for opt in q.options:
-                if len(str(opt)) > 120: # Arbitrary length to detect "long" options
-                    force_vertical = True
-                    break
+            # Check if any option contains images
+            any_option_has_image = any('![' in str(opt) and 'http' in str(opt) for opt in q.options)
             
-            # Use 2-col grid if <= 4 options and not too much text
+            # Heuristic: Use vertical layout if ANY option has images or very long text
+            force_vertical = any_option_has_image
+            if not force_vertical:
+                for opt in q.options:
+                    if len(str(opt)) > 120:
+                        force_vertical = True
+                        break
+            
+            # Use 2-col grid if <= 4 options, not too much text, and no images
             if len(q.options) <= 4 and not force_vertical:
                 opt_data = []
                 for i in range(0, len(q.options), 2):
@@ -823,31 +1328,50 @@ def generate_question_paper_pdf(exam) -> BytesIO:
                         p2 = Paragraph(sanitize_pdf_text(f"{option_labels[i+1]} {q.options[i+1]}"), board_option)
                         row.append(p2)
                     else:
-                        row.append("") # Empty cell for alignment
+                        row.append("")
                     opt_data.append(row)
                 
                 opt_table = Table(opt_data, colWidths=[3.25 * inch, 3.25 * inch])
                 opt_table.setStyle(TableStyle([
                     ('LEFTPADDING', (0,0), (-1,-1), 0),
                     ('VALIGN', (0,0), (-1,-1), 'TOP'),
-                    ('TOPPADDING', (0,0), (-1,-1), 10),    # More padding for images
+                    ('TOPPADDING', (0,0), (-1,-1), 10),
                     ('BOTTOMPADDING', (0,0), (-1,-1), 10),
                 ]))
                 story_elements.append(opt_table)
             else:
-                # Vertical Layout
+                # Vertical Layout for options with images or long text
                 for i, opt in enumerate(q.options):
-                    label_para = Paragraph(f"<b>{option_labels[i]}</b>", board_option)
-                    content_para = Paragraph(sanitize_pdf_text(str(opt)), board_option)
+                    opt_str = str(opt)
                     
-                    v_table = Table([[label_para, content_para]], colWidths=[0.4 * inch, 6.1 * inch])
+                    # Extract images from this option
+                    opt_cleaned, opt_images = extract_and_download_images(opt_str)
+                    
+                    label_para = Paragraph(f"<b>{option_labels[i]}</b>", board_option)
+                    content_para = Paragraph(sanitize_pdf_text_no_images(opt_cleaned), board_option)
+                    
+                    v_table = Table([[label_para, content_para]], colWidths=[0.5 * inch, 6.0 * inch])
                     v_table.setStyle(TableStyle([
                         ('VALIGN', (0,0), (-1,-1), 'TOP'),
                         ('LEFTPADDING', (0,0), (-1,-1), 0),
                         ('TOPPADDING', (0,0), (-1,-1), 2),
-                        ('BOTTOMPADDING', (0,0), (-1,-1), 8),
+                        ('BOTTOMPADDING', (0,0), (-1,-1), 4),
                     ]))
                     story_elements.append(v_table)
+                    
+                    # Render option images if any
+                    for img_path, img_width, img_height in opt_images:
+                        try:
+                            img = RLImage(img_path, width=img_width, height=img_height)
+                            img_table = Table([[img]], colWidths=[6.1 * inch])
+                            img_table.setStyle(TableStyle([
+                                ('LEFTPADDING', (0,0), (-1,-1), 40),
+                                ('TOPPADDING', (0,0), (-1,-1), 2),
+                                ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+                            ]))
+                            story_elements.append(img_table)
+                        except Exception:
+                            pass
         
         story_elements.append(Spacer(1, 14))
         return story_elements
@@ -886,19 +1410,24 @@ def generate_question_paper_pdf(exam) -> BytesIO:
     story.append(Spacer(1, 15))
 
     # 3. Questions by Section
+    # Order sections by the 'order' field which defines the intended sequence in the question paper
     sections = exam.pattern.sections.all().order_by('order', 'start_question')
     
     # Get all active questions for the exam
-    questions = exam.questions.filter(is_active=True).order_by('question_number')
+    questions = exam.questions.filter(is_active=True)
     
     for section in sections:
         story.append(Paragraph(sanitize_pdf_text(f"SECTION - {section.name.upper()} ({section.subject})"), board_section))
         story.append(Paragraph(sanitize_pdf_text(f"<i>(This section consists of questions {section.start_question} to {section.end_question}. Each question carries {section.marks_per_question} marks.)</i>"), board_instruction))
         
+        # CRITICAL FIX: Filter by BOTH subject AND question number range
+        # This prevents questions from different subjects (e.g., Physics Q1-20 vs Chemistry Q1-20) 
+        # from being mixed together
         section_questions = questions.filter(
+            subject__iexact=section.subject,  # Case-insensitive subject match
             question_number__gte=section.start_question,
             question_number__lte=section.end_question
-        )
+        ).order_by('question_number')  # Ensure proper ordering within section
         
         # 3. Questions by Section
         for q in section_questions:
@@ -1168,33 +1697,121 @@ def generate_question_paper_pdf(exam) -> BytesIO:
 
             else:
                 # Standard Question Rendering
-                q_text = f"Q.{q.question_number}  {q.question_text}"
-                q_marks = f"[{section.marks_per_question}]"
+                # STEP 1: Extract images from question text
+                from reportlab.platypus import Image as RLImage
+                cleaned_q_text, q_image_paths = extract_and_download_images(q.question_text)
                 
-                q_table_data = [
-                    [Paragraph(sanitize_pdf_text(q_text), board_question), Paragraph(sanitize_pdf_text(q_marks), board_marks)]
-                ]
-                q_table = Table(q_table_data, colWidths=[5.8 * inch, 0.7 * inch])
-                q_table.setStyle(TableStyle([
-                    ('VALIGN', (0,0), (-1,-1), 'TOP'),
-                    ('LEFTPADDING', (0,0), (-1,-1), 0),
-                    ('RIGHTPADDING', (0,0), (-1,-1), 0),
-                    ('BOTTOMPADDING', (0,0), (-1,-1), 0),
-                ]))
-                story.append(q_table)
+                # STEP 2: Render question text without images
+                # Check if question text contains complex LaTeX
+                import re as re_mod
+                if has_complex_latex(cleaned_q_text):
+                    # Question has complex LaTeX - render text part and LaTeX images separately
+                    pattern = r'(\$[^$]+\$)'
+                    parts = re_mod.split(pattern, cleaned_q_text)
+                    
+                    # Render question number and first text part
+                    first_text = parts[0] if parts else ""
+                    q_prefix = f"Q.{q.question_number}  {sanitize_pdf_text_no_images(first_text)}"
+                    q_marks = f"[{section.marks_per_question}]"
+                    
+                    q_table_data = [
+                        [Paragraph(q_prefix, board_question), Paragraph(q_marks, board_marks)]
+                    ]
+                    q_table = Table(q_table_data, colWidths=[5.8 * inch, 0.7 * inch])
+                    q_table.setStyle(TableStyle([
+                        ('VALIGN', (0,0), (-1,-1), 'TOP'),
+                        ('LEFTPADDING', (0,0), (-1,-1), 0),
+                        ('RIGHTPADDING', (0,0), (-1,-1), 0),
+                        ('BOTTOMPADDING', (0,0), (-1,-1), 0),
+                    ]))
+                    story.append(q_table)
+                    
+                    # Now render LaTeX parts as images and remaining text
+                    for part in parts[1:]:
+                        if part.startswith('$') and part.endswith('$'):
+                            # LaTeX content - render as image
+                            latex_content = part[1:-1]  # Remove $ signs
+                            
+                            if has_complex_latex(latex_content):
+                                img_path = render_latex_to_image(latex_content, fontsize=11, dpi=150)
+                                if img_path:
+                                    try:
+                                        from PIL import Image as PILImage
+                                        with PILImage.open(img_path) as pil_img:
+                                            w, h = pil_img.size
+                                            max_w, max_h = 300, 80
+                                            scale = min(max_w/w, max_h/h, 1.0)
+                                            final_w = int(w * scale * 0.75)
+                                            final_h = int(h * scale * 0.75)
+                                        img = RLImage(img_path, width=final_w, height=final_h)
+                                        img_table = Table([[img]], colWidths=[6.0 * inch])
+                                        img_table.setStyle(TableStyle([
+                                            ('LEFTPADDING', (0,0), (-1,-1), 20),
+                                            ('TOPPADDING', (0,0), (-1,-1), 2),
+                                            ('BOTTOMPADDING', (0,0), (-1,-1), 2),
+                                        ]))
+                                        story.append(img_table)
+                                    except Exception:
+                                        story.append(Paragraph(sanitize_pdf_text_no_images(part), board_question))
+                                else:
+                                    story.append(Paragraph(sanitize_pdf_text_no_images(part), board_question))
+                            else:
+                                story.append(Paragraph(sanitize_pdf_text_no_images(part), board_question))
+                        else:
+                            if part.strip():
+                                story.append(Paragraph(sanitize_pdf_text_no_images(part), board_question))
+                else:
+                    # No complex LaTeX - standard text rendering
+                    q_text = f"Q.{q.question_number}  {sanitize_pdf_text_no_images(cleaned_q_text)}"
+                    q_marks = f"[{section.marks_per_question}]"
+                    
+                    q_table_data = [
+                        [Paragraph(q_text, board_question), Paragraph(q_marks, board_marks)]
+                    ]
+                    q_table = Table(q_table_data, colWidths=[5.8 * inch, 0.7 * inch])
+                    q_table.setStyle(TableStyle([
+                        ('VALIGN', (0,0), (-1,-1), 'TOP'),
+                        ('LEFTPADDING', (0,0), (-1,-1), 0),
+                        ('RIGHTPADDING', (0,0), (-1,-1), 0),
+                        ('BOTTOMPADDING', (0,0), (-1,-1), 0),
+                    ]))
+                    story.append(q_table)
+                
+                # STEP 3: Render any extracted images as separate block elements
+                if q_image_paths:
+                    story.append(Spacer(1, 6))
+                    for img_path, img_width, img_height in q_image_paths:
+                        try:
+                            img = RLImage(img_path, width=img_width, height=img_height)
+                            img_table = Table([[img]], colWidths=[6.5 * inch])
+                            img_table.setStyle(TableStyle([
+                                ('LEFTPADDING', (0,0), (-1,-1), 20),
+                                ('TOPPADDING', (0,0), (-1,-1), 4),
+                                ('BOTTOMPADDING', (0,0), (-1,-1), 8),
+                                ('VALIGN', (0,0), (-1,-1), 'TOP'),
+                            ]))
+                            story.append(img_table)
+                        except Exception as img_err:
+                            import logging
+                            logging.getLogger(__name__).error(f"Failed to add image to PDF: {img_err}")
 
-                # Draw options for MCQs
+                # STEP 4: Draw options for MCQs
                 if q.question_type in ['single_mcq', 'multiple_mcq'] and q.options:
                     option_labels = ['(1)', '(2)', '(3)', '(4)', '(5)', '(6)']
                     
-                    # Heuristic: Prefer grid (2-col) for images/diagrams unless text is very long
-                    force_vertical = False
-                    for opt in q.options:
-                        if len(str(opt)) > 120:
-                            force_vertical = True
-                            break
+                    # Check if any option contains images or complex LaTeX
+                    any_option_has_image = any('![' in str(opt) and 'http' in str(opt) for opt in q.options)
+                    any_option_has_latex = any(has_complex_latex(str(opt)) for opt in q.options)
                     
-                    # Use 2-col standard if <= 4 options and NOT forced vertical
+                    # Heuristic: Use vertical layout if images/complex LaTeX present or text very long
+                    force_vertical = any_option_has_image or any_option_has_latex
+                    if not force_vertical:
+                        for opt in q.options:
+                            if len(str(opt)) > 120:
+                                force_vertical = True
+                                break
+                    
+                    # Use 2-col standard if <= 4 options, no images, no complex LaTeX
                     if len(q.options) <= 4 and not force_vertical:
                         opt_data = []
                         for i in range(0, len(q.options), 2):
@@ -1215,25 +1832,52 @@ def generate_question_paper_pdf(exam) -> BytesIO:
                         opt_table.setStyle(TableStyle([
                             ('LEFTPADDING', (0,0), (-1,-1), 0),
                             ('VALIGN', (0,0), (-1,-1), 'TOP'),
-                            ('TOPPADDING', (0,0), (-1,-1), 8),    # Added more padding for images
+                            ('TOPPADDING', (0,0), (-1,-1), 8),
                             ('BOTTOMPADDING', (0,0), (-1,-1), 8),
                         ]))
                         story.append(opt_table)
                     else:
-                        # Vertical Layout for long text or > 4 options
+                        # Vertical Layout for options with images, complex LaTeX, or long text
                         for i, opt in enumerate(q.options):
-                            label_para = Paragraph(f"<b>{option_labels[i]}</b>", board_option)
-                            content_para = Paragraph(sanitize_pdf_text(str(opt)), board_option)
+                            opt_str = str(opt)
                             
-                            v_table = Table([[label_para, content_para]], colWidths=[0.4 * inch, 6.1 * inch])
-                            v_table.setStyle(TableStyle([
-                                ('VALIGN', (0,0), (-1,-1), 'TOP'),
-                                ('LEFTPADDING', (0,0), (-1,-1), 0),
-                                ('RIGHTPADDING', (0,0), (-1,-1), 0),
-                                ('TOPPADDING', (0,0), (-1,-1), 2),
-                                ('BOTTOMPADDING', (0,0), (-1,-1), 6),
-                            ]))
-                            story.append(v_table)
+                            # Check if this option has complex LaTeX
+                            if has_complex_latex(opt_str):
+                                # Use LaTeX image rendering
+                                opt_elements = render_option_with_latex(opt_str, option_labels[i], board_option)
+                                for elem in opt_elements:
+                                    story.append(elem)
+                                story.append(Spacer(1, 4))
+                            else:
+                                # Extract images from this option
+                                opt_cleaned, opt_images = extract_and_download_images(opt_str)
+                                
+                                label_para = Paragraph(f"<b>{option_labels[i]}</b>", board_option)
+                                content_para = Paragraph(sanitize_pdf_text_no_images(opt_cleaned), board_option)
+                                
+                                v_table = Table([[label_para, content_para]], colWidths=[0.5 * inch, 6.0 * inch])
+                                v_table.setStyle(TableStyle([
+                                    ('VALIGN', (0,0), (-1,-1), 'TOP'),
+                                    ('LEFTPADDING', (0,0), (-1,-1), 0),
+                                    ('RIGHTPADDING', (0,0), (-1,-1), 0),
+                                    ('TOPPADDING', (0,0), (-1,-1), 2),
+                                    ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+                                ]))
+                                story.append(v_table)
+                                
+                                # Render option images if any
+                                for img_path, img_width, img_height in opt_images:
+                                    try:
+                                        img = RLImage(img_path, width=img_width, height=img_height)
+                                        img_table = Table([[img]], colWidths=[6.1 * inch])
+                                        img_table.setStyle(TableStyle([
+                                            ('LEFTPADDING', (0,0), (-1,-1), 40),
+                                            ('TOPPADDING', (0,0), (-1,-1), 2),
+                                            ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+                                        ]))
+                                        story.append(img_table)
+                                    except Exception:
+                                        pass
             
             story.append(Spacer(1, 14)) # spacing between questions
 
