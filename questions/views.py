@@ -13,7 +13,7 @@ from .models import Question, QuestionBank, ExamQuestion, QuestionImage, Questio
 from .serializers import (
     QuestionSerializer, QuestionCreateSerializer, QuestionBankSerializer,
     ExamQuestionSerializer, QuestionTemplateSerializer, QuestionSearchSerializer,
-    BulkQuestionImportSerializer
+    BulkQuestionImportSerializer, QuestionImageSerializer
 )
 # RAG utils - optional import
 try:
@@ -1058,6 +1058,45 @@ def verify_question(request, question_id):
     question.save()
     
     return Response({'message': 'Question verified successfully'})
+
+
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+def add_question_image(request, question_id):
+    """Add an image/diagram to a question"""
+    try:
+        question = Question.objects.get(id=question_id, institute=request.user.institute)
+    except Question.DoesNotExist:
+        return Response({'error': 'Question not found'}, status=status.HTTP_404_NOT_FOUND)
+    
+    if 'image' not in request.FILES:
+        return Response({'error': 'No image provided'}, status=status.HTTP_400_BAD_REQUEST)
+    
+    image_file = request.FILES['image']
+    caption = request.data.get('caption', '')
+    order = request.data.get('order', 1)
+    
+    question_image = QuestionImage.objects.create(
+        question=question,
+        image=image_file,
+        caption=caption,
+        order=order
+    )
+    
+    return Response(QuestionImageSerializer(question_image).data, status=status.HTTP_201_CREATED)
+
+
+@api_view(['DELETE'])
+@permission_classes([permissions.IsAuthenticated])
+def delete_question_image(request, image_id):
+    """Delete an image/diagram from a question"""
+    try:
+        image = QuestionImage.objects.get(id=image_id, question__institute=request.user.institute)
+    except QuestionImage.DoesNotExist:
+        return Response({'error': 'Image not found'}, status=status.HTTP_404_NOT_FOUND)
+    
+    image.delete()
+    return Response({'message': 'Image deleted successfully'}, status=status.HTTP_204_NO_CONTENT)
 
 
 @api_view(['POST'])

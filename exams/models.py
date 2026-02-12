@@ -882,6 +882,14 @@ class EvaluationSettings(models.Model):
     def __str__(self):
         return f"Evaluation Settings - {self.exam.title}"
 
+    def save(self, *args, **kwargs):
+        # Sync with Exam model
+        if self.exam:
+            self.exam.ai_evaluation_enabled = self.enable_ai_evaluation
+            # Only update the specific field to avoid side effects
+            self.exam.save(update_fields=['ai_evaluation_enabled'])
+        super().save(*args, **kwargs)
+
 
 class EvaluationProgress(models.Model):
     """Track evaluation progress for an exam"""

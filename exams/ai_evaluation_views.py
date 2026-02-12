@@ -82,17 +82,22 @@ def upload_answer_sheet(request, exam_id):
     # Save uploaded file temporarily
     file_path = f"ai_eval_uploads/{exam.id}/{uploaded_file.name}"
     saved_path = default_storage.save(file_path, uploaded_file)
-    full_path = default_storage.path(saved_path)
     
     auto_evaluate = request.data.get('auto_evaluate', 'true').lower() == 'true'
     
     if auto_evaluate:
+        # Create a temp file to ensure we have a local path
+        with tempfile.NamedTemporaryFile(suffix=f".{ext}", delete=False) as tmp:
+            for chunk in uploaded_file.chunks():
+                tmp.write(chunk)
+            tmp_path = tmp.name
+
         try:
             # Run AI evaluation
             marking_strictness = exam.marking_strictness or 'moderate'
             result = evaluate_subjective_submission(
                 exam_id=exam.id,
-                pdf_path=full_path,
+                pdf_path=tmp_path,
                 marking_strictness=marking_strictness
             )
             
@@ -110,6 +115,7 @@ def upload_answer_sheet(request, exam_id):
                                 'grades': result.get('grades', []),
                                 'student_name': result.get('student_name'),
                                 'report': result.get('report'),
+                                'max_marks': result.get('max_marks'),
                                 'file_path': saved_path,
                             }
                         },
@@ -138,6 +144,10 @@ def upload_answer_sheet(request, exam_id):
                 'success': False,
                 'error': str(e),
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        finally:
+            # Cleanup temp local file
+            if 'tmp_path' in locals() and os.path.exists(tmp_path):
+                os.remove(tmp_path)
     
     else:
         # Just save the file for later processing
@@ -182,12 +192,17 @@ def evaluate_answer_sheet(request, exam_id):
     student = get_object_or_404(User, id=student_id)
     
     try:
-        full_path = default_storage.path(file_path)
+        # Download file to local temp path
+        with tempfile.NamedTemporaryFile(suffix=f".{file_path.split('.')[-1]}", delete=False) as tmp:
+            with default_storage.open(file_path, 'rb') as f:
+                tmp.write(f.read())
+            tmp_path = tmp.name
+
         marking_strictness = exam.marking_strictness or 'moderate'
         
         result = evaluate_subjective_submission(
             exam_id=exam.id,
-            pdf_path=full_path,
+            pdf_path=tmp_path,
             marking_strictness=marking_strictness
         )
         
@@ -205,6 +220,7 @@ def evaluate_answer_sheet(request, exam_id):
                             'grades': result.get('grades', []),
                             'student_name': result.get('student_name'),
                             'report': result.get('report'),
+                            'max_marks': result.get('max_marks'),
                             'file_path': file_path,
                         }
                     },
@@ -232,6 +248,10 @@ def evaluate_answer_sheet(request, exam_id):
             'success': False,
             'error': str(e),
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    finally:
+        # Cleanup temp local file
+        if 'tmp_path' in locals() and os.path.exists(tmp_path):
+            os.remove(tmp_path)
 
 
 @api_view(['GET'])
@@ -360,7 +380,7 @@ def list_submissions(request, exam_id):
             'evaluation_result': {
                 'student_name': ai_data.get('student_name'),
                 'total_score': float(attempt.score) if attempt.score else 0,
-                'max_score': float(attempt.score * 100 / attempt.percentage) if attempt.percentage and attempt.score else 0,
+                'max_score': float(ai_data.get('max_marks')) if ai_data.get('max_marks') is not None else round(float(attempt.score * 100 / attempt.percentage), 1) if attempt.percentage and attempt.score else 0,
                 'percentage': float(attempt.percentage) if attempt.percentage else 0,
                 'grades': ai_data.get('grades', []),
                 'report': ai_data.get('report', ''),
