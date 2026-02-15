@@ -417,25 +417,72 @@ Look for section headers like:
         """
         Detect sections using regex patterns (no AI call needed).
         This is a fallback when API quota is exhausted.
+        
+        ENHANCED: Now supports more flexible section header formats including:
+        - SECTION A, SECTION - A, Section A
+        - Part I, Part A, Part 1
+        - Module 1, Module A
+        - Type A Questions, Category 1
+        - [A] Questions, (A) Questions
         """
         logger.info(f"Using regex-based section detection for {subject}")
         
         sections = []
         
-        # Pattern to find section headers
+        # ENHANCED: More flexible patterns to find section headers
         section_patterns = [
-            r'(?:^|\n)\s*##?\s*SECTION\s*[-–—]?\s*([A-Z])\s*[^\n]*(?:\n|$)',
-            r'(?:^|\n)\s*SECTION\s*[-–—]?\s*([A-Z])\s*[^\n]*(?:\n|$)',
-            r'(?:^|\n)\s*Section\s*[-–—]?\s*([A-Z])\s*[^\n]*(?:\n|$)',
+            # Standard SECTION patterns
+            r'(?:^|\n)\s*##?\s*SECTION\s*[-–—:]?\s*([A-Z])\s*[^\n]*(?:\n|$)',
+            r'(?:^|\n)\s*SECTION\s*[-–—:]?\s*([A-Z])\s*[^\n]*(?:\n|$)',
+            r'(?:^|\n)\s*Section\s*[-–—:]?\s*([A-Z])\s*[^\n]*(?:\n|$)',
+            # Part patterns (Part I, Part A, Part 1)
+            r'(?:^|\n)\s*##?\s*PART\s*[-–—:]?\s*([A-Z]|[IVX]+|\d+)\s*[^\n]*(?:\n|$)',
+            r'(?:^|\n)\s*Part\s*[-–—:]?\s*([A-Z]|[IVX]+|\d+)\s*[^\n]*(?:\n|$)',
+            # Module patterns
+            r'(?:^|\n)\s*##?\s*MODULE\s*[-–—:]?\s*([A-Z]|\d+)\s*[^\n]*(?:\n|$)',
+            r'(?:^|\n)\s*Module\s*[-–—:]?\s*([A-Z]|\d+)\s*[^\n]*(?:\n|$)',
+            # Type/Category patterns
+            r'(?:^|\n)\s*##?\s*TYPE\s*[-–—:]?\s*([A-Z]|\d+)\s*[^\n]*(?:\n|$)',
+            r'(?:^|\n)\s*Type\s*[-–—:]?\s*([A-Z]|\d+)\s*[^\n]*(?:\n|$)',
+            r'(?:^|\n)\s*##?\s*CATEGORY\s*[-–—:]?\s*([A-Z]|\d+)\s*[^\n]*(?:\n|$)',
+            r'(?:^|\n)\s*Category\s*[-–—:]?\s*([A-Z]|\d+)\s*[^\n]*(?:\n|$)',
+            # Bracket patterns: [A], (A), {A}
+            r'(?:^|\n)\s*\[([A-Z])\]\s*[^\n]*(?:\n|$)',
+            r'(?:^|\n)\s*\(([A-Z])\)\s*[^\n]*Questions?\s*[^\n]*(?:\n|$)',
+            # Question type headers (e.g., "Single Correct MCQ", "Numerical Questions")
+            r'(?:^|\n)\s*##?\s*(Single\s+Correct|Multiple\s+Correct|Numerical|Integer|Subjective)\s*[^\n]*(?:\n|$)',
         ]
         
         section_markers = []
         for pattern in section_patterns:
             matches = list(re.finditer(pattern, content, re.IGNORECASE | re.MULTILINE))
             for match in matches:
-                section_letter = match.group(1).upper()
+                section_id = match.group(1).upper()
+                
+                # Convert Roman numerals to letters for consistency
+                roman_to_letter = {'I': 'A', 'II': 'B', 'III': 'C', 'IV': 'D', 'V': 'E', 'VI': 'F'}
+                if section_id in roman_to_letter:
+                    section_letter = roman_to_letter[section_id]
+                elif section_id.isdigit():
+                    # Convert numbers to letters (1->A, 2->B, etc.)
+                    num = int(section_id)
+                    if 1 <= num <= 26:
+                        section_letter = chr(ord('A') + num - 1)
+                    else:
+                        section_letter = section_id
+                elif section_id in ['SINGLE', 'MULTIPLE', 'NUMERICAL', 'INTEGER', 'SUBJECTIVE']:
+                    # Question type headers - use first letter as section identifier
+                    type_to_letter = {
+                        'SINGLE': 'A', 'MULTIPLE': 'B', 'NUMERICAL': 'C', 
+                        'INTEGER': 'C', 'SUBJECTIVE': 'D'
+                    }
+                    section_letter = type_to_letter.get(section_id, 'A')
+                else:
+                    section_letter = section_id
+                
                 section_markers.append({
                     'letter': section_letter,
+                    'original_id': section_id,
                     'position': match.start(),
                     'full_match': match.group(0).strip()
                 })
@@ -443,13 +490,29 @@ Look for section headers like:
         # Sort by position
         section_markers.sort(key=lambda x: x['position'])
         
-        # Remove duplicates (same section letter)
-        seen_letters = set()
+        # Remove duplicates (same position within 50 chars - likely same header matched by multiple patterns)
         unique_markers = []
+        last_pos = -100
         for marker in section_markers:
+            if marker['position'] - last_pos > 50:
+                unique_markers.append(marker)
+                last_pos = marker['position']
+            elif marker not in unique_markers:
+                # Check if this is a better match (longer full_match)
+                for i, existing in enumerate(unique_markers):
+                    if abs(existing['position'] - marker['position']) < 50:
+                        if len(marker['full_match']) > len(existing['full_match']):
+                            unique_markers[i] = marker
+                        break
+        
+        # Further deduplicate by letter (keep first occurrence)
+        seen_letters = set()
+        final_markers = []
+        for marker in unique_markers:
             if marker['letter'] not in seen_letters:
                 seen_letters.add(marker['letter'])
-                unique_markers.append(marker)
+                final_markers.append(marker)
+        unique_markers = final_markers
         
         logger.info(f"Found {len(unique_markers)} section markers: {[m['letter'] for m in unique_markers]}")
         

@@ -64,6 +64,10 @@ class SectionQuestionExtractor:
         except Exception as e:
             raise SectionExtractionError(f"Failed to initialize Gemini: {str(e)}")
     
+    # Configuration for retry logic
+    RETRY_THRESHOLD = 0.8  # Retry if extracted < 80% of expected
+    MAX_EXTRACTION_RETRIES = 2  # Maximum retry attempts
+    
     def extract_questions_by_sections(
         self,
         text_content: str,
@@ -72,7 +76,13 @@ class SectionQuestionExtractor:
         expected_question_count: int = 0,  # NEW: Expected count from pre-analysis
         progress_callback: Optional[callable] = None
     ) -> Dict:
-        """Extract ALL questions and classify them by type using AI."""
+        """Extract ALL questions and classify them by type using AI.
+        
+        ENHANCED: Now includes:
+        - Retry logic if extraction count < 80% of expected
+        - Improved deduplication across chunks
+        - Section type enforcement from document structure
+        """
         logger.info(f"Starting AI extraction for subject: {subject}")
         
         # Preprocess content to handle problematic base64 SVG and truncate Answer Keys
@@ -89,7 +99,18 @@ class SectionQuestionExtractor:
             progress_callback(10, "Analyzing content with AI...")
         
         try:
-            all_questions = self._ai_extract_and_classify(text_content, subject, document_structure, expected_question_count)
+            # ENHANCED: Extract with retry logic
+            all_questions = self._extract_with_retry(
+                text_content, subject, document_structure, 
+                expected_question_count, progress_callback
+            )
+            
+            # ENHANCED: Apply improved deduplication
+            all_questions = self._deduplicate_questions(all_questions)
+            logger.info(f"After deduplication: {len(all_questions)} questions")
+            
+            # ENHANCED: Enforce section types before mapping
+            all_questions = self._enforce_section_types(all_questions, document_structure)
             
             if progress_callback:
                 progress_callback(70, "Mapping questions to sections...")
@@ -217,6 +238,213 @@ class SectionQuestionExtractor:
         
         logger.info(f"Counted {max_count} questions in content ({len(content)} chars)")
         return max_count
+    
+    def _extract_with_retry(
+        self,
+        text_content: str,
+        subject: str,
+        document_structure: Dict,
+        expected_count: int,
+        progress_callback: Optional[callable] = None
+    ) -> List[Dict]:
+        """
+        Extract questions with retry logic if count is below threshold.
+        
+        If extracted count < 80% of expected, retry with more aggressive extraction.
+        """
+        all_questions = self._ai_extract_and_classify(
+            text_content, subject, document_structure, expected_count
+        )
+        
+        extracted_count = len(all_questions)
+        
+        # Check if we need to retry
+        if expected_count > 0 and extracted_count < expected_count * self.RETRY_THRESHOLD:
+            logger.warning(
+                f"Extraction incomplete: {extracted_count}/{expected_count} "
+                f"({extracted_count/expected_count*100:.1f}%). Retrying with aggressive extraction..."
+            )
+            
+            for retry in range(self.MAX_EXTRACTION_RETRIES):
+                if progress_callback:
+                    progress_callback(
+                        30 + retry * 15, 
+                        f"Retry {retry + 1}: Re-extracting missing questions..."
+                    )
+                
+                # Try aggressive extraction with smaller chunks and explicit missing ranges
+                missing_questions = self._extract_missing_questions(
+                    text_content, subject, document_structure, 
+                    all_questions, expected_count
+                )
+                
+                if missing_questions:
+                    # Merge with existing questions
+                    existing_nums = {q.get('question_number') for q in all_questions}
+                    for q in missing_questions:
+                        if q.get('question_number') not in existing_nums:
+                            all_questions.append(q)
+                            existing_nums.add(q.get('question_number'))
+                    
+                    logger.info(
+                        f"Retry {retry + 1}: Added {len(missing_questions)} questions. "
+                        f"Total now: {len(all_questions)}"
+                    )
+                
+                # Check if we've reached threshold
+                if len(all_questions) >= expected_count * self.RETRY_THRESHOLD:
+                    logger.info(f"Reached threshold after retry {retry + 1}")
+                    break
+        
+        return all_questions
+    
+    def _extract_missing_questions(
+        self,
+        text_content: str,
+        subject: str,
+        document_structure: Dict,
+        existing_questions: List[Dict],
+        expected_count: int
+    ) -> List[Dict]:
+        """
+        Extract questions that were missed in the initial extraction.
+        Uses smaller chunks and focuses on missing question numbers.
+        """
+        existing_nums = {q.get('question_number') for q in existing_questions if q.get('question_number')}
+        
+        # Find missing question numbers
+        all_expected_nums = set(range(1, expected_count + 1))
+        missing_nums = all_expected_nums - existing_nums
+        
+        if not missing_nums:
+            logger.info("No missing question numbers detected")
+            return []
+        
+        logger.info(f"Missing question numbers: {sorted(missing_nums)[:20]}...")
+        
+        # Try to extract missing questions using fallback regex method
+        # This is more reliable for specific question numbers
+        fallback_questions = self._fallback_extraction(text_content, subject)
+        
+        # Filter to only missing numbers
+        missing_questions = [
+            q for q in fallback_questions 
+            if q.get('question_number') in missing_nums
+        ]
+        
+        logger.info(f"Found {len(missing_questions)} missing questions via fallback extraction")
+        return missing_questions
+    
+    def _deduplicate_questions(self, questions: List[Dict]) -> List[Dict]:
+        """
+        Remove duplicate questions using multiple strategies:
+        1. Exact question number match
+        2. Text similarity for questions without numbers
+        
+        ENHANCED: Uses text similarity to catch near-duplicates.
+        """
+        if not questions:
+            return []
+        
+        unique_questions = []
+        seen_numbers = set()
+        seen_text_hashes = set()
+        
+        for q in questions:
+            q_num = q.get('question_number')
+            q_text = q.get('question_text', '').strip()
+            
+            # Skip empty questions
+            if not q_text:
+                continue
+            
+            # Strategy 1: Check by question number
+            if q_num is not None:
+                if q_num in seen_numbers:
+                    logger.debug(f"Skipping duplicate question number: {q_num}")
+                    continue
+                seen_numbers.add(q_num)
+            
+            # Strategy 2: Check by text similarity (first 100 chars normalized)
+            text_hash = self._get_text_hash(q_text)
+            if text_hash in seen_text_hashes:
+                logger.debug(f"Skipping duplicate question text: {q_text[:50]}...")
+                continue
+            seen_text_hashes.add(text_hash)
+            
+            unique_questions.append(q)
+        
+        removed_count = len(questions) - len(unique_questions)
+        if removed_count > 0:
+            logger.info(f"Deduplication removed {removed_count} duplicate questions")
+        
+        return unique_questions
+    
+    def _get_text_hash(self, text: str) -> str:
+        """
+        Generate a normalized hash for text comparison.
+        Removes whitespace, punctuation, and converts to lowercase.
+        """
+        import hashlib
+        
+        # Normalize text
+        normalized = text.lower()
+        normalized = re.sub(r'\s+', '', normalized)  # Remove whitespace
+        normalized = re.sub(r'[^\w]', '', normalized)  # Remove punctuation
+        normalized = normalized[:150]  # Use first 150 chars for comparison
+        
+        return hashlib.md5(normalized.encode()).hexdigest()
+    
+    def _enforce_section_types(
+        self,
+        questions: List[Dict],
+        document_structure: Dict
+    ) -> List[Dict]:
+        """
+        Enforce question types based on section structure.
+        
+        If a question falls within a section's range, override its type
+        with the section's type_hint (unless it's 'mixed').
+        """
+        sections = document_structure.get('sections', [])
+        if not sections:
+            return questions
+        
+        # Build a mapping of question number ranges to types
+        range_to_type = {}
+        for section in sections:
+            type_hint = section.get('type_hint', 'mixed')
+            if type_hint == 'mixed':
+                continue
+            
+            q_range = section.get('question_range', '')
+            if '-' in q_range:
+                try:
+                    start, end = map(int, q_range.split('-'))
+                    for num in range(start, end + 1):
+                        range_to_type[num] = type_hint
+                except ValueError:
+                    continue
+        
+        # Apply type overrides
+        overrides_applied = 0
+        for q in questions:
+            q_num = q.get('question_number')
+            if q_num and q_num in range_to_type:
+                expected_type = range_to_type[q_num]
+                current_type = q.get('question_type', 'single_mcq')
+                
+                if current_type != expected_type:
+                    logger.debug(
+                        f"Overriding Q{q_num} type: {current_type} -> {expected_type}"
+                    )
+                    q['question_type'] = expected_type
+                    overrides_applied += 1
+        
+        if overrides_applied > 0:
+            logger.info(f"Applied {overrides_applied} question type overrides from section structure")
+        
+        return questions
     
     def _preprocess_content(self, content: str) -> str:
         """Preprocess content to handle problematic elements before AI extraction.

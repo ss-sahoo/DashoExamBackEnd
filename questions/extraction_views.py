@@ -24,7 +24,7 @@ from questions.extraction_serializers import (
     BulkImportSerializer,
     ExtractionStatusSerializer,
 )
-from questions.tasks import extract_questions_task
+from questions.tasks import extract_questions_task, extract_questions_v3_task
 from questions.services.bulk_import import BulkImportService, BulkImportError
 
 logger = logging.getLogger('extraction')
@@ -64,6 +64,11 @@ class ExtractionJobViewSet(viewsets.ModelViewSet):
         Upload file and create extraction job
         
         POST /api/questions/extraction-jobs/upload/
+        
+        ENHANCED: Now supports optional pre-analysis for better subject separation.
+        Query params:
+        - use_pre_analysis: 'true' (default) to run pre-analysis first for better extraction
+        - use_v3: 'true' (default) to use V3 pipeline
         """
         serializer = ExtractionJobCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -99,7 +104,56 @@ class ExtractionJobViewSet(viewsets.ModelViewSet):
                 for chunk in uploaded_file.chunks():
                     destination.write(chunk)
             
-            # Create extraction job
+            # ENHANCED: Check if pre-analysis should be used (default: true)
+            use_pre_analysis = request.query_params.get('use_pre_analysis', 'true').lower() in ('true', '1', 'yes')
+            use_v3 = request.query_params.get('use_v3', 'true').lower() in ('true', '1', 'yes')
+            
+            pre_analysis_job = None
+            
+            if use_pre_analysis:
+                # Run pre-analysis to get subject-separated content
+                try:
+                    from questions.services.file_parser import FileParserService
+                    from questions.services.document_pre_analyzer import DocumentPreAnalyzer
+                    from questions.models import PreAnalysisJob
+                    
+                    logger.info(f"Running pre-analysis for {uploaded_file.name}")
+                    
+                    # Get pattern subjects
+                    pattern_subjects = list(
+                        pattern.sections.values_list('subject', flat=True).distinct()
+                    )
+                    
+                    # Parse file
+                    file_parser = FileParserService()
+                    text_content = file_parser.parse_file(file_path, uploaded_file.content_type)
+                    
+                    # Run pre-analysis
+                    analyzer = DocumentPreAnalyzer()
+                    result = analyzer.analyze_document(text_content, pattern_subjects)
+                    
+                    # Create pre-analysis job
+                    pre_analysis_job = PreAnalysisJob.objects.create(
+                        pattern=pattern,
+                        created_by=request.user,
+                        file_name=uploaded_file.name,
+                        file_type=uploaded_file.content_type,
+                        file_size=uploaded_file.size,
+                        file_path=file_path,
+                        status='completed',
+                    )
+                    pre_analysis_job.mark_completed(result)
+                    
+                    logger.info(
+                        f"Pre-analysis completed: {len(result.detected_subjects)} subjects, "
+                        f"{result.total_estimated_questions} questions"
+                    )
+                    
+                except Exception as pre_error:
+                    logger.warning(f"Pre-analysis failed, continuing without it: {pre_error}")
+                    pre_analysis_job = None
+            
+            # Create extraction job with link to pre-analysis if available
             job = ExtractionJob.objects.create(
                 exam=exam,
                 pattern=pattern,
@@ -109,35 +163,61 @@ class ExtractionJobViewSet(viewsets.ModelViewSet):
                 file_size=uploaded_file.size,
                 file_path=file_path,
                 status='pending',
+                pre_analysis_job=pre_analysis_job,  # Link to pre-analysis for subject separation
             )
             
+            # If pre-analysis was created, link it back
+            if pre_analysis_job:
+                pre_analysis_job.extraction_job = job
+                pre_analysis_job.save(update_fields=['extraction_job'])
+                logger.info(f"Linked ExtractionJob {job.id} to PreAnalysisJob {pre_analysis_job.id}")
+            
             # Trigger extraction task
-            # Check if Celery is available, otherwise run synchronously
             try:
                 if getattr(settings, 'CELERY_TASK_ALWAYS_EAGER', False):
                     # Run synchronously for testing
-                    extract_questions_task(str(job.id), use_v2=True)
+                    if use_v3:
+                        extract_questions_v3_task(str(job.id))
+                    else:
+                        extract_questions_task(str(job.id), use_v2=True)
                 else:
                     # Run async with Celery
-                    extract_questions_task.delay(str(job.id), use_v2=True)
+                    if use_v3:
+                        extract_questions_v3_task.delay(str(job.id))
+                    else:
+                        extract_questions_task.delay(str(job.id), use_v2=True)
             except Exception as task_error:
                 logger.warning(f"Celery task failed, running synchronously: {task_error}")
-                # Fallback to synchronous execution
-                from questions.services.extraction_pipeline_v2 import ExtractionPipelineV2
-                pipeline = ExtractionPipelineV2()
-                pipeline.process_file(job.id)
+                # Fallback to synchronous V3 execution
+                try:
+                    from questions.services.pipeline import ExtractionPipelineV3
+                    pipeline = ExtractionPipelineV3(job_id=str(job.id))
+                    pipeline.run()
+                except Exception as v3_error:
+                    logger.warning(f"V3 fallback failed, trying V2: {v3_error}")
+                    from questions.services.extraction_pipeline_v2 import ExtractionPipelineV2
+                    pipeline = ExtractionPipelineV2()
+                    pipeline.process_file(job.id)
             
             logger.info(
                 f"Created extraction job {job.id} for file {uploaded_file.name} "
-                f"by user {request.user.email}"
+                f"by user {request.user.email} (pre_analysis: {pre_analysis_job is not None})"
             )
             
+            response_data = {
+                'job_id': str(job.id),
+                'status': job.status,
+                'message': 'File uploaded successfully. Extraction started.',
+                'used_pre_analysis': pre_analysis_job is not None,
+            }
+            
+            if pre_analysis_job:
+                response_data['pre_analysis_job_id'] = str(pre_analysis_job.id)
+                response_data['detected_subjects'] = pre_analysis_job.detected_subjects
+                response_data['total_estimated_questions'] = pre_analysis_job.total_estimated_questions
+            
             return Response(
-                {
-                    'job_id': str(job.id),
-                    'status': job.status,
-                    'message': 'File uploaded successfully. Extraction started.'
-                },
+                response_data,
                 status=status.HTTP_201_CREATED
             )
             
@@ -148,6 +228,126 @@ class ExtractionJobViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
+    
+    @action(detail=False, methods=['POST'], parser_classes=[MultiPartParser, FormParser], url_path='upload-v3')
+    def upload_v3(self, request):
+        """
+        Dedicated endpoint for V3 extraction pipeline.
+        Designed for the new modern UI.
+        """
+        import os
+        import uuid
+        from django.core.files.storage import default_storage
+        from django.conf import settings
+        from django.utils.text import get_valid_filename
+        from questions.tasks import extract_questions_v3_task
+        from patterns.models import ExamPattern
+        from exams.models import Exam
+
+        # 1. Validate inputs
+        if 'file' not in request.FILES:
+            return Response({'error': 'No file uploaded'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        uploaded_file = request.FILES['file']
+        exam_id = request.data.get('exam_id') or request.data.get('exam')
+        pattern_id = request.data.get('pattern_id') or request.data.get('pattern')
+        
+        if not exam_id or not pattern_id:
+            return Response({'error': 'exam_id and pattern_id are required'}, status=status.HTTP_400_BAD_REQUEST)
+            
+        try:
+            # 2. Get related objects
+            exam = Exam.objects.get(id=exam_id)
+            pattern = ExamPattern.objects.get(id=pattern_id)
+            
+            # 3. Save file manually to ensure path is correct
+            file_name = get_valid_filename(uploaded_file.name)
+            base, ext = os.path.splitext(file_name)
+            if not ext: ext = ''
+            
+            # Create uploads dir if not exists
+            upload_subpath = 'extraction_uploads'
+            upload_dir = os.path.join(settings.MEDIA_ROOT, upload_subpath)
+            os.makedirs(upload_dir, exist_ok=True)
+            
+            # Unique filename
+            unique_name = f"{base}_{uuid.uuid4().hex[:8]}{ext}"
+            file_title = unique_name
+            full_path = os.path.join(upload_dir, unique_name)
+            
+            # Write file
+            with open(full_path, 'wb+') as destination:
+                for chunk in uploaded_file.chunks():
+                    destination.write(chunk)
+            
+            # IMPORTANT: For ExtractionJob, the file_path should be absolute or relative to media root?
+            # V3 pipeline expects ABSOLUTE path usually, or media-relative.
+            # Let's save absolute path for safety in the model
+            
+            # 4. Create Job
+            job = ExtractionJob.objects.create(
+                exam=exam,
+                pattern=pattern,
+                created_by=request.user,
+                file_name=uploaded_file.name,
+                file_type=uploaded_file.content_type,
+                file_size=uploaded_file.size,
+                file_path=full_path,
+                status='pending',
+            )
+            
+            logger.info(f"V3 Upload: Created job {job.id} for file {full_path}")
+            
+            # 5. Trigger V3 Task
+            # Support optional subject list for targeted extraction
+            # 5. Trigger V3 Task
+            # Support optional subject list for targeted extraction
+            subjects_list = request.data.get('subjects')
+            
+            # Handle list vs string from FormData
+            if subjects_list:
+                if isinstance(subjects_list, str):
+                    try:
+                        import json
+                        # Try parsing as JSON first (e.g. '["Physics"]')
+                        subjects_list = json.loads(subjects_list)
+                    except:
+                        # Fallback to comma-separated
+                        subjects_list = [s.strip() for s in subjects_list.split(',') if s.strip()]
+                elif isinstance(subjects_list, list):
+                    # Already a list? ensuring strings
+                    pass
+            
+            if not subjects_list:
+                subjects_list = None
+                
+            logger.info(f"V3 Upload: Parsed subjects for extraction: {subjects_list} (type: {type(subjects_list)})")
+            
+            # FORCE SYNC EXECUTION for V3 to ensure it runs in user's environment
+            # This bypasses Celery queue which seems to be stuck or not running
+            logger.info(f"Force running V3 extraction synchronously for job {job.id} with subjects: {subjects_list}")
+            try:
+                 extract_questions_v3_task(str(job.id), subjects=subjects_list)
+            except Exception as e:
+                 logger.error(f"Sync execution failed: {e}")
+                 # Fallback to delay if sync fails (unlikely)
+                 extract_questions_v3_task.delay(str(job.id), subjects=subjects_list)
+                
+            return Response({
+                'job_id': str(job.id),
+                'status': 'processing', # It should be processing or completed now
+                'message': 'Extraction V3 started successfully',
+                'file_url': f"{settings.MEDIA_URL}{upload_subpath}/{unique_name}"
+            }, status=status.HTTP_201_CREATED)
+            
+        except Exam.DoesNotExist:
+             return Response({'error': 'Exam not found'}, status=status.HTTP_404_NOT_FOUND)
+        except ExamPattern.DoesNotExist:
+             return Response({'error': 'Pattern not found'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            logger.error(f"Upload V3 failed: {e}", exc_info=True)
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
     @action(detail=True, methods=['get'], url_path='status')
     def get_status(self, request, pk=None):
         """
@@ -287,7 +487,23 @@ class ExtractedQuestionViewSet(viewsets.ModelViewSet):
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
-def bulk_import_questions(request):
+def bulk_import_extracted_questions(request):
+    """
+    Finalize and import questions extracted by the Agentic V3 pipeline.
+    """
+    from questions.services.bulk_import import BulkImportService
+    job_id = request.data.get('job_id')
+    mappings = request.data.get('mappings', [])
+    
+    try:
+        service = BulkImportService()
+        result = service.import_questions(job_id, mappings)
+        return Response(result, status=status.HTTP_200_OK)
+    except Exception as e:
+        logger.error(f"Bulk import failed: {e}")
+        return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+# Original bulk_import_questions below...
     """
     Bulk import extracted questions into exam
     
@@ -1027,14 +1243,8 @@ def confirm_pre_analysis(request, job_id):
                 status=status.HTTP_404_NOT_FOUND
             )
         
-        if not proceed:
-            return Response({
-                'success': True,
-                'message': 'Pre-analysis confirmed but extraction not started'
-            })
-        
         # Create extraction job with direct link to pre-analysis
-        # This enables the extraction pipeline to use subject_separated_content
+        # We create this ALWAYS so we have an ID to attach questions to (even for manual subject-wise extraction)
         extraction_job = ExtractionJob.objects.create(
             exam=exam,
             pattern=job.pattern,
@@ -1046,6 +1256,46 @@ def confirm_pre_analysis(request, job_id):
             status='pending',
             pre_analysis_job=job,  # Direct link for subject-separated extraction
         )
+        
+        # Also set the reverse link for backwards compatibility
+        job.extraction_job = extraction_job
+        job.save(update_fields=['extraction_job'])
+        
+        logger.info(
+            f"ExtractionJob {extraction_job.id} linked to PreAnalysisJob {job.id} "
+            f"with {len(job.subject_separated_content)} subjects"
+        )
+
+        if not proceed:
+            return Response({
+                'success': True,
+                'message': 'Pre-analysis confirmed. Job created but extraction not started (manual mode).',
+                'extraction_job_id': str(extraction_job.id),
+                'pre_analysis_job_id': str(job.id)
+            }, status=status.HTTP_201_CREATED)
+        
+        # Trigger extraction task if proceed is True
+        try:
+            if getattr(settings, 'CELERY_TASK_ALWAYS_EAGER', False):
+                extract_questions_task(str(extraction_job.id), use_v2=True)
+            else:
+                extract_questions_task.delay(str(extraction_job.id), use_v2=True)
+        except Exception as task_error:
+            logger.warning(f"Celery task failed, running synchronously: {task_error}")
+            from questions.services.extraction_pipeline_v2 import ExtractionPipelineV2
+            pipeline = ExtractionPipelineV2()
+            pipeline.process_file(extraction_job.id)
+        
+        logger.info(
+            f"Created extraction job {extraction_job.id} from pre-analysis {job.id}"
+        )
+        
+        return Response({
+            'success': True,
+            'message': 'Subject separation confirmed. Starting extraction...',
+            'extraction_job_id': str(extraction_job.id),
+            'pre_analysis_job_id': str(job.id)
+        }, status=status.HTTP_201_CREATED)
         
         # Also set the reverse link for backwards compatibility
         job.extraction_job = extraction_job
@@ -1293,207 +1543,93 @@ from questions.services.subject_section_detector import SubjectSectionDetector
 @permission_classes([IsAuthenticated])
 def extract_questions_by_section(request):
     """
-    Extract questions from each detected section independently.
+    Extract questions for a specific subject using AgentExtractionService.
+    Saves questions to the ExtractionJob so they appear in review.
     
     POST /api/questions/extract-by-section/
-    
-    Request:
-    {
-        "pre_analysis_job_id": "uuid-here",
-        "subject": "Physics",
-        "document_structure": {...}  // Optional, will use from pre-analysis if not provided
-    }
-    
-    Returns:
-    {
-        "success": true,
-        "subject": "Physics",
-        "sections": [
-            {
-                "section_name": "Section A - Single MCQ",
-                "section_type": "single_mcq",
-                "questions": [...],
-                "total_extracted": 20,
-                "expected_count": 20,
-                "extraction_confidence": 0.95
-            }
-        ],
-        "total_extracted": 60,
-        "total_expected": 60,
-        "message": "Extracted 60 questions from 3 sections"
-    }
     """
     try:
-        pre_analysis_job_id = request.data.get('pre_analysis_job_id')
+        extraction_job_id = request.data.get('extraction_job_id')
         subject = request.data.get('subject')
-        document_structure = request.data.get('document_structure')
         
-        if not pre_analysis_job_id:
+        if not extraction_job_id or not subject:
             return Response(
-                {'error': 'pre_analysis_job_id is required'},
+                {'error': 'extraction_job_id and subject are required'},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        if not subject:
-            return Response(
-                {'error': 'subject is required'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Get pre-analysis job
+        # Get Extraction Job
         try:
-            job = PreAnalysisJob.objects.get(id=pre_analysis_job_id)
-        except PreAnalysisJob.DoesNotExist:
-            return Response(
-                {'error': 'Pre-analysis job not found'},
-                status=status.HTTP_404_NOT_FOUND
-            )
+            job = ExtractionJob.objects.get(id=extraction_job_id)
+        except ExtractionJob.DoesNotExist:
+            return Response({'error': 'Extraction job not found'}, status=status.HTTP_404_NOT_FOUND)
         
         # Check permissions
-        if job.pattern.institute != request.user.institute:
-            return Response(
-                {'error': 'You do not have permission to access this job'},
-                status=status.HTTP_403_FORBIDDEN
-            )
-        
-        # Get subject data with case-insensitive lookup
-        subject_data = None
-        actual_subject_key = subject
-        
-        for key in job.subject_separated_content.keys():
-            if key.lower() == subject.lower():
-                subject_data = job.subject_separated_content[key]
-                actual_subject_key = key
-                break
-        
-        if subject_data is None:
-            return Response(
-                {'error': f'No content found for subject: {subject}'},
-                status=status.HTTP_404_NOT_FOUND
-            )
+        if job.exam.institute != request.user.institute:
+            return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
             
-        if isinstance(subject_data, dict):
-            subject_content = subject_data.get('content', '')
-            subject_instructions = subject_data.get('instructions', '')
-        else:
-            # Backward compatibility: old format (just string)
-            subject_content = str(subject_data) if subject_data else ''
-            subject_instructions = ''
+        # Get separated content from pre-analysis if available
+        separated_content = None
+        if job.pre_analysis_job and job.pre_analysis_job.subject_separated_content:
+            raw_content = job.pre_analysis_job.subject_separated_content
+            separated_content = {}
+             # Normalize content format
+            for s, data in raw_content.items():
+                if isinstance(data, dict):
+                    separated_content[s] = data.get('content', '')
+                else:
+                    separated_content[s] = str(data)
         
-        if not subject_content:
-            return Response(
-                {'error': f'No content found for subject: {subject}'},
-                status=status.HTTP_404_NOT_FOUND
-            )
-        
-        # Use the matched key for question counts as well
-        expected_count = job.subject_question_counts.get(actual_subject_key, 0)
-        if expected_count == 0 and actual_subject_key != subject:
-            # Try original key if not found under matched key
-            expected_count = job.subject_question_counts.get(subject, 0)
-            
-        # ALWAYS detect sections at subject level using subject-specific content and instructions
-        # This ensures accurate section detection per subject, not at document level
-        logger.info(f"Detecting sections for {actual_subject_key} using subject-specific content and instructions")
-        
-        try:
-            from questions.services.subject_section_detector import SubjectSectionDetector
-            
-            # Use the new subject-level section detector
-            detector = SubjectSectionDetector()
-            document_structure = detector.detect_sections_for_subject(
-                subject=actual_subject_key,
-                subject_content=subject_content,
-                subject_instructions=subject_instructions,
-                expected_question_count=expected_count
-            )
-            
-            logger.info(
-                f"Detected {len(document_structure.get('sections', []))} sections for {actual_subject_key}: "
-                f"{[s.get('name', 'Unknown') for s in document_structure.get('sections', [])]}"
-            )
-            
-        except Exception as e:
-            logger.error(f"Failed to detect sections for {actual_subject_key}: {e}", exc_info=True)
-            # Fallback to basic structure
-            document_structure = {
-                'sections': [{
-                    'name': f'{actual_subject_key} - General',
-                    'type_hint': 'mixed',
-                    'question_range': f'1-{expected_count}' if expected_count > 0 else 'All',
-                    'format_description': 'Mixed questions',
-                    'start_marker': ''
-                }],
-                'has_instructions': bool(subject_instructions),
-                'instructions_text': subject_instructions[:1000] if subject_instructions else ''
-            }
-        
-        logger.info(f"Expected question count for {actual_subject_key}: {expected_count}")
-        
-        # Extract questions by section
-        extractor = SectionQuestionExtractor()
-        result = extractor.extract_questions_by_sections(
-            subject_content,
-            document_structure,
-            actual_subject_key,
-            expected_question_count=expected_count  # Pass expected count
+        # 1. Initialize Agent Service
+        from questions.services.agent_extraction_service import AgentExtractionService
+        service = AgentExtractionService(
+            gemini_key=getattr(settings, 'GEMINI_API_KEY', ''),
+            mathpix_id=getattr(settings, 'MATHPIX_APP_ID', ''),
+            mathpix_key=getattr(settings, 'MATHPIX_APP_KEY', '')
         )
         
-        # Convert dataclass results to dicts
-        sections_data = []
-        for section_result in result['sections']:
-            sections_data.append({
-                'section_name': section_result.section_name,
-                'section_type': section_result.section_type,
-                'questions': section_result.questions,
-                'total_extracted': section_result.total_extracted,
-                'expected_count': section_result.expected_count,
-                'extraction_confidence': section_result.extraction_confidence,
-                'warnings': section_result.warnings
-            })
+        # 2. Run Extraction for the Subject
+        # Pass separated_content so it doesn't re-OCR
+        all_questions = service.run_full_pipeline(
+            job.file_path, 
+            subjects_to_process=[subject],
+            separated_content=separated_content
+        )
         
-        response_data = {
+        # 3. Save Questions to DB
+        saved_questions = []
+        for q_data in all_questions:
+            eq = ExtractedQuestion.objects.create(
+                job=job,
+                question_text=q_data.get('question_text', q_data.get('question', '')),
+                question_type=q_data.get('question_type', 'single_mcq'),
+                options=q_data.get('options', []),
+                correct_answer=q_data.get('correct_answer', q_data.get('answer', '')),
+                solution=q_data.get('explanation', q_data.get('solution', '')),
+                suggested_subject=subject,  # Explicitly set subject
+                structure=q_data.get('subparts', {}),
+                confidence_score=0.95
+            )
+            saved_questions.append(eq)
+        
+        # Update job status if needed (though frontend handles flow)
+        if job.status == 'pending':
+            job.status = 'processing'
+            job.save(update_fields=['status'])
+        
+        job.questions_extracted += len(saved_questions)
+        job.save(update_fields=['questions_extracted'])
+        
+        return Response({
             'success': True,
-            'subject': actual_subject_key,
-            'document_structure': document_structure,  # Include structure in response
-            'sections': sections_data,
-            'total_extracted': result['total_extracted'],
-            'total_expected': result['total_expected'],
-            'extraction_summary': result['extraction_summary'],
-            'message': f"Extracted {result['total_extracted']} questions from {len(sections_data)} sections",
-            'content_debug_info': {
-                'content_length': len(subject_content),
-                'content_preview': subject_content[:500] + "..." if len(subject_content) > 500 else subject_content
-            }
-        }
+            'subject': subject,
+            'total_extracted': len(saved_questions),
+            'message': f"Extracted and saved {len(saved_questions)} questions for {subject}"
+        }, status=status.HTTP_200_OK)
         
-        # Add warning if count mismatch
-        if expected_count > 0 and result['total_extracted'] != expected_count:
-            diff = result['total_extracted'] - expected_count
-            if diff > 0:
-                response_data['warning'] = f"Extracted {diff} more questions than expected ({expected_count}). Please verify."
-            else:
-                response_data['warning'] = f"Extracted {abs(diff)} fewer questions than expected ({expected_count}). Please verify."
-        
-        logger.info(
-            f"Section extraction for {subject}: "
-            f"{result['total_extracted']} questions from {len(sections_data)} sections"
-        )
-        
-        return Response(response_data, status=status.HTTP_200_OK)
-        
-    except SectionExtractionError as e:
-        logger.error(f"Section extraction failed: {e}")
-        return Response(
-            {'error': str(e)},
-            status=status.HTTP_400_BAD_REQUEST
-        )
     except Exception as e:
-        logger.error(f"Section extraction failed: {e}", exc_info=True)
-        return Response(
-            {'error': f'Failed to extract questions: {str(e)}'},
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR
-        )
+        logger.error(f"Agent extraction failed: {e}", exc_info=True)
+        return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 @api_view(['POST'])
@@ -2077,7 +2213,7 @@ def full_extraction_flow(request):
         )
 
 
-REPLACE
+
 
 
 @api_view(['POST'])

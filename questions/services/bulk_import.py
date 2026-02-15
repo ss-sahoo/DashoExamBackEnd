@@ -66,6 +66,26 @@ class BulkImportService:
             # Create mapping dictionary for quick lookup
             mapping_dict = {m['extracted_question_id']: m for m in question_mappings}
             
+            # Pre-fetch pattern sections for resolution
+            pattern_sections = []
+            if job.exam.pattern:
+                pattern_sections = list(job.exam.pattern.sections.all())
+                
+            def resolve_section(subject, q_type):
+                if not subject: return None
+                subject = subject.lower().strip()
+                # Try exact match on subject and type
+                for sec in pattern_sections:
+                    if sec.subject.lower().strip() == subject and sec.question_type == q_type:
+                        return sec
+                # Try match on subject only (fallback)
+                for sec in pattern_sections:
+                    if sec.subject.lower().strip() == subject:
+                        # Prefer section that accepts this type if generic "mixed" type exists? 
+                        # For now just take the first matching subject section
+                        return sec
+                return None
+
             # Track next question number per section
             section_next_numbers = {}
             
@@ -74,26 +94,33 @@ class BulkImportService:
                 if section_id not in section_next_numbers:
                     # Get the section to know its range
                     try:
-                        section = PatternSection.objects.get(id=section_id)
-                        # Find the last question in this section for this exam
-                        last_in_section = Question.objects.filter(
-                            exam=job.exam,
-                            pattern_section_id=section_id,
-                            is_active=True
-                        ).order_by('-question_number').first()
-                        
-                        if last_in_section:
-                            section_next_numbers[section_id] = last_in_section.question_number + 1
+                        if section_id is None:
+                            # Use a dummy ID for None section to track sequential numbers
+                            section_id = 'none' 
+                            
+                        if section_id == 'none':
+                            # Global sequential fallback
+                            last_question = Question.objects.filter(
+                                exam=job.exam,
+                                is_active=True
+                            ).order_by('-question_number').first()
+                            section_next_numbers[section_id] = (last_question.question_number + 1) if last_question else 1
                         else:
-                            # Start from section's start_question
-                            section_next_numbers[section_id] = section.start_question
+                            section = PatternSection.objects.get(id=section_id)
+                            # Find the last question in this section for this exam
+                            last_in_section = Question.objects.filter(
+                                exam=job.exam,
+                                pattern_section_id=section_id,
+                                is_active=True
+                            ).order_by('-question_number').first()
+                            
+                            if last_in_section:
+                                section_next_numbers[section_id] = last_in_section.question_number + 1
+                            else:
+                                # Start from section's start_question
+                                section_next_numbers[section_id] = section.start_question
                     except PatternSection.DoesNotExist:
-                        # Fallback to sequential numbering
-                        last_question = Question.objects.filter(
-                            exam=job.exam,
-                            is_active=True
-                        ).order_by('-question_number').first()
-                        section_next_numbers[section_id] = (last_question.question_number + 1) if last_question else 1
+                        section_next_numbers[section_id] = 1
                 
                 current = section_next_numbers[section_id]
                 section_next_numbers[section_id] += 1
@@ -104,6 +131,9 @@ class BulkImportService:
             failed_count = 0
             failed_questions = []
             
+            # Also need to create ExamQuestion objects
+            from questions.models import ExamQuestion
+            
             for extracted_q in extracted_questions:
                 mapping = mapping_dict.get(extracted_q.id)
                 if not mapping:
@@ -111,9 +141,19 @@ class BulkImportService:
                 
                 try:
                     with transaction.atomic():
-                        # Get question number based on section
+                        # Resolve section if missing
                         section_id = mapping.get('section_id')
-                        question_number = get_next_question_number_for_section(section_id)
+                        subj = mapping.get('subject') or extracted_q.assigned_subject or extracted_q.suggested_subject
+                        
+                        if not section_id and subj:
+                            found_sec = resolve_section(subj, extracted_q.question_type)
+                            if found_sec:
+                                section_id = found_sec.id
+                                mapping['section_id'] = section_id
+                                logger.info(f"Resolved section for Q {extracted_q.id} ({subj}): {found_sec.name}")
+
+                        # Get question number based on section
+                        question_number = get_next_question_number_for_section(section_id if section_id else 'none')
                         mapping['question_number'] = question_number
                         
                         # Create Question record
@@ -121,6 +161,20 @@ class BulkImportService:
                             extracted_q,
                             job.exam,
                             mapping
+                        )
+                        
+                        # Create ExamQuestion record (Required for exam structure)
+                        # Ensure we don't have duplicates
+                        ExamQuestion.objects.update_or_create(
+                            exam=job.exam,
+                            question_number=question_number,
+                            defaults={
+                                'question': question,
+                                'section_name': question.pattern_section_name or 'General',
+                                'marks': question.marks,
+                                'negative_marks': question.negative_marks,
+                                'order': question_number
+                            }
                         )
                         
                         # Mark as imported

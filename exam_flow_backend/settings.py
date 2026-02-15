@@ -369,3 +369,11 @@ ALLOWED_EXTRACTION_FILE_TYPES = [
     'image/png',  # .png (via Mathpix OCR)
 ]
 EXTRACTION_FILE_EXTENSIONS = ['.txt', '.docx', '.doc', '.pdf', '.jpg', '.jpeg', '.png']
+
+# ===========================
+# Extraction Service (Microservice) - V2 Architecture
+# ===========================
+# URL of the standalone extraction service (FastAPI + LangGraph)
+# Typically running on port 8020
+EXTRACTION_SERVICE_URL = os.getenv('EXTRACTION_SERVICE_URL', 'http://localhost:8020')
+EXTRACTION_SERVICE_API_KEY = os.getenv('EXTRACTION_SERVICE_API_KEY', '')

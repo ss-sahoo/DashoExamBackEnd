@@ -196,19 +196,25 @@ class GeminiExtractionServiceV2:
                 has_latex
             )
             
-            # SANITY CHECK: Warn if extracted > expected (possible AI hallucination)
+            # SANITY CHECK: Filter if extracted > expected (possible AI hallucination)
             if expected_count > 0 and len(processed_questions) > expected_count:
                 overage = len(processed_questions) - expected_count
                 logger.warning(
-                    f"SANITY CHECK FAILED: Extracted {len(processed_questions)} questions "
-                    f"but expected only {expected_count}. {overage} extra questions may be hallucinated!"
+                    f"SANITY CHECK: Extracted {len(processed_questions)} questions "
+                    f"but expected only {expected_count}. {overage} extra questions detected."
                 )
-                # If significantly over (more than 10% overage), this is a red flag
+                
+                # If significantly over (more than 10% overage), filter excess questions
                 if overage > max(3, expected_count * 0.1):
-                    logger.error(
-                        f"CRITICAL: Extracted {overage} extra questions ({(overage/expected_count)*100:.1f}% overage). "
-                        f"Possible AI hallucination or duplicate detection."
+                    logger.warning(
+                        f"Filtering {overage} potential hallucinated questions "
+                        f"({(overage/expected_count)*100:.1f}% overage)."
                     )
+                    # Filter using the hallucination filter
+                    processed_questions = self._filter_hallucinated_questions(
+                        processed_questions, expected_count
+                    )
+                    logger.info(f"After hallucination filtering: {len(processed_questions)} questions")
             
             # Step 5: Validate completeness
             if progress_callback:
@@ -1165,6 +1171,97 @@ Return JSON array with all questions:
             logger.warning("JSON repair failed - no questions recovered")
         
         return questions
+    
+    def _filter_hallucinated_questions(
+        self,
+        questions: List[Dict],
+        expected_count: int
+    ) -> List[Dict]:
+        """
+        Filter out potentially hallucinated questions when extraction exceeds expected count.
+        
+        Strategy:
+        1. Keep questions with valid question numbers (1 to expected_count)
+        2. Score remaining questions by confidence indicators
+        3. Remove lowest-confidence questions until we reach expected count
+        
+        Confidence indicators:
+        - Has valid question number within expected range
+        - Has non-empty question text (longer is better)
+        - Has options (for MCQ types)
+        - Has correct answer
+        - Question text doesn't look like instructions
+        """
+        if len(questions) <= expected_count:
+            return questions
+        
+        logger.info(f"Filtering {len(questions)} questions down to {expected_count}")
+        
+        # Score each question
+        scored_questions = []
+        for q in questions:
+            score = 0
+            q_num = q.get('question_number')
+            q_text = q.get('question_text', '')
+            options = q.get('options', [])
+            answer = q.get('correct_answer', '')
+            
+            # Score by question number validity
+            if q_num is not None:
+                if 1 <= q_num <= expected_count:
+                    score += 50  # High score for valid question number
+                elif q_num <= expected_count * 1.2:
+                    score += 20  # Medium score for slightly out of range
+                else:
+                    score -= 30  # Penalty for way out of range
+            
+            # Score by question text quality
+            if q_text:
+                text_len = len(q_text)
+                if text_len > 50:
+                    score += 20
+                elif text_len > 20:
+                    score += 10
+                else:
+                    score += 5
+                
+                # Penalty for instruction-like text
+                instruction_keywords = [
+                    'instruction', 'mark the correct', 'marks are awarded',
+                    'four options', 'no negative marking', 'consists of',
+                    'blue/black pen', 'rough work', 'do not use'
+                ]
+                if any(kw in q_text.lower() for kw in instruction_keywords):
+                    score -= 40
+            
+            # Score by having options (for MCQ)
+            if options and len(options) >= 2:
+                score += 15
+            
+            # Score by having answer
+            if answer:
+                score += 10
+            
+            # Score by question type validity
+            q_type = q.get('question_type', '')
+            if q_type in ['single_mcq', 'multiple_mcq', 'numerical', 'true_false', 'fill_blank', 'subjective']:
+                score += 5
+            
+            scored_questions.append((score, q))
+        
+        # Sort by score (highest first)
+        scored_questions.sort(key=lambda x: x[0], reverse=True)
+        
+        # Keep top expected_count questions
+        filtered = [q for score, q in scored_questions[:expected_count]]
+        
+        # Sort by question number for consistent ordering
+        filtered.sort(key=lambda x: x.get('question_number', 9999))
+        
+        removed_count = len(questions) - len(filtered)
+        logger.info(f"Removed {removed_count} low-confidence questions")
+        
+        return filtered
     
     def _post_process_questions(
         self,
