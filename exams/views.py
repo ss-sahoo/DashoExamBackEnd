@@ -243,6 +243,119 @@ class ExamDetailView(generics.RetrieveUpdateDestroyAPIView):
             raise APIException("Failed to delete exam. Please try again or contact support.")
 
 
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+def bulk_delete_exams(request):
+    """
+    Bulk delete multiple exams at once.
+    
+    Request body:
+    {
+        "exam_ids": [1, 2, 3, ...]
+    }
+    
+    Returns:
+    {
+        "success": True,
+        "deleted_count": 3,
+        "failed_deletions": [],
+        "message": "Successfully deleted 3 exams"
+    }
+    """
+    user = request.user
+    
+    # Check if user has permission to delete exams
+    if not user.can_manage_exams():
+        return Response({
+            'success': False,
+            'error': "You don't have permission to delete exams"
+        }, status=status.HTTP_403_FORBIDDEN)
+    
+    exam_ids = request.data.get('exam_ids', [])
+    
+    if not exam_ids:
+        return Response({
+            'success': False,
+            'error': "No exam IDs provided"
+        }, status=status.HTTP_400_BAD_REQUEST)
+    
+    if not isinstance(exam_ids, list):
+        return Response({
+            'success': False,
+            'error': "exam_ids must be a list"
+        }, status=status.HTTP_400_BAD_REQUEST)
+    
+    # Validate that all IDs are integers
+    try:
+        exam_ids = [int(id) for id in exam_ids]
+    except (ValueError, TypeError):
+        return Response({
+            'success': False,
+            'error': "All exam IDs must be valid integers"
+        }, status=status.HTTP_400_BAD_REQUEST)
+    
+    deleted_count = 0
+    failed_deletions = []
+    
+    try:
+        with transaction.atomic():
+            # Get all exams that belong to the user's institute
+            exams_to_delete = Exam.objects.filter(
+                id__in=exam_ids,
+                institute=user.institute
+            )
+            
+            # Check which exams were not found or don't belong to the institute
+            found_ids = set(exams_to_delete.values_list('id', flat=True))
+            missing_ids = set(exam_ids) - found_ids
+            
+            for missing_id in missing_ids:
+                failed_deletions.append({
+                    'id': missing_id,
+                    'reason': "Exam not found or you don't have permission to delete it"
+                })
+            
+            # Delete the exams
+            for exam in exams_to_delete:
+                try:
+                    exam.delete()
+                    deleted_count += 1
+                except Exception as e:
+                    failed_deletions.append({
+                        'id': exam.id,
+                        'reason': str(e)
+                    })
+    
+    except Exception as e:
+        logger = logging.getLogger(__name__)
+        logger.error(f"Error in bulk delete exams: {str(e)}")
+        return Response({
+            'success': False,
+            'error': "An error occurred while deleting exams. Please try again."
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    # Log the activity
+    try:
+        from accounts.models import ActivityLog
+        ActivityLog.objects.create(
+            title='Bulk Exams Deleted',
+            description=f'{deleted_count} exam(s) were deleted by {user.get_full_name()}.',
+            user=user,
+            status='success',
+            institute=user.institute
+        )
+    except Exception:
+        pass  # Don't fail if activity logging fails
+    
+    return Response({
+        'success': True,
+        'deleted_count': deleted_count,
+        'failed_deletions': failed_deletions,
+        'message': f"Successfully deleted {deleted_count} exam(s)" + 
+                   (f", {len(failed_deletions)} failed" if failed_deletions else "")
+    }, status=status.HTTP_200_OK)
+
+
 class ExamAttemptListView(generics.ListCreateAPIView):
     """List and create exam attempts"""
     serializer_class = ExamAttemptSerializer
