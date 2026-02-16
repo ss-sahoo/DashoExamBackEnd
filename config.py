@@ -49,6 +49,12 @@ GEMINI_TEMPERATURE = get_config('GEMINI_TEMPERATURE', default='0.7', cast=float)
 GEMINI_TOP_P = get_config('GEMINI_TOP_P', default='0.95', cast=float)
 GEMINI_MAX_TOKENS = get_config('GEMINI_MAX_TOKENS', default='8192', cast=int)
 
+# Azure OpenAI Configuration
+AZURE_OPENAI_API_KEY = get_config('AZURE_OPENAI_API_KEY', default='')
+AZURE_OPENAI_ENDPOINT = get_config('AZURE_OPENAI_ENDPOINT', default='')
+AZURE_OPENAI_VERSION = get_config('AZURE_OPENAI_VERSION', default='2024-02-15-preview')
+AZURE_OPENAI_MODEL_NAME = get_config('AZURE_OPENAI_MODEL_NAME', default='gpt-4o')
+
 USE_OLLAMA = get_config('USE_OLLAMA', default='false')
 OLLAMA_BASE_URL = get_config('OLLAMA_BASE_URL', default='http://localhost:11434')
 

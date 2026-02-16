@@ -16,6 +16,8 @@ urlpatterns = [
     path('questions/', views.QuestionListView.as_view(), name='question-list'),
     path('questions/<int:pk>/', views.QuestionDetailView.as_view(), name='question-detail'),
     path('questions/<int:question_id>/verify/', views.verify_question, name='verify-question'),
+    path('questions/<int:question_id>/images/', views.add_question_image, name='add-question-image'),
+    path('questions/images/<int:image_id>/', views.delete_question_image, name='delete-question-image'),
     path('questions/<int:question_id>/comments/', views.add_question_comment, name='add-question-comment'),
     
     # Question banks

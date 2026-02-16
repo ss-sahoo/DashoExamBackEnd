@@ -82,17 +82,22 @@ def upload_answer_sheet(request, exam_id):
     # Save uploaded file temporarily
     file_path = f"ai_eval_uploads/{exam.id}/{uploaded_file.name}"
     saved_path = default_storage.save(file_path, uploaded_file)
-    full_path = default_storage.path(saved_path)
     
     auto_evaluate = request.data.get('auto_evaluate', 'true').lower() == 'true'
     
     if auto_evaluate:
+        # Create a temp file to ensure we have a local path
+        with tempfile.NamedTemporaryFile(suffix=f".{ext}", delete=False) as tmp:
+            for chunk in uploaded_file.chunks():
+                tmp.write(chunk)
+            tmp_path = tmp.name
+
         try:
             # Run AI evaluation
             marking_strictness = exam.marking_strictness or 'moderate'
             result = evaluate_subjective_submission(
                 exam_id=exam.id,
-                pdf_path=full_path,
+                pdf_path=tmp_path,
                 marking_strictness=marking_strictness
             )
             
@@ -110,6 +115,7 @@ def upload_answer_sheet(request, exam_id):
                                 'grades': result.get('grades', []),
                                 'student_name': result.get('student_name'),
                                 'report': result.get('report'),
+                                'max_marks': result.get('max_marks'),
                                 'file_path': saved_path,
                             }
                         },
@@ -138,6 +144,10 @@ def upload_answer_sheet(request, exam_id):
                 'success': False,
                 'error': str(e),
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        finally:
+            # Cleanup temp local file
+            if 'tmp_path' in locals() and os.path.exists(tmp_path):
+                os.remove(tmp_path)
     
     else:
         # Just save the file for later processing
@@ -182,12 +192,17 @@ def evaluate_answer_sheet(request, exam_id):
     student = get_object_or_404(User, id=student_id)
     
     try:
-        full_path = default_storage.path(file_path)
+        # Download file to local temp path
+        with tempfile.NamedTemporaryFile(suffix=f".{file_path.split('.')[-1]}", delete=False) as tmp:
+            with default_storage.open(file_path, 'rb') as f:
+                tmp.write(f.read())
+            tmp_path = tmp.name
+
         marking_strictness = exam.marking_strictness or 'moderate'
         
         result = evaluate_subjective_submission(
             exam_id=exam.id,
-            pdf_path=full_path,
+            pdf_path=tmp_path,
             marking_strictness=marking_strictness
         )
         
@@ -205,6 +220,7 @@ def evaluate_answer_sheet(request, exam_id):
                             'grades': result.get('grades', []),
                             'student_name': result.get('student_name'),
                             'report': result.get('report'),
+                            'max_marks': result.get('max_marks'),
                             'file_path': file_path,
                         }
                     },
@@ -232,6 +248,10 @@ def evaluate_answer_sheet(request, exam_id):
             'success': False,
             'error': str(e),
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    finally:
+        # Cleanup temp local file
+        if 'tmp_path' in locals() and os.path.exists(tmp_path):
+            os.remove(tmp_path)
 
 
 @api_view(['GET'])
@@ -341,10 +361,17 @@ def list_submissions(request, exam_id):
     """
     exam = get_object_or_404(Exam, id=exam_id)
     
-    attempts = ExamAttempt.objects.filter(
-        exam=exam,
-        answers__has_key='ai_evaluation'
-    ).select_related('student').order_by('-submitted_at')
+    if request.user.role.lower() == 'student':
+        attempts = ExamAttempt.objects.filter(
+            exam=exam,
+            student=request.user,
+            answers__has_key='ai_evaluation'
+        ).select_related('student').order_by('-submitted_at')
+    else:
+        attempts = ExamAttempt.objects.filter(
+            exam=exam,
+            answers__has_key='ai_evaluation'
+        ).select_related('student').order_by('-submitted_at')
     
     submissions = []
     for attempt in attempts:
@@ -360,7 +387,7 @@ def list_submissions(request, exam_id):
             'evaluation_result': {
                 'student_name': ai_data.get('student_name'),
                 'total_score': float(attempt.score) if attempt.score else 0,
-                'max_score': float(attempt.score * 100 / attempt.percentage) if attempt.percentage and attempt.score else 0,
+                'max_score': float(ai_data.get('max_marks')) if ai_data.get('max_marks') is not None else round(float(attempt.score * 100 / attempt.percentage), 1) if attempt.percentage and attempt.score else 0,
                 'percentage': float(attempt.percentage) if attempt.percentage else 0,
                 'grades': ai_data.get('grades', []),
                 'report': ai_data.get('report', ''),
@@ -370,3 +397,105 @@ def list_submissions(request, exam_id):
         })
     
     return Response(submissions)
+    
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+def update_submission_mark(request, exam_id, attempt_id):
+    """
+    Update a specific question mark and reasoning in an AI evaluation.
+    
+    POST /api/exams/{exam_id}/submissions/{attempt_id}/update-mark/
+    
+    Request:
+        - question_no: int or str (e.g., 6)
+        - part_no: str or null (e.g., "i")
+        - mark: float
+        - reasoning: str (optional)
+    """
+    exam = get_object_or_404(Exam, id=exam_id)
+    attempt = get_object_or_404(ExamAttempt, id=attempt_id, exam=exam)
+    
+    # Check permissions
+    if not request.user.can_manage_exams():
+        return Response(
+            {'error': 'Permission denied. Only teachers and admins can modify marks.'},
+            status=status.HTTP_403_FORBIDDEN
+        )
+    
+    if 'ai_evaluation' not in attempt.answers:
+        return Response(
+            {'error': 'No AI evaluation data found for this attempt'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    question_no = request.data.get('question_no')
+    part_no = request.data.get('part_no')
+    new_mark = request.data.get('mark')
+    new_reasoning = request.data.get('reasoning')
+    
+    if question_no is None or new_mark is None:
+        return Response(
+            {'error': 'question_no and mark are required'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    ai_data = attempt.answers['ai_evaluation']
+    grades = ai_data.get('grades', [])
+    
+    updated = False
+    for grade in grades:
+        # Match by question_no and part_no
+        # Using string comparison for Q.No. to handle both int and str
+        if str(grade.get('Q.No.')) == str(question_no) and grade.get('Part.No.') == part_no:
+            try:
+                grade['mark'] = float(new_mark)
+            except (ValueError, TypeError):
+                return Response({'error': 'Invalid mark value'}, status=status.HTTP_400_BAD_REQUEST)
+                
+            if new_reasoning is not None:
+                grade['reasoning'] = new_reasoning
+            updated = True
+            break
+            
+    if not updated:
+        return Response(
+            {'error': f'Question {question_no} (part {part_no}) not found in evaluation results'},
+            status=status.HTTP_404_NOT_FOUND
+        )
+    
+    # Recalculate totals
+    total_marks = sum(g.get("mark", 0) for g in grades if isinstance(g.get("mark"), (int, float)))
+    
+    # Get max_marks from stored data or attempt to recalculate
+    max_marks = float(ai_data.get('max_marks', 0))
+    if max_marks == 0 and attempt.percentage and attempt.score:
+        max_marks = float(attempt.score * 100 / attempt.percentage)
+    
+    # Update AI data
+    ai_data['grades'] = grades
+    ai_data['total_marks'] = total_marks
+    
+    # Regenerate report
+    service = AIEvaluationService(exam)
+    student_name = ai_data.get('student_name', attempt.student.get_full_name() or attempt.student.username)
+    ai_data['report'] = service.generate_report(grades, student_name)
+    
+    # Update attempt score and percentage
+    attempt.score = total_marks
+    if max_marks > 0:
+        attempt.percentage = (total_marks / max_marks * 100)
+    else:
+        attempt.percentage = 0
+    
+    # Save attempt
+    attempt.answers['ai_evaluation'] = ai_data
+    attempt.save()
+    
+    return Response({
+        'success': True,
+        'message': 'Mark updated successfully',
+        'total_score': attempt.score,
+        'percentage': attempt.percentage,
+        'report': ai_data['report'],
+        'grades': grades
+    })

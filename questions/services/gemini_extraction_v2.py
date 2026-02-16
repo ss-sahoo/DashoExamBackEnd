@@ -899,7 +899,7 @@ Based on the document structure detected above, classify each question:
 - **numerical**: Answer is a number/value (no options, needs calculation)
 - **true_false**: True/False or T/F options only
 - **fill_blank**: Has blank spaces ___ to fill
-- **subjective**: Requires explanation/description (no options)
+- **subjective**: Requires descriptive explanation (no options). Look for answer text after 'Answer:', 'Ans:', or following the question.
 - **match_following**: Has two columns to match
 - **assertion_reason**: Assertion and Reason format
 
@@ -917,13 +917,13 @@ Return a JSON array with all questions found:
     "detected_section": "Section A - Single Correct"
   }},
   {{
-    "question_number": 2,
-    "question_text": "Another question text",
-    "question_type": "numerical",
+    "question_number": 3,
+    "question_text": "What are the three laws of motion?",
+    "question_type": "subjective",
     "options": [],
-    "correct_answer": "42",
-    "solution": "Solution here",
-    "detected_section": "Numerical Type"
+    "correct_answer": "1. Law of Inertia, 2. F=ma, 3. Action-Reaction.",
+    "solution": "Sir Isaac Newton formulated these laws in 1687.",
+    "detected_section": "Subjective Section"
   }}
 ]
 ```
@@ -933,9 +933,15 @@ Return a JSON array with all questions found:
 2. question_text: Full question text WITHOUT the options
 3. question_type: One of the types listed above (use section info to determine)
 4. options: Array of option texts (empty array for numerical/subjective)
-5. correct_answer: Single letter A/B/C/D, multiple letters "A,C", or actual value
+5. correct_answer: Single letter A/B/C/D, multiple letters "A,C", actual numerical value, or the FULL descriptive text for subjective answers.
 6. solution: Text after "Solution:" or "Explanation:" (can be empty string "")
 7. detected_section: Which section this question belongs to (if known)
+
+## SUBJETIVE QUESTION RULE
+For **subjective** questions, you MUST separate the question from the answer. 
+- Put the question itself in `question_text`.
+- Put the model answer or key points provided in the document in `correct_answer`.
+- DO NOT combine them into `question_text`.
 
 ## IMPORTANT
 - Return ONLY the JSON array, no other text
@@ -997,7 +1003,7 @@ Each question follows this pattern:
 - multiple_mcq: 4 options, MULTIPLE correct
 - numerical: Answer is a number
 - true_false: True/False options
-- subjective: Requires explanation
+- subjective: Requires explanation. Put answer text in correct_answer.
 
 ## OUTPUT
 Return JSON array with all questions:
