@@ -1502,7 +1502,8 @@ def student_dashboard_data(request):
                 'used_attempts': used_attempts,
                 'time_remaining': (exam.end_date - now).total_seconds(),
                 'can_start': True,
-                'status': 'available'
+                'status': 'available',
+                'exam_mode': exam.exam_mode
             })
     
     # Format ongoing exams
@@ -1525,6 +1526,7 @@ def student_dashboard_data(request):
             'total_questions': attempt.exam.total_questions,
             'violations_count': attempt.violations_count,
             'status': attempt.status,
+            'exam_mode': attempt.exam.exam_mode,
             'can_resume': True
         })
     
@@ -1545,7 +1547,8 @@ def student_dashboard_data(request):
             'total_questions': attempt.exam.total_questions,
             'time_spent': attempt.time_spent,
             'violations_count': attempt.violations_count,
-            'status': attempt.status
+            'status': attempt.status,
+            'exam_mode': attempt.exam.exam_mode
         })
     
     # Format scheduled exams
