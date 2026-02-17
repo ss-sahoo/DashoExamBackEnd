@@ -364,6 +364,8 @@ class UserListView(generics.ListAPIView):
     def get_queryset(self):
         user = self.request.user
         if user.role in ['super_admin']:
+            if hasattr(user, 'institute_id') and user.institute_id:
+                return User.objects.filter(institute_id=user.institute_id)
             return User.objects.all()
         if user.is_institute_admin():
             return User.objects.filter(institute=user.institute)
@@ -378,6 +380,8 @@ class UserDetailView(generics.RetrieveUpdateDestroyAPIView):
     def get_queryset(self):
         user = self.request.user
         if user.role in ['super_admin']:
+            if hasattr(user, 'institute_id') and user.institute_id:
+                return User.objects.filter(institute_id=user.institute_id)
             return User.objects.all()
         if user.is_institute_admin():
             return User.objects.filter(institute=user.institute)
@@ -659,7 +663,10 @@ def all_people_view(request):
     
     # Base queryset - admins see all, others see their institute
     if user.role in ['super_admin']:
-        queryset = User.objects.all()
+        if user.institute_id:
+            queryset = User.objects.filter(institute_id=user.institute_id)
+        else:
+            queryset = User.objects.all()
     elif user.role in ['institute_admin', 'admin', 'exam_admin']:
         queryset = User.objects.filter(
             Q(institute=user.institute) | Q(center__institute=user.institute)

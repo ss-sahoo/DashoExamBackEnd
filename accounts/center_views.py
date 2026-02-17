@@ -38,8 +38,13 @@ def list_centers(request):
     
     # Query filters
     institute_id = request.query_params.get('institute_id')
-    if institute_id:
-        centers = centers.filter(institute_id=institute_id)
+    
+    # If user has an institute, they should only see centers for that institute
+    # unless they are a global super admin (no institute assigned)
+    effective_institute_id = institute_id or getattr(user, 'institute_id', None)
+    
+    if effective_institute_id:
+        centers = centers.filter(institute_id=effective_institute_id)
     
     city = request.query_params.get('city')
     if city:
