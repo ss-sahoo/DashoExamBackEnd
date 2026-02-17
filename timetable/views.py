@@ -106,27 +106,43 @@ def create_timetable_with_slots(request):
                 status=status.HTTP_400_BAD_REQUEST,
             )
     else:  # SUPER_ADMIN
+        center_id = data.get("center_id")
         center_name = data.get("center_name")
-        if not center_name:
+        
+        if center_id:
+            try:
+                center = Center.objects.get(id=center_id)
+            except Center.DoesNotExist:
+                return Response(
+                    {"detail": f"Center with ID '{center_id}' not found."},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+            except (ValueError, TypeError):
+                 return Response(
+                    {"detail": f"Invalid center_id format: '{center_id}'."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        elif center_name:
+            try:
+                center = Center.objects.get(name=center_name)
+            except Center.DoesNotExist:
+                return Response(
+                    {"detail": f"Center '{center_name}' not found."},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+            except Center.MultipleObjectsReturned:
+                return Response(
+                    {
+                        "detail": (
+                            f"Multiple centers found with name '{center_name}'. "
+                            "Please use center_id instead."
+                        )
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        else:
             return Response(
-                {"detail": "center_name is required for Super Admin."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        try:
-            center = Center.objects.get(name=center_name)
-        except Center.DoesNotExist:
-            return Response(
-                {"detail": f"Center '{center_name}' not found."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-        except Center.MultipleObjectsReturned:
-            return Response(
-                {
-                    "detail": (
-                        f"Multiple centers found with name '{center_name}'. "
-                        "Please use a more specific name or handle via center_id."
-                    )
-                },
+                {"detail": "center_id or center_name is required for Super Admin."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 

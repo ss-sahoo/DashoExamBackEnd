@@ -41,7 +41,7 @@ def list_centers(request):
     
     # If user has an institute, they should only see centers for that institute
     # unless they are a global super admin (no institute assigned)
-    effective_institute_id = institute_id or getattr(user, 'institute_id', None)
+    effective_institute_id = getattr(user, 'institute_id', None) or institute_id
     
     if effective_institute_id:
         centers = centers.filter(institute_id=effective_institute_id)

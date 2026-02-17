@@ -363,10 +363,19 @@ class UserListView(generics.ListAPIView):
 
     def get_queryset(self):
         user = self.request.user
-        if user.role in ['super_admin']:
-            if hasattr(user, 'institute_id') and user.institute_id:
-                return User.objects.filter(institute_id=user.institute_id)
-            return User.objects.all()
+        # Priority: User's assigned institute (strict) > Query parameter (filter)
+        eff_institute_id = getattr(user, 'institute_id', None) or self.request.query_params.get('institute_id')
+        
+        center_id = self.request.query_params.get('center_id')
+        
+        if user.role in ['super_admin', 'SUPER_ADMIN']:
+            queryset = User.objects.all()
+            if eff_institute_id:
+                queryset = queryset.filter(institute_id=eff_institute_id)
+            if center_id:
+                queryset = queryset.filter(center_id=center_id)
+            return queryset
+        
         if user.is_institute_admin():
             return User.objects.filter(institute=user.institute)
         return User.objects.filter(id=user.id)
@@ -379,10 +388,14 @@ class UserDetailView(generics.RetrieveUpdateDestroyAPIView):
 
     def get_queryset(self):
         user = self.request.user
+        # Priority: User's assigned institute (strict) > Query parameter (filter)
+        eff_institute_id = getattr(user, 'institute_id', None) or self.request.query_params.get('institute_id')
+        
         if user.role in ['super_admin']:
-            if hasattr(user, 'institute_id') and user.institute_id:
-                return User.objects.filter(institute_id=user.institute_id)
+            if eff_institute_id:
+                return User.objects.filter(institute_id=eff_institute_id)
             return User.objects.all()
+        
         if user.is_institute_admin():
             return User.objects.filter(institute=user.institute)
         return User.objects.filter(id=user.id)
@@ -663,8 +676,10 @@ def all_people_view(request):
     
     # Base queryset - admins see all, others see their institute
     if user.role in ['super_admin']:
-        if user.institute_id:
-            queryset = User.objects.filter(institute_id=user.institute_id)
+        # Priority: User's assigned institute (strict) > Query parameter (filter)
+        effective_institute_id = getattr(user, 'institute_id', None) or request.GET.get('institute_id')
+        if effective_institute_id:
+            queryset = User.objects.filter(institute_id=effective_institute_id)
         else:
             queryset = User.objects.all()
     elif user.role in ['institute_admin', 'admin', 'exam_admin']:
