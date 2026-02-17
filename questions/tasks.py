@@ -50,13 +50,10 @@ def extract_questions_v3_task(self, job_id: str, subjects: list = None):
         
         # Try to use pre-analysis or perform on-the-fly separation
         separated_content = None
-        subjects = []
-        
         # 1. Use passed subjects if available
         if subjects:
              logger.info(f"Task received specific subjects to extract: {subjects}")
-             # No need to separate content or detect subjects if passed explicitly
-             # We assume AgentExtractionService will handle extraction from full text if no separated content
+             # Preserving the passed subjects
         
         # 2. Use existing PreAnalysisJob if available
         elif job.pre_analysis_job and job.pre_analysis_job.subject_separated_content:
@@ -78,12 +75,21 @@ def extract_questions_v3_task(self, job_id: str, subjects: list = None):
         else:
             logger.info("No pre-analysis found. Performing on-the-fly separation...")
             try:
-                from questions.services.agent_extraction_service import MathpixOCR
-                from questions.services.document_pre_analyzer import DocumentPreAnalyzer
+                # We need text for analyzer. Use Mathpix if available, else local parser.
+                markdown_text = ""
+                if getattr(settings, 'MATHPIX_APP_ID', ''):
+                    try:
+                        from questions.services.agent_extraction_service import MathpixOCR
+                        mathpix = MathpixOCR(getattr(settings, 'MATHPIX_APP_ID', ''), getattr(settings, 'MATHPIX_APP_KEY', ''))
+                        markdown_text = mathpix.process_pdf(job.file_path)
+                    except Exception as e:
+                        logger.warning(f"Mathpix failed during on-the-fly separation: {e}")
                 
-                # We need text for analyzer. Use Mathpix if available.
-                mathpix = MathpixOCR(getattr(settings, 'MATHPIX_APP_ID', ''), getattr(settings, 'MATHPIX_APP_KEY', ''))
-                markdown_text = mathpix.process_pdf(job.file_path)
+                if not markdown_text:
+                    logger.info("Using local parser for on-the-fly separation text extraction.")
+                    from questions.services.file_parser import FileParserService
+                    parser = FileParserService()
+                    markdown_text = parser.parse_file(job.file_path, 'application/pdf')
                 
                 # Get pattern subjects to guide separation
                 pattern_subjects = []
@@ -91,6 +97,7 @@ def extract_questions_v3_task(self, job_id: str, subjects: list = None):
                     pattern_subjects = list(job.pattern.sections.values_list('subject', flat=True).distinct())
                 
                 # Run analyzer
+                from questions.services.document_pre_analyzer import DocumentPreAnalyzer
                 analyzer = DocumentPreAnalyzer(api_key=getattr(settings, 'GEMINI_API_KEY', None))
                 result = analyzer.analyze_document(markdown_text, pattern_subjects)
                 
@@ -147,14 +154,15 @@ def extract_questions_v3_task(self, job_id: str, subjects: list = None):
         for q_data in raw_questions:
             ExtractedQuestion.objects.create(
                 job=job,
-                question_text=q_data.get('question_text', q_data.get('question', '')),
-                question_type=q_data.get('question_type', 'single_mcq'),
-                options=q_data.get('options', []),
-                correct_answer=q_data.get('correct_answer', q_data.get('answer', '')),
-                solution=q_data.get('explanation', q_data.get('solution', '')),
-                suggested_subject=q_data.get('subject', ''),
-                structure=q_data.get('subparts', {}),
-                confidence_score=0.95
+                question_text=q_data.get('question_text') or q_data.get('question') or '',
+                question_type=q_data.get('question_type') or 'single_mcq',
+                options=q_data.get('options') or [],
+                correct_answer=q_data.get('correct_answer') or q_data.get('answer') or '',
+                solution=q_data.get('explanation') or q_data.get('solution') or '',
+                suggested_subject=q_data.get('subject') or '',
+                structure=q_data.get('subparts') or q_data.get('structure') or {},
+                images_data=q_data.get('images_data') or {},
+                confidence_score=q_data.get('confidence_score', 0.95)
             )
             
         job.status = 'completed'

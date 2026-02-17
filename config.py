@@ -69,3 +69,6 @@ EMAIL_USE_TLS = get_config('EMAIL_USE_TLS', default='True', cast=bool)
 EMAIL_HOST_USER = get_config('EMAIL_HOST_USER', default='diracai.info@gmail.com')
 EMAIL_HOST_PASSWORD = get_config('EMAIL_HOST_PASSWORD', default='fibmduvwoxsjtjvh')
 DEFAULT_FROM_EMAIL = get_config('DEFAULT_FROM_EMAIL', default='Exam Flow System <diracai.info@gmail.com>')
+
+# Redis Configuration
+REDIS_PASSWORD = get_config('REDIS_PASSWORD', default='')
