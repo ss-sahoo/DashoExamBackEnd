@@ -278,6 +278,7 @@ def create_batch(request):
     
     try:
         batch = Batch.objects.create(
+            center=center,
             program=program,
             code=code,
             name=name,
@@ -534,12 +535,19 @@ def list_batches(request):
     user = request.user
     program_name = request.query_params.get("program_name", "")
     center_name = request.query_params.get("center_name", "")
+    center_id = request.query_params.get("center_id", "")
     
     if user.role in ['super_admin', 'SUPER_ADMIN']:
         batches = Batch.objects.all()
-        if center_name:
-            # Filter by direct center field
-            batches = batches.filter(center__name__icontains=center_name)
+        if center_id:
+            from django.db.models import Q
+            # Show batches for the selected center AND orphaned batches (no center)
+            batches = batches.filter(Q(center__id=center_id) | Q(center__isnull=True))
+        elif center_name:
+            from django.db.models import Q
+            # Filter by direct center field, also include orphaned batches
+            batches = batches.filter(Q(center__name__icontains=center_name) | Q(center__isnull=True))
+        
         if program_name:
             batches = batches.filter(program__name__icontains=program_name)
     elif user.role in ['admin', 'ADMIN', 'institute_admin']:
@@ -555,9 +563,20 @@ def list_batches(request):
         )
         if program_name:
             batches = batches.filter(program__name__icontains=program_name)
+    elif user.role in ['teacher', 'TEACHER']:
+        # Teachers see batches they are assigned to
+        batches = Batch.objects.filter(teachers=user)
+        if program_name:
+            batches = batches.filter(program__name__icontains=program_name)
+    elif user.role in ['student', 'STUDENT']:
+        # Students see only batches they are enrolled in
+        batches = Batch.objects.filter(
+            enrollments__student=user,
+            enrollments__status=Enrollment.STATUS_ACTIVE
+        )
     else:
         return Response(
-            {"detail": "Only Super Admin and Admin can view batches."},
+            {"detail": "You do not have permission to view batches."},
             status=status.HTTP_403_FORBIDDEN,
         )
     

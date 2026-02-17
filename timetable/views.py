@@ -882,6 +882,27 @@ def list_timetables(request):
                 )
         else:
             timetables = Timetable.objects.all()
+    elif user.role.lower() in ('teacher',):
+        # Teachers see timetables for their center
+        if user.center:
+            timetables = Timetable.objects.filter(center=user.center)
+        else:
+            timetables = Timetable.objects.none()
+    elif user.role.lower() in ('student',):
+        # Students see timetables for their center
+        if user.center:
+            timetables = Timetable.objects.filter(center=user.center)
+        else:
+            # Try to find center from enrolled batches
+            from accounts.models import Enrollment
+            enrolled_centers = Enrollment.objects.filter(
+                student=user,
+                status=Enrollment.STATUS_ACTIVE
+            ).values_list('batch__center', flat=True).distinct()
+            if enrolled_centers:
+                timetables = Timetable.objects.filter(center_id__in=enrolled_centers)
+            else:
+                timetables = Timetable.objects.none()
     else:
         return Response(
             {"detail": "You don't have permission to view timetables."},
