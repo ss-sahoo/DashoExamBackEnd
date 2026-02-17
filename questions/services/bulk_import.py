@@ -276,6 +276,26 @@ class BulkImportService:
             is_active=True,
         )
         
+        # Create QuestionImage records if images_data exists
+        if extracted_q.images_data:
+            from questions.models import QuestionImage
+            from django.core.files import File
+            import os
+            from django.conf import settings
+            
+            for image_id, relative_path in extracted_q.images_data.items():
+                full_path = os.path.join(settings.MEDIA_ROOT, relative_path)
+                if os.path.exists(full_path):
+                    with open(full_path, 'rb') as f:
+                        QuestionImage.objects.create(
+                            question=question,
+                            image=File(f, name=os.path.basename(full_path)),
+                            caption=f"Extracted Image {image_id}"
+                        )
+                    logger.info(f"Imported image {image_id} for question {question.id}")
+                else:
+                    logger.warning(f"Image path {full_path} not found for question {question.id}")
+        
         return question
     
     def assign_question_numbers(

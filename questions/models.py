@@ -612,23 +612,27 @@ class ExtractedQuestion(models.Model):
     )
     
     # Extracted question data
-    question_text = models.TextField(help_text='Question text extracted from file')
+    question_text = models.TextField(null=True, blank=True, help_text='Question text extracted from file')
     question_type = models.CharField(
         max_length=20,
         choices=Question.QUESTION_TYPE_CHOICES,
+        null=True,
+        blank=True,
         help_text='Type of question'
     )
     options = models.JSONField(
         default=list,
         blank=True,
+        null=True,
         help_text='Answer options for MCQ questions'
     )
     structure = models.JSONField(
         default=dict,
         blank=True,
+        null=True,
         help_text='Defines nested sub-questions or internal choices for complex questions'
     )
-    correct_answer = models.TextField(help_text='Correct answer or solution')
+    correct_answer = models.TextField(null=True, blank=True, help_text='Correct answer or solution')
     solution = models.TextField(
         blank=True,
         help_text='Detailed solution explanation'
@@ -636,6 +640,11 @@ class ExtractedQuestion(models.Model):
     explanation = models.TextField(
         blank=True,
         help_text='Additional explanation or hints'
+    )
+    images_data = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text='Internal mapping of image IDs to temporary storage paths'
     )
     difficulty = models.CharField(
         max_length=10,
@@ -647,6 +656,8 @@ class ExtractedQuestion(models.Model):
     # AI metadata
     confidence_score = models.FloatField(
         validators=[MinValueValidator(0.0), MaxValueValidator(1.0)],
+        null=True,
+        blank=True,
         help_text='AI confidence score (0.0 to 1.0)'
     )
     requires_review = models.BooleanField(
