@@ -221,10 +221,21 @@ def list_center_batches(request, center_id: str):
             status=status.HTTP_403_FORBIDDEN,
         )
     
+    # Verify user belongs to same institute as the center
+    if user.institute and center.institute and user.institute.id != center.institute.id:
+        return Response(
+            {"detail": "You do not have access to this center."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    
     try:
-        # Get batches in this center - use direct center field only
-        # Note: Program model doesn't have a center field, it has institute field
+        # Get batches in this center - filter by center AND by center's institute programs
         batches = Batch.objects.filter(center=center).select_related('program')
+        # Also ensure batches belong to programs of the same institute
+        if center.institute:
+            batches = batches.filter(
+                Q(program__institute=center.institute) | Q(program__isnull=True)
+            )
         
         # Query filters
         program_id = request.query_params.get('program_id')
@@ -316,8 +327,17 @@ def list_center_users(request, center_id: str):
             status=status.HTTP_403_FORBIDDEN,
         )
     
-    # Get users in this center
+    # Verify user belongs to same institute as the center
+    if user.institute and center.institute and user.institute.id != center.institute.id:
+        return Response(
+            {"detail": "You do not have access to this center."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    
+    # Get users in this center AND same institute
     users = User.objects.filter(center=center)
+    if center.institute:
+        users = users.filter(institute=center.institute)
     
     # Query filters
     role = request.query_params.get('role')
