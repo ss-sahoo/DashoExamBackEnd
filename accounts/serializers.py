@@ -129,6 +129,61 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
         return user
 
 
+class UserCreationSerializer(serializers.ModelSerializer):
+    """
+    Serializer for Admins creating users.
+    Password is optional (auto-generated if missing).
+    """
+    password = serializers.CharField(write_only=True, required=False)
+    password_confirm = serializers.CharField(write_only=True, required=False)
+    institute_id = serializers.IntegerField(required=False, allow_null=True)
+    center_id = serializers.CharField(required=False, allow_null=True)
+    role = serializers.CharField(required=False, allow_null=True)
+
+    class Meta:
+        model = User
+        fields = [
+            'email', 'username', 'first_name', 'last_name', 'password', 
+            'password_confirm', 'phone', 'institute_id', 'center_id', 'role'
+        ]
+
+    def validate(self, attrs):
+        if attrs.get('password') and attrs.get('password') != attrs.get('password_confirm'):
+            raise serializers.ValidationError("Passwords don't match")
+        return attrs
+
+    def create(self, validated_data):
+        if 'password_confirm' in validated_data:
+            validated_data.pop('password_confirm')
+        
+        # Extract institute_id, center_id and role if provided
+        institute_id = validated_data.pop('institute_id', None)
+        center_id = validated_data.pop('center_id', None)
+        role = validated_data.pop('role', 'student')
+        
+        # Always use lowercase role
+        role = role.lower() if role else 'student'
+        
+        # Handle password
+        password = validated_data.pop('password', None)
+        if not password:
+            password = User.objects.make_random_password()
+        
+        # Create user with institute, center and role
+        user = User.objects.create_user(
+            username=validated_data.get('username'),
+            email=validated_data.get('email'),
+            password=password,
+            first_name=validated_data.get('first_name'),
+            last_name=validated_data.get('last_name'),
+            phone=validated_data.get('phone'),
+            institute_id=institute_id,
+            center_id=center_id,
+            role=role
+        )
+        return user
+
+
 class UserSerializer(serializers.ModelSerializer):
     institute = InstituteSerializer(read_only=True)
     institute_id = serializers.IntegerField(read_only=True)  # Add institute_id for frontend
