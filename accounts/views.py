@@ -15,7 +15,7 @@ from .serializers import (
     UserRegistrationSerializer, UserSerializer, UserLoginSerializer,
     InstituteSerializer, InstituteCreateSerializer, UserPermissionSerializer, 
     InstituteSettingsSerializer, ChangePasswordSerializer, InstituteInvitationSerializer,
-    ActivityLogSerializer
+    ActivityLogSerializer, UserCreationSerializer
 )
 from .jwt_utils import get_tokens_for_user
 from rest_framework.exceptions import PermissionDenied
@@ -363,7 +363,7 @@ class UserListView(generics.ListCreateAPIView):
 
     def get_serializer_class(self):
         if self.request.method == 'POST':
-            return UserRegistrationSerializer
+            return UserCreationSerializer
         return UserSerializer
 
     def get_queryset(self):
