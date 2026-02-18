@@ -356,10 +356,15 @@ class InstituteDetailView(generics.RetrieveAPIView):
     permission_classes = [permissions.AllowAny]
 
 
-class UserListView(generics.ListAPIView):
-    """List users within the same institute"""
+class UserListView(generics.ListCreateAPIView):
+    """List users within the same institute or create a new user"""
     serializer_class = UserSerializer
     permission_classes = [permissions.IsAuthenticated]
+
+    def get_serializer_class(self):
+        if self.request.method == 'POST':
+            return UserRegistrationSerializer
+        return UserSerializer
 
     def get_queryset(self):
         user = self.request.user
@@ -379,6 +384,19 @@ class UserListView(generics.ListAPIView):
         if user.is_institute_admin():
             return User.objects.filter(institute=user.institute)
         return User.objects.filter(id=user.id)
+
+    def perform_create(self, serializer):
+        user = self.request.user
+        
+        # Check permissions
+        if user.role not in ['super_admin', 'SUPER_ADMIN', 'institute_admin', 'exam_admin', 'admin', 'ADMIN']:
+             raise PermissionDenied("You do not have permission to create users.")
+
+        # For institute admins, force the institute_id
+        if user.role in ['institute_admin', 'exam_admin'] and user.institute:
+             serializer.save(institute_id=user.institute.id)
+        else:
+             serializer.save()
 
 
 class UserDetailView(generics.RetrieveUpdateDestroyAPIView):
