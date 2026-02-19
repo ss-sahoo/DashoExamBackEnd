@@ -5,6 +5,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import login, logout
 from django.contrib.auth.hashers import make_password
 from django.db import transaction, models
+from django.db.models import Q
 from django.utils import timezone
 from django.core.mail import send_mail
 from django.conf import settings
@@ -386,8 +387,12 @@ class UserListView(generics.ListCreateAPIView):
             return User.objects.filter(institute=user.institute)
             
         # For Center Admin ('admin'), Teacher, Student, Staff - return users in their center
+        # BUT also include Super_Admins from the same institute (so they are visible)
         if user.center:
-            return User.objects.filter(center=user.center)
+            return User.objects.filter(
+                Q(center=user.center) | 
+                Q(role__in=['super_admin', 'SUPER_ADMIN'], institute=user.institute)
+            ).distinct()
             
         # Fallback
         return User.objects.filter(id=user.id)
