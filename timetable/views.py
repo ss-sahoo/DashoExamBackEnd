@@ -1417,6 +1417,19 @@ def get_available_teachers_for_slot(request, timetable_id: str, slot_id: str = N
     }
     
     available_teachers = []
+    
+    # Add Free Class options
+    if timetable.free_classes_count > 0:
+        for i in range(1, timetable.free_classes_count + 1):
+             available_teachers.append({
+                "teacher_id": f"FREE-{i}",
+                "teacher_code": f"FREE{i}",
+                "teacher_name": f"Free Class {i}",
+                "subjects": "FREE",
+                "is_available": True,
+                "is_busy": False,
+            })
+
     unavailable_teachers = []
     
     for teacher in teachers:
@@ -2928,28 +2941,22 @@ def assign_fixed_slot(request):
     teacher = None
     if teacher_code:
         # Handle FREE teacher (special case)
+        # We NO LONGER create a dummy user. We just set teacher=None and subject="Free Class X"
         is_free_teacher = teacher_code.upper().startswith("FREE")
         
         if is_free_teacher:
-            free_code = teacher_code.upper()
-            try:
-                teacher = AccountUser.objects.get(
-                    role=AccountUser.ROLE_TEACHER,
-                    center=timetable.center,
-                    teacher_code__iexact=free_code
-                )
-            except AccountUser.DoesNotExist:
-                # Create new FREE teacher
-                teacher = AccountUser.objects.create_user(
-                    username=free_code,
-                    teacher_code=free_code,
-                    role=AccountUser.ROLE_TEACHER,
-                    center=timetable.center,
-                    first_name="FREE",
-                    last_name=free_code.replace("FREE", "").strip() or "",
-                    teacher_subjects="FREE",
-                    password="FREE_TEACHER_PLACEHOLDER",
-                )
+            teacher = None
+            # If subject not provided, use a default like "Free Class"
+            if not subject:
+                # Try to extract number if possible, e.g. FREE1 -> Free Class 1
+                try:
+                    num = teacher_code.upper().replace("FREE", "")
+                    if num.isdigit():
+                         subject = f"Free Class {num}"
+                    else:
+                         subject = "Free Class"
+                except:
+                    subject = "Free Class"
         else:
             try:
                 from django.db.models import Q
