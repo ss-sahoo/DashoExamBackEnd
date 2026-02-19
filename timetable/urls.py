@@ -83,6 +83,8 @@ from accounts.program_batch_views import (
     list_batches,
     get_batch,
     get_teachers_in_center,
+    update_batch,
+    delete_batch,
 )
 
 app_name = "timetable"
@@ -138,6 +140,8 @@ urlpatterns = [
     path("admin/batches/create/", create_batch, name="create-batch"),
     path("batches/", list_batches, name="list-batches"),
     path("batches/<uuid:batch_id>/", get_batch, name="get-batch"),
+    path("admin/batches/<uuid:batch_id>/update/", update_batch, name="update-batch"),
+    path("admin/batches/<uuid:batch_id>/delete/", delete_batch, name="delete-batch"),
     path("admin/batches/add-student/", add_student_to_batch, name="add-student-to-batch"),
     path("teachers/", get_teachers_in_center, name="get-teachers-in-center"),
     
