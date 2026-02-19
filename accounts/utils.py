@@ -5,6 +5,9 @@ Utility functions for user code and password generation.
 import random
 import string
 from datetime import datetime
+from django.conf import settings
+from django.core.mail import EmailMultiAlternatives
+from django.template.loader import render_to_string
 from .models import User
 
 
@@ -219,3 +222,42 @@ def log_activity(institute, log_type, title, description, user=None, status='inf
         metadata=metadata or {},
         ip_address=ip_address
     )
+
+
+def send_credentials_email(user, password):
+    """
+    Send an email to the user with their account credentials.
+    """
+    try:
+        if not user.email:
+            print(f"User {user.username} has no email address. Skipping credential email.")
+            return False
+
+        # Prepare context
+        context = {
+            'name': user.get_full_name() or user.username,
+            'role': user.role,
+            'username': user.username,
+            'password': password,
+            'institute_name': user.institute.name if user.institute else "Exam Flow System",
+            'center_name': user.center.name if user.center else None,
+            'login_url': f"{settings.FRONTEND_URL}/login", 
+        }
+
+        # Render templates
+        subject = "Your Account Credentials - Exam Flow System"
+        text_content = render_to_string('emails/credential_notification.txt', context)
+        html_content = render_to_string('emails/credential_notification.html', context)
+
+        # Send email
+        msg = EmailMultiAlternatives(subject, text_content, settings.DEFAULT_FROM_EMAIL, [user.email])
+        msg.attach_alternative(html_content, "text/html")
+        msg.send()
+        
+        print(f"Credential email sent to {user.email}")
+        return True
+
+    except Exception as e:
+        print(f"Failed to send credential email to {user.email}: {str(e)}")
+        # We don't want to fail the user creation if email fails, so we just log it
+        return False

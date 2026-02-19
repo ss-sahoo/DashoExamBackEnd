@@ -4,6 +4,7 @@ from django.contrib.auth.password_validation import validate_password
 from django.utils import timezone
 from datetime import timedelta
 from .models import User, Institute, UserPermission, InstituteSettings, InstituteInvitation, DeviceSession, ActivityLog
+from .utils import generate_user_code, generate_password, send_credentials_email
 
 
 class InstituteSerializer(serializers.ModelSerializer):
@@ -181,7 +182,21 @@ class UserCreationSerializer(serializers.ModelSerializer):
             center_id=center_id,
             role=role
         )
+        
+        # Send credential email
+        send_credentials_email(user, password)
+        
+        # Store raw password on instance for the response
+        user._raw_password = password
+        
         return user
+
+    def to_representation(self, instance):
+        ret = super().to_representation(instance)
+        # If we have a raw password (just created), return it
+        if hasattr(instance, '_raw_password'):
+            ret['password'] = instance._raw_password
+        return ret
 
 
 class UserSerializer(serializers.ModelSerializer):
