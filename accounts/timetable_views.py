@@ -9,7 +9,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from django.db import transaction
 from .models import Institute, Center, Program, Batch, Enrollment, User
-from .utils import generate_user_code, generate_password
+from .utils import generate_user_code, generate_password, send_credentials_email
 
 
 def _check_super_admin(request):
@@ -254,6 +254,9 @@ def create_admin(request):
             # Add admin to center's admins
             center.admins.add(user)
             
+            # Send credential email
+            send_credentials_email(user, password)
+            
             return Response(
                 {
                     "message": "Admin created successfully.",
@@ -442,6 +445,9 @@ def create_teacher(request):
                 teacher_subjects=subjects,
             )
             
+            # Send credential email
+            send_credentials_email(user, password)
+            
             return Response(
                 {
                     "message": "Teacher created successfully.",
@@ -566,6 +572,9 @@ def create_student(request):
                 defaults={'status': Enrollment.STATUS_ACTIVE}
             )
             
+            # Send credential email
+            send_credentials_email(user, password)
+            
             return Response(
                 {
                     "message": "Student created successfully.",
@@ -675,6 +684,9 @@ def create_staff(request):
                 center=center,
                 institute=center.institute,
             )
+            
+            # Send credential email
+            send_credentials_email(user_obj, password)
             
             return Response(
                 {
