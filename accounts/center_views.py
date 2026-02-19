@@ -335,7 +335,7 @@ def list_center_users(request, center_id: str):
         )
     
     # Get users in this center AND same institute
-    users = User.objects.filter(center=center)
+    users = User.objects.filter(center=center).exclude(id=request.user.id)
     if center.institute:
         users = users.filter(institute=center.institute)
     

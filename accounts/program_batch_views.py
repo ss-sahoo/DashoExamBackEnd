@@ -331,18 +331,28 @@ def add_student_to_batch(request):
         "batch": "HDTN-1A-ZA1"
     }
     """
-    is_admin, error_response = _check_admin(request)
-    if not is_admin:
-        return error_response
+    # Allow both Admin and Super Admin
+    is_admin = request.user.role in ['admin', 'ADMIN', 'institute_admin']
+    is_super = request.user.role in ['super_admin', 'SUPER_ADMIN']
     
-    admin_user = request.user
-    center = admin_user.center
+    if not is_admin and not is_super:
+        return Response(
+            {"detail": "Only Admin and Super Admin can perform this action."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
     
+    if is_admin and not request.user.center:
+        return Response(
+            {"detail": "Admin user is not linked to any center."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
     batch_code = request.data.get("batch_code")
     name = request.data.get("name")
     email = request.data.get("email", "")
     phone_number = request.data.get("phone_number", "")
     date_of_birth = request.data.get("date_of_birth", "")
+    center_id = request.data.get("center_id") # Optional for super admin to disambiguate
     
     if not batch_code or not name:
         return Response(
@@ -350,19 +360,58 @@ def add_student_to_batch(request):
             status=status.HTTP_400_BAD_REQUEST,
         )
     
-    # Find batch in admin's center (using direct center field)
-    try:
-        batch = Batch.objects.get(code=batch_code, center=center)
-    except Batch.DoesNotExist:
-        return Response(
-            {"detail": f"Batch with code '{batch_code}' not found in your center."},
-            status=status.HTTP_404_NOT_FOUND,
-        )
-    except Batch.MultipleObjectsReturned:
-        return Response(
-            {"detail": f"Multiple batches found with code '{batch_code}'. Please contact Super Admin."},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
+    # Determine the batch and center
+    batch = None
+    center = None
+
+    if is_super:
+        # Super Admin Logic
+        if center_id:
+            # If center_id is provided, find batch in that center
+            try:
+                center = Center.objects.get(id=center_id)
+                batch = Batch.objects.get(code=batch_code, center=center)
+            except Center.DoesNotExist:
+                return Response(
+                    {"detail": f"Center with ID '{center_id}' not found."},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+            except Batch.DoesNotExist:
+                return Response(
+                    {"detail": f"Batch with code '{batch_code}' not found in center '{center.name}'."},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+        else:
+            # If no center_id, try to find unique batch by code globally
+            batches = Batch.objects.filter(code=batch_code)
+            if batches.count() == 0:
+                return Response(
+                    {"detail": f"Batch with code '{batch_code}' not found."},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+            elif batches.count() > 1:
+                return Response(
+                    {"detail": f"Multiple batches found with code '{batch_code}'. Please provide 'center_id' to specify which center."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            batch = batches.first()
+            center = batch.center
+            
+    else:
+        # Admin Logic (existing)
+        center = request.user.center
+        try:
+            batch = Batch.objects.get(code=batch_code, center=center)
+        except Batch.DoesNotExist:
+            return Response(
+                {"detail": f"Batch with code '{batch_code}' not found in your center."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        except Batch.MultipleObjectsReturned:
+            return Response(
+                {"detail": f"Multiple batches found with code '{batch_code}'. Please contact Super Admin."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
     
     # Generate code and password
     username = generate_user_code('STUDENT', None, batch_code)
@@ -910,3 +959,148 @@ def delete_batch(request, batch_id):
 
     batch.delete()
     return Response(status=status.HTTP_204_NO_CONTENT)
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def list_batch_students(request, batch_id: str):
+    """
+    List all students in a batch.
+    """
+    try:
+        batch = Batch.objects.get(id=batch_id)
+    except Batch.DoesNotExist:
+        return Response(
+            {"detail": "Batch not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+    
+    # Check permissions (same as get_batch)
+    user = request.user
+    if user.role in ['admin', 'ADMIN', 'institute_admin']:
+        if not user.center or batch.center != user.center:
+            return Response(
+                {"detail": "You don't have permission to view this batch."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+    elif user.role not in ['super_admin', 'SUPER_ADMIN']:
+        return Response(
+            {"detail": "Only Super Admin and Admin can view batch students."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    enrollments = Enrollment.objects.filter(
+        batch=batch, 
+        status=Enrollment.STATUS_ACTIVE
+    ).select_related('student')
+    
+    students_data = []
+    for enrollment in enrollments:
+        student = enrollment.student
+        students_data.append({
+            "id": str(student.id),
+            "full_name": f"{student.first_name} {student.last_name}".strip(),
+            "username": student.username,
+            "email": student.email,
+            "enrollment_id": str(enrollment.id),
+            "joined_at": enrollment.created_at.isoformat() if hasattr(enrollment, 'created_at') else None,
+        })
+        
+    return Response(students_data, status=status.HTTP_200_OK)
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def enroll_existing_student(request, batch_id: str):
+    """
+    Enroll an existing student into a batch.
+    """
+    try:
+        batch = Batch.objects.get(id=batch_id)
+    except Batch.DoesNotExist:
+        return Response(
+            {"detail": "Batch not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    # Check permissions
+    user = request.user
+    if user.role in ['admin', 'ADMIN', 'institute_admin']:
+        if not user.center or batch.center != user.center:
+            return Response(
+                {"detail": "You don't have permission to modify this batch."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+    elif user.role not in ['super_admin', 'SUPER_ADMIN']:
+         return Response(
+            {"detail": "Permission denied."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    student_id = request.data.get('student_id')
+    if not student_id:
+        return Response(
+            {"detail": "student_id is required."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
+        student = User.objects.get(id=student_id)
+    except User.DoesNotExist:
+        return Response(
+            {"detail": "Student not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+        
+    # Check if already enrolled
+    if Enrollment.objects.filter(batch=batch, student=student, status=Enrollment.STATUS_ACTIVE).exists():
+        return Response(
+            {"detail": "Student is already enrolled in this batch."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    Enrollment.objects.update_or_create(
+        batch=batch,
+        student=student,
+        defaults={'status': Enrollment.STATUS_ACTIVE}
+    )
+
+    return Response({"detail": "Student enrolled successfully."}, status=status.HTTP_200_OK)
+
+
+@api_view(["DELETE"])
+@permission_classes([IsAuthenticated])
+def remove_student_from_batch(request, batch_id: str, student_id: str):
+    """
+    Remove a student from a batch.
+    """
+    try:
+        batch = Batch.objects.get(id=batch_id)
+    except Batch.DoesNotExist:
+        return Response(
+            {"detail": "Batch not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    # Check permissions
+    user = request.user
+    if user.role in ['admin', 'ADMIN', 'institute_admin']:
+        if not user.center or batch.center != user.center:
+             return Response(
+                {"detail": "Permission denied."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+    elif user.role not in ['super_admin', 'SUPER_ADMIN']:
+         return Response(
+            {"detail": "Permission denied."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    try:
+        enrollment = Enrollment.objects.get(batch=batch, student_id=student_id)
+        enrollment.delete() # Hard delete for now as per requirement "remove"
+    except Enrollment.DoesNotExist:
+        return Response(
+            {"detail": "Student is not enrolled in this batch."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    return Response({"detail": "Student removed from batch."}, status=status.HTTP_200_OK)
