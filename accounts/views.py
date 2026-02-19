@@ -379,11 +379,18 @@ class UserListView(generics.ListCreateAPIView):
                 queryset = queryset.filter(institute_id=eff_institute_id)
             if center_id:
                 queryset = queryset.filter(center_id=center_id)
-            return queryset
+            # Exclude self
+            return queryset.exclude(id=user.id)
         
         if user.is_institute_admin():
-            return User.objects.filter(institute=user.institute)
-        return User.objects.filter(id=user.id)
+            return User.objects.filter(institute=user.institute).exclude(id=user.id)
+            
+        # For Admin, Teacher, Student, Staff - return users in their center
+        if user.center:
+            return User.objects.filter(center=user.center).exclude(id=user.id)
+            
+        # Fallback (shouldn't happen for valid users basically)
+        return User.objects.none()
 
     def perform_create(self, serializer):
         user = self.request.user
