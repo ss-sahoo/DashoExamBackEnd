@@ -613,8 +613,16 @@ def list_batches(request):
         if program_name:
             batches = batches.filter(program__name__icontains=program_name)
     elif user.role in ['teacher', 'TEACHER']:
-        # Teachers see batches they are assigned to
-        batches = Batch.objects.filter(teachers=user)
+        # Teachers see ALL batches in their center (same as Admin)
+        if not user.center:
+            return Response(
+                {"detail": "Teacher is not linked to any center."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        from django.db.models import Q
+        batches = Batch.objects.filter(
+            Q(center=user.center) | Q(program__institute=user.center.institute) | Q(program__isnull=True, center=user.center)
+        )
         if program_name:
             batches = batches.filter(program__name__icontains=program_name)
     elif user.role in ['student', 'STUDENT']:
