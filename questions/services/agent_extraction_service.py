@@ -289,12 +289,19 @@ class AgentExtractionService:
         TEXT:
         {markdown_text[:10000]}
         """
-        try:
-            response = self.model.generate_content(prompt)
-            subjects = self._clean_json_response(response.text)
-            return subjects if isinstance(subjects, list) else []
-        except:
-            return []
+        for attempt in range(3):
+            try:
+                response = self.model.generate_content(prompt)
+                subjects = self._clean_json_response(response.text)
+                return subjects if isinstance(subjects, list) else []
+            except Exception as e:
+                if "429" in str(e) or "resource exhausted" in str(e).lower():
+                    if attempt < 2:
+                        time.sleep(5 * (2 ** attempt))
+                        continue
+                logger.warning(f"Detection attempt {attempt+1} failed: {e}")
+                
+        return []
 
     def _fallback_local_parsing(self, file_path: str) -> str:
         """Fallback to local FileParserService for text extraction."""

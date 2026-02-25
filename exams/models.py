@@ -245,6 +245,9 @@ class Exam(models.Model):
         self.clean()
         if not self.public_link_created_at:
             self.public_link_created_at = dj_timezone.now()
+        # Auto-enable AI evaluation for offline_subjective exams
+        if self.exam_mode == 'offline_subjective' and not self.ai_evaluation_enabled:
+            self.ai_evaluation_enabled = True
         super().save(*args, **kwargs)
 
     def is_active(self):

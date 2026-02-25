@@ -189,7 +189,7 @@ class AIEvaluationService:
             'is_multi_part_question': bool(q.options and len(q.options) > 1 and q.question_type == 'subjective_multipart'),
             'mark': float(marks or 1),
             'negative_marks': float(negative_marks or 0),
-            'Answer': q.correct_answer if q.correct_answer else q.explanation,
+            'Answer': q.solution if q.solution else (q.correct_answer if q.correct_answer else q.explanation),
             'Diagram_is_required_for_answer': 1 if getattr(q, 'requires_diagram', False) else 0,
             'Diagram_file_names': [],
         }
@@ -250,17 +250,44 @@ class AIEvaluationService:
             print(f"[AZURE AI] Error: {e}")
             return None
 
+    def _call_gemini_with_retry(self, func, *args, **kwargs):
+        """
+        Execute a Gemini API function with exponential backoff retry for 429 errors.
+        """
+        max_retries = 5
+        base_delay = 5  # Start with 5 seconds for Gemini
+        
+        for attempt in range(max_retries):
+            try:
+                return func(*args, **kwargs)
+            except Exception as e:
+                error_msg = str(e).lower()
+                if "429" in error_msg or "resource exhausted" in error_msg:
+                    if attempt < max_retries - 1:
+                        # Exponential backoff: 5, 10, 20, 40...
+                        delay = base_delay * (2 ** attempt)
+                        print(f"[GEMINI] Rate limit (429) hit. Retrying in {delay}s... (Attempt {attempt + 1}/{max_retries})")
+                        time.sleep(delay)
+                        continue
+                
+                # If not a 429 or we ran out of retries, re-raise
+                raise e
+        
+        return None
+
     def _upload_file(self, file_path: str):
         """Upload file to Gemini and wait for processing"""
         if not self.has_file_api:
             # Fallback: return PIL Image instead of a File object
             return PIL.Image.open(file_path)
             
-        uploaded_file = self.genai.upload_file(path=file_path)
+        # Wrap upload in retry
+        uploaded_file = self._call_gemini_with_retry(self.genai.upload_file, path=file_path)
         
         while uploaded_file.state.name == "PROCESSING":
             time.sleep(2)
-            uploaded_file = self.genai.get_file(uploaded_file.name)
+            # Wrap polling in retry too
+            uploaded_file = self._call_gemini_with_retry(self.genai.get_file, uploaded_file.name)
         
         return uploaded_file
     
@@ -348,14 +375,14 @@ class AIEvaluationService:
         else:
             uploaded_file = self._upload_file(image_path)
             try:
-                response = self.model.generate_content(
+                # Wrap generation in retry
+                response = self._call_gemini_with_retry(
+                    self.model.generate_content,
                     [uploaded_file, prompt],
-                    generation_config={
-                        "temperature": 0.1
-                    }
+                    generation_config={"temperature": 0.1}
                 )
                 
-                if response.text:
+                if response and response.text:
                     return self._parse_json_response(response.text) or {"error": "Invalid JSON response", "raw_text": response.text}
                 return None
             finally:
@@ -419,14 +446,14 @@ class AIEvaluationService:
         else:
             uploaded_file = self._upload_file(image_path)
             try:
-                response = self.model.generate_content(
+                # Wrap generation in retry
+                response = self._call_gemini_with_retry(
+                    self.model.generate_content,
                     [uploaded_file, prompt],
-                    generation_config={
-                        "temperature": 0.1
-                    }
+                    generation_config={"temperature": 0.1}
                 )
                 
-                if response.text:
+                if response and response.text:
                     return self._parse_json_response(response.text) or [{"error": "Invalid JSON response", "raw_text": response.text}]
                 return []
             finally:
@@ -639,11 +666,11 @@ class AIEvaluationService:
                 
                 content_payload.insert(0, prompt)
                 
-                response = self.model.generate_content(
+                # Wrap generation in retry
+                response = self._call_gemini_with_retry(
+                    self.model.generate_content,
                     content_payload,
-                    generation_config={
-                        "temperature": 0.1
-                    }
+                    generation_config={"temperature": 0.1}
                 )
                 
                 if response.text:
