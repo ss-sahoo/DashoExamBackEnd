@@ -2640,21 +2640,79 @@ def parse_nested_question_structure(extracted_text):
     # Determine question type
     is_nested = has_or_separator or (has_alpha_parts and has_roman_subparts)
     
+    # Extract solution/answer if present at the end
+    cleaned_text, extracted_solution, extracted_answer = extract_solution_from_text(text)
+    # If we found a solution, use the cleaned text for parsing structure
+    if extracted_solution:
+        text = cleaned_text
+    
+    result = None
+    
     # If it's a simple MCQ (has options but no nested structure)
     if has_mcq_options and not is_nested and not has_alpha_parts:
-        return parse_simple_mcq(text)
+        result = parse_simple_mcq(text)
     
     # If it's a nested question
-    if is_nested or has_alpha_parts:
-        return parse_nested_parts(text, has_or_separator)
+    elif is_nested or has_alpha_parts:
+        result = parse_nested_parts(text, has_or_separator)
     
-    # Default: return as simple question text
-    return {
-        'question_text': text,
-        'options': [],
-        'is_nested': False,
-        'structure': None
-    }
+    else:
+        # Default: return as simple question text
+        result = {
+            'question_text': text,
+            'options': [],
+            'is_nested': False,
+            'structure': None,
+            'correct_answer': '',
+            'solution': ''
+        }
+        
+    # Inject extracted solution/answer if available and not already set
+    if result:
+        if extracted_solution and not result.get('solution'):
+            result['solution'] = extracted_solution
+        if extracted_answer and not result.get('correct_answer'):
+            result['correct_answer'] = extracted_answer
+            
+    return result
+
+
+def extract_solution_from_text(text):
+    """
+    Extract solution/answer if present at the end of the text.
+    Look for patterns like "Answer:", "Ans:", "Solution:", "Sol:".
+    Returns (cleaned_text, solution, correct_answer)
+    """
+    import re
+    
+    # Pattern to find solution at the end
+    # Match: (Answer|Ans|Solution|Sol|Key)[:.] (content)
+    # This should be at the end of the string
+    solution_pattern = r'(?:Answer|Ans|Solution|Sol|Key)[\:\.]\s*(.+)$'
+    match = re.search(solution_pattern, text, re.IGNORECASE | re.DOTALL)
+    
+    if match:
+        solution_text = match.group(1).strip()
+        # Remove solution part from original text
+        cleaned_text = text[:match.start()].strip()
+        
+        # Check if it's just a short answer (e.g. "A" or "Option B") or a full solution
+        correct_answer = ''
+        solution = ''
+        
+        # If text is short (e.g. "(A)", "Option C", "45"), treat as key
+        if len(solution_text) < 50 and '\n' not in solution_text:
+             correct_answer = solution_text
+             solution = solution_text 
+        else:
+             # Likely a detailed solution
+             solution = solution_text
+             # Try to extract short answer from start if formatted like "Option A: ..."
+             # For now, just leave correct_answer empty if it's long, unless user manually edits
+        
+        return cleaned_text, solution, correct_answer
+    
+    return text, '', ''
 
 
 def parse_simple_mcq(text):
@@ -2879,16 +2937,26 @@ def extract_text_from_image(request):
             # Check if text contains LaTeX
             has_latex = '$' in extracted_text or '\\' in extracted_text
             
+            logger.info(f"Successfully extracted {len(extracted_text)} chars from image via Mathpix")
+            
+            # Try Gemini-based structured Q+A parsing for higher accuracy
+            parsed_structure = None
+            try:
+                parsed_structure = gemini_parse_question_from_text(extracted_text)
+                if parsed_structure:
+                    logger.info(f"Gemini structured parsing succeeded: keys={list(parsed_structure.keys())}")
+            except Exception as gemini_err:
+                logger.warning(f"Gemini structured parsing failed, falling back to regex: {gemini_err}")
+            
+            # Fallback to regex parsing if Gemini didn't work
+            if not parsed_structure:
+                parsed_structure = parse_nested_question_structure(extracted_text)
+            
             # Clean up temp file
             try:
                 os.remove(file_path)
             except:
                 pass
-            
-            logger.info(f"Successfully extracted {len(extracted_text)} chars from image via Mathpix")
-            
-            # Parse the extracted text to identify nested question structures
-            parsed_structure = parse_nested_question_structure(extracted_text)
             
             return Response({
                 'success': True,
@@ -2918,3 +2986,107 @@ def extract_text_from_image(request):
             {'error': f'Failed to process image: {str(e)}'},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
+
+
+def gemini_parse_question_from_text(extracted_text):
+    """
+    Use Gemini AI to parse extracted text into structured question data.
+    Returns a dict with question_text, options, correct_answer, solution, is_nested, structure.
+    Returns None if Gemini is not available or parsing fails.
+    """
+    import json
+    import re
+    from django.conf import settings
+    
+    gemini_key = getattr(settings, 'GEMINI_API_KEY', '')
+    if not gemini_key:
+        return None
+    
+    try:
+        import google.generativeai as genai
+        genai.configure(api_key=gemini_key)
+        model = genai.GenerativeModel('gemini-2.0-flash')
+    except Exception:
+        return None
+    
+    prompt = f"""You are a high-precision exam question parser. Analyze the following extracted text and return a structured JSON object.
+
+TEXT:
+{extracted_text}
+
+Return ONLY a valid JSON object (no markdown, no explanation) with this structure:
+{{
+  "question_text": "The main question text (preserve all LaTeX like $...$ and $$...$$)",
+  "options": ["A) ...", "B) ...", "C) ...", "D) ..."],
+  "correct_answer": "The correct answer key (e.g. 'A', 'B', '42', etc.) or empty string if not found",
+  "solution": "The step-by-step solution or answer explanation, or empty string if not found",
+  "question_type": "single_mcq|multiple_mcq|numerical|subjective|true_false|fill_blank",
+  "is_nested": false,
+  "structure": null
+}}
+
+RULES:
+- If the text contains MCQ options, extract them into the "options" array and separate from question_text.
+- If a correct answer is marked (e.g., "Answer: B", "Ans: C", circled option), put ONLY the letter/number in "correct_answer".
+- If a detailed solution exists (e.g., "Solution: ...", "Sol: ..."), put it in "solution".
+- Preserve ALL LaTeX formatting.
+- For subjective questions with parts (a), (b), (c), set is_nested to true and populate structure.nested_parts.
+- If no answer/solution is found, use empty strings - do NOT make up answers.
+"""
+
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            response = model.generate_content(
+                prompt,
+                generation_config={
+                    "temperature": 0.1,
+                    "top_p": 0.9,
+                    "max_output_tokens": 4096,
+                }
+            )
+            
+            text = response.text.strip()
+            
+            # Extract JSON from response
+            json_match = re.search(r'\{.*\}', text, re.DOTALL)
+            if json_match:
+                json_str = json_match.group(0)
+                try:
+                    result = json.loads(json_str)
+                except json.JSONDecodeError:
+                    # Fix common LaTeX escape issues
+                    json_str_fixed = re.sub(r'\\(?![\\"/bfnrtu])', r'\\\\', json_str)
+                    try:
+                        result = json.loads(json_str_fixed)
+                    except json.JSONDecodeError:
+                        logger.warning("Gemini returned invalid JSON even after fix")
+                        return None
+                
+                # Validate required fields
+                if 'question_text' not in result:
+                    return None
+                
+                # Normalize
+                result.setdefault('options', [])
+                result.setdefault('correct_answer', '')
+                result.setdefault('solution', '')
+                result.setdefault('is_nested', False)
+                result.setdefault('structure', None)
+                result.setdefault('question_type', 'subjective')
+                
+                return result
+            
+            return None
+            
+        except Exception as e:
+            error_msg = str(e)
+            if "429" in error_msg or "resource exhausted" in error_msg.lower():
+                if attempt < max_retries - 1:
+                    delay = 5 * (2 ** attempt)
+                    logger.info(f"Gemini Rate limit hit (429). Retrying in {delay}s... (Attempt {attempt + 1}/{max_retries})")
+                    time.sleep(delay)
+                    continue
+            logger.warning(f"Gemini parse failed: {e}")
+            return None
+

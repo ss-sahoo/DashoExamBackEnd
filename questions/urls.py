@@ -26,6 +26,7 @@ urlpatterns = [
     
     # Exam questions
     path('exams/<int:exam_id>/questions/', views.ExamQuestionListView.as_view(), name='exam-question-list'),
+    path('exam-validate/<int:exam_id>/', views.validate_exam_questions, name='validate-exam-questions'),
     
     # Templates
     path('templates/', views.QuestionTemplateListView.as_view(), name='question-template-list'),

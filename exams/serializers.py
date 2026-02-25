@@ -281,8 +281,8 @@ class ExamCreateSerializer(serializers.ModelSerializer):
         if 'omr_config' not in validated_data or not validated_data['omr_config']:
             validated_data['omr_config'] = getattr(pattern, 'omr_config', {})
 
-        # Set status to 'draft' until questions are added (or if copying, questions will be added)
-        validated_data['status'] = 'draft'
+        # Set status to 'draft' if not provided
+        validated_data.setdefault('status', 'draft')
         
         exam = super().create(validated_data)
         

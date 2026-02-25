@@ -135,6 +135,9 @@ class ExamListView(generics.ListCreateAPIView):
             # Institute-wide exams are visible to all students in the institute
             visibility_filter |= Q(visibility_scope='institute')
             
+            # Public exams are visible to all
+            visibility_filter |= Q(is_public=True)
+            
             # Center-specific exams - visible if student's center is in allowed_centers
             student_center = getattr(user, 'center', None)
             if student_center:
@@ -1531,7 +1534,9 @@ def student_dashboard_data(request):
     # 2. Specific centers (if student center matches)
     # 3. Specific batches (if student is in any allowed batch)
     # 4. Explicitly allowed users
+    # 5. Public exams
     visibility_q = Q(visibility_scope='institute')
+    visibility_q |= Q(is_public=True)
     
     if hasattr(user, 'center') and user.center:
         visibility_q |= Q(visibility_scope='centers', allowed_centers=user.center)

@@ -1664,3 +1664,52 @@ def question_statistics(request):
     stats['recent_questions'] = QuestionSerializer(recent_questions, many=True).data
     
     return Response(stats)
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def validate_exam_questions(request, exam_id):
+    """
+    Validate that all questions in an exam have answers/solutions.
+    Returns a list of questions with missing answers.
+    """
+    try:
+        from exams.models import Exam
+        exam = Exam.objects.get(id=exam_id)
+        if not request.user.can_manage_exams() or exam.institute != request.user.institute:
+            return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
+    except Exam.DoesNotExist:
+        return Response({'error': 'Exam not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    # Get questions for this exam
+    questions = Question.objects.filter(exam_id=exam_id, is_active=True).order_by('question_number')
+    
+    missing_answers = []
+    
+    for q in questions:
+        has_answer = False
+        if q.question_type == 'subjective':
+            # For subjective, we need either a solution or a correct_answer (some text)
+            if (q.solution and q.solution.strip()) or (q.correct_answer and q.correct_answer.strip()):
+                has_answer = True
+        elif q.question_type in ['multiple_mcq', 'multiple correct mcq']:
+             # Multiple MCQ might have array in correct_answer or non-empty string
+             if q.correct_answer and len(q.correct_answer) > 0:
+                 has_answer = True
+        else:
+            # Single MCQ, Numerical, True/False
+            if q.correct_answer and str(q.correct_answer).strip():
+                has_answer = True
+        
+        if not has_answer:
+            missing_answers.append({
+                'id': q.id,
+                'question_number': q.question_number,
+                'question_text': q.question_text,
+                'subject': q.subject,
+                'type': q.question_type
+            })
+            
+    return Response({
+        'valid': len(missing_answers) == 0,
+        'missing_answers': missing_answers,
+        'total_questions': questions.count()
+    })

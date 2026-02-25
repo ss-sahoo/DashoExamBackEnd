@@ -54,6 +54,36 @@ def upload_answer_sheet(request, exam_id):
             status=status.HTTP_400_BAD_REQUEST
         )
     
+    # Validate all questions have answers/solutions before evaluation
+    from questions.models import Question
+    questions = Question.objects.filter(exam_id=exam_id, is_active=True).order_by('question_number')
+    missing_answers = []
+    for q in questions:
+        has_answer = False
+        if q.question_type == 'subjective':
+            if (q.solution and q.solution.strip()) or (q.correct_answer and q.correct_answer.strip()):
+                has_answer = True
+        elif q.question_type in ['multiple_mcq', 'multiple correct mcq']:
+            if q.correct_answer and len(q.correct_answer) > 0:
+                has_answer = True
+        else:
+            if q.correct_answer and str(q.correct_answer).strip():
+                has_answer = True
+        if not has_answer:
+            missing_answers.append({
+                'question_number': q.question_number,
+                'question_type': q.question_type,
+                'subject': q.subject or '',
+            })
+    
+    if missing_answers:
+        missing_nums = ', '.join([f"Q{m['question_number']}" for m in missing_answers])
+        return Response({
+            'error': f'Cannot evaluate: {len(missing_answers)} question(s) are missing answers/solutions ({missing_nums}). Please add answers before evaluation.',
+            'missing_answers': missing_answers,
+            'code': 'MISSING_ANSWERS'
+        }, status=status.HTTP_400_BAD_REQUEST)
+    
     # Get uploaded file
     uploaded_file = request.FILES.get('file')
     if not uploaded_file:
