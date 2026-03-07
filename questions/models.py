@@ -635,6 +635,7 @@ class ExtractedQuestion(models.Model):
     correct_answer = models.TextField(null=True, blank=True, help_text='Correct answer or solution')
     solution = models.TextField(
         blank=True,
+        null=True,
         help_text='Detailed solution explanation'
     )
     explanation = models.TextField(

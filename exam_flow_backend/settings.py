@@ -54,6 +54,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'accounts.device_session_middleware.DeviceSessionValidationMiddleware',  # Validate device sessions
     'django.contrib.messages.middleware.MessageMiddleware',
+    'exam_flow_backend.middleware.PDFResponseMiddleware',  # Add PDF headers
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
@@ -143,7 +144,7 @@ USE_I18N = True
 USE_TZ = True
 
 # === DigitalOcean Spaces / S3-Compatible Storage Configuration ===
-ALWAYS_UPLOAD_FILES_TO_AWS = True  # Set to True to enable DigitalOcean Spaces upload
+ALWAYS_UPLOAD_FILES_TO_AWS = False  # Set to True to enable DigitalOcean Spaces upload
 
 # AWS Configuration (needed for both modes)
 AWS_ACCESS_KEY_ID = 'UCW66UXZOVY3QVYQLSEK'
@@ -185,7 +186,8 @@ else:
     STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 
     MEDIA_URL = '/media/'
-    MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
+    # Store media files outside project directory
+    MEDIA_ROOT = os.path.expanduser('~/exam_flow_media')
 
     STORAGES = {
         "default": {

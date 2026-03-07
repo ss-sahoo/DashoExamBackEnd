@@ -109,25 +109,33 @@ def upload_answer_sheet(request, exam_id):
     else:
         student = request.user
     
-    # Save uploaded file temporarily
+    # Save uploaded file permanently
     file_path = f"ai_eval_uploads/{exam.id}/{uploaded_file.name}"
     saved_path = default_storage.save(file_path, uploaded_file)
     
     auto_evaluate = request.data.get('auto_evaluate', 'true').lower() == 'true'
     
     if auto_evaluate:
-        # Create a temp file to ensure we have a local path
+        # Always create a temp file for processing since we need a local path
         with tempfile.NamedTemporaryFile(suffix=f".{ext}", delete=False) as tmp:
-            for chunk in uploaded_file.chunks():
-                tmp.write(chunk)
-            tmp_path = tmp.name
+            # Re-read the uploaded file from storage or use original
+            try:
+                # Try to open from storage
+                with default_storage.open(saved_path, 'rb') as stored_file:
+                    tmp.write(stored_file.read())
+            except:
+                # Fallback: use original uploaded file
+                uploaded_file.seek(0)
+                for chunk in uploaded_file.chunks():
+                    tmp.write(chunk)
+            pdf_path_to_use = tmp.name
 
         try:
             # Run AI evaluation
             marking_strictness = exam.marking_strictness or 'moderate'
             result = evaluate_subjective_submission(
                 exam_id=exam.id,
-                pdf_path=tmp_path,
+                pdf_path=pdf_path_to_use,
                 marking_strictness=marking_strictness
             )
             
@@ -175,9 +183,9 @@ def upload_answer_sheet(request, exam_id):
                 'error': str(e),
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         finally:
-            # Cleanup temp local file
-            if 'tmp_path' in locals() and os.path.exists(tmp_path):
-                os.remove(tmp_path)
+            # Always cleanup temp file
+            if os.path.exists(pdf_path_to_use):
+                os.remove(pdf_path_to_use)
     
     else:
         # Just save the file for later processing
