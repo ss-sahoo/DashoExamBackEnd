@@ -186,8 +186,8 @@ else:
     STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 
     MEDIA_URL = '/media/'
-    # Store media files outside project directory
-    MEDIA_ROOT = os.path.expanduser('~/exam_flow_media')
+    # Store media files in project media directory
+    MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 
     STORAGES = {
         "default": {
