@@ -1,54 +1,71 @@
-# Core Django Packages
-Django==4.2.25
-djangorestframework==3.14.0
-django-cors-headers==4.0.0
-psycopg2-binary==2.9.6
-python-decouple==3.8
-python-dotenv==1.0.1
-django-filter==23.2
+amqp==5.3.1
+asgiref==3.11.0
+async-timeout==5.0.1
+billiard==4.2.4
+boto3==1.42.63
+botocore==1.42.63
+cachetools==6.2.3
+celery==5.3.4
+certifi==2025.11.12
+charset-normalizer==3.4.4
+click==8.1.8
+click-didyoumean==0.3.1
+click-plugins==1.1.1.2
+click-repl==0.3.0
 dj-database-url==2.0.0
+Django==4.2.25
+django-cors-headers==4.0.0
+django-filter==23.2
+django-storages==1.14.6
+djangorestframework==3.14.0
 djangorestframework-simplejwt==5.2.2
-Pillow==10.0.0
+et_xmlfile==2.0.0
+google-ai-generativelanguage==0.4.0
+google-api-core==2.28.1
+google-auth==2.43.0
+google-generativeai==0.3.2
+googleapis-common-protos==1.72.0
+grpcio==1.76.0
+grpcio-status==1.62.3
 gunicorn==21.0.0
-django-storages==1.14.2
-boto3==1.34.51
-whitenoise==6.5.0
-
-# Data Processing
-pandas==2.0.3
-openpyxl==3.1.2
+idna==3.11
+jmespath==1.1.0
+kombu==5.6.1
+lxml==6.0.2
 numpy==1.24.3
 opencv-python-headless==4.10.0.84
-mediapipe==0.10.11
-
-# Report Generation
-reportlab==4.0.4
-xlsxwriter==3.1.2
-
-# Timezone and Scheduling
-pytz==2023.3
-python-dateutil==2.8.2
-
-# Email and Notifications
-celery==5.3.4
-redis==5.0.1
-
-# AI & Vector Search (Optional - can be installed separately if needed)
-# pgvector==0.2.4
-openai>=1.0.0
-# httpx==0.24.1
-# numpy==1.24.4
-
-# AI Question Extraction
-google-generativeai>=0.5.0
+openpyxl==3.1.2
+packaging==25.0
+pandas==2.0.3
 pdf2image==1.17.0
+Pillow==10.0.0
+prompt_toolkit==3.0.52
+proto-plus==1.26.1
+protobuf==4.25.8
+psycopg2-binary==2.9.6
+PuLP==3.3.0
+pyasn1==0.6.1
+pyasn1_modules==0.4.2
+PyJWT==2.10.1
 PyPDF2==3.0.1
+python-barcode==0.16.1
+python-dateutil==2.8.2
+python-decouple==3.8
 python-docx==1.1.0
+python-dotenv==1.0.1
+pytz==2023.3
+redis==5.0.1
+reportlab==4.0.4
 requests==2.31.0
-# Pillow already installed above for image processing
-
-# Property-Based Testing
-hypothesis==6.92.1
-
-# Mathpix OCR (for PDF extraction)
-# Uses requests library above
+rsa==4.9.1
+s3transfer==0.16.0
+six==1.17.0
+sqlparse==0.5.4
+tqdm==4.67.1
+typing_extensions==4.15.0
+tzdata==2025.3
+urllib3==1.26.20
+vine==5.1.0
+wcwidth==0.2.14
+whitenoise==6.5.0
+XlsxWriter==3.1.2

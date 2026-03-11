@@ -74,12 +74,33 @@ def convert_pdf_to_images(pdf_path: str, output_folder: str, dpi: int = 300) -> 
         List of paths to saved images
     """
     from pdf2image import convert_from_path
+    import shutil
     
     # Create output directory if it doesn't exist
     os.makedirs(output_folder, exist_ok=True)
     
+    # Try to find poppler path
+    poppler_path = None
+    possible_paths = [
+        '/usr/bin',
+        '/usr/local/bin',
+        shutil.which('pdftoppm')
+    ]
+    
+    for path in possible_paths:
+        if path and os.path.exists(path if '/' in path else os.path.dirname(path)):
+            poppler_path = path if '/' in path else os.path.dirname(path)
+            break
+    
     # Convert PDF pages to PIL images
-    images = convert_from_path(pdf_path, dpi=dpi, thread_count=4)
+    try:
+        if poppler_path:
+            images = convert_from_path(pdf_path, dpi=dpi, thread_count=4, poppler_path=poppler_path)
+        else:
+            images = convert_from_path(pdf_path, dpi=dpi, thread_count=4)
+    except Exception as e:
+        # If poppler not found, try without specifying path
+        images = convert_from_path(pdf_path, dpi=dpi, thread_count=4)
     
     image_paths = []
     for i, image in enumerate(images):
