@@ -56,6 +56,13 @@ class Institute(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    # Multi-tenancy fields
+    db_name = models.CharField(max_length=100, blank=True, null=True, help_text="Specific database name for this institute")
+    db_host = models.CharField(max_length=255, blank=True, null=True, default='localhost')
+    db_port = models.CharField(max_length=10, blank=True, null=True, default='5432')
+    db_user = models.CharField(max_length=100, blank=True, null=True)
+    db_password = models.CharField(max_length=255, blank=True, null=True)
+
     class Meta:
         ordering = ['name']
 
@@ -171,6 +178,13 @@ class User(AbstractUser):
         null=True,
         help_text="Optional default weekly slot availability for this teacher.",
     )
+    # Many-to-Many relationship with Institutes
+    institutes = models.ManyToManyField(
+        Institute, 
+        through='UserInstituteMembership',
+        related_name='associated_users',
+        blank=True
+    )
     
     # Center relation (for timetable system)
     center = models.ForeignKey(
@@ -240,7 +254,69 @@ class User(AbstractUser):
         """Check if user is staff"""
         return self.role == self.ROLE_STAFF
     
-    # ===========
+    def get_role_in_institute(self, institute):
+        """Get the user's role in a specific institute"""
+        if self.role == self.ROLE_SUPER_ADMIN:
+            return self.ROLE_SUPER_ADMIN
+            
+        membership = self.memberships.filter(institute=institute, is_active=True).first()
+        if membership:
+            return membership.role
+            
+        # Fallback to primary institute
+        if self.institute == institute:
+            return self.role
+            
+        return None
+
+    @property
+    def current_membership(self):
+        """Get membership for the currently active tenant database"""
+        from .utils import get_current_db
+        db_name = get_current_db()
+        
+        if not db_name or db_name == 'default':
+            return None
+            
+        return self.memberships.filter(institute__db_name=db_name, is_active=True).first()
+
+    @property
+    def effective_teacher_code(self):
+        """Returns the teacher code for the current institute context or primary as fallback"""
+        membership = self.current_membership
+        if membership and membership.teacher_code:
+            return membership.teacher_code
+        return self.teacher_code
+
+    @property
+    def effective_center(self):
+        """Returns the center for the current institute context or primary as fallback"""
+        membership = self.current_membership
+        if membership and membership.center:
+            return membership.center
+        return self.center
+
+# New junction model for many-to-many user-institute relationships
+class UserInstituteMembership(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='memberships')
+    institute = models.ForeignKey(Institute, on_delete=models.CASCADE, related_name='memberships')
+    role = models.CharField(max_length=20, choices=User.ROLE_CHOICES, default='student')
+    
+    # Institute-specific profile data
+    teacher_code = models.CharField(max_length=50, blank=True, null=True)
+    center = models.ForeignKey('Center', on_delete=models.SET_NULL, null=True, blank=True)
+    
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ('user', 'institute')
+        verbose_name = "User Institute Membership"
+        verbose_name_plural = "User Institute Memberships"
+
+    def __str__(self):
+        return f"{self.user.email} - {self.institute.name} ({self.role})"
     # PROPERTY HELPERS FOR COMPATIBILITY
     # ===========
     # Removed shadowing center_id property to allow setting center_id directly

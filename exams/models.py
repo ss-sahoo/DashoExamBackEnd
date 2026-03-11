@@ -19,7 +19,7 @@ class Exam(models.Model):
 
     title = models.CharField(max_length=200)
     description = models.TextField(blank=True)
-    institute = models.ForeignKey(Institute, on_delete=models.CASCADE, related_name='exams')
+    institute = models.ForeignKey(Institute, on_delete=models.CASCADE, related_name='exams', db_constraint=False)
     pattern = models.ForeignKey(ExamPattern, on_delete=models.CASCADE, related_name='exams')
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='draft')
     
@@ -67,7 +67,7 @@ class Exam(models.Model):
     public_link_created_at = models.DateTimeField(default=dj_timezone.now)
     public_link_last_used_at = models.DateTimeField(null=True, blank=True)
     public_link_usage_count = models.IntegerField(default=0)
-    allowed_users = models.ManyToManyField(User, blank=True, related_name='allowed_exams')
+    allowed_users = models.ManyToManyField(User, blank=True, related_name='allowed_exams', db_constraint=False)
     
     # Visibility Scope - controls who can access this exam
     VISIBILITY_SCOPE_CHOICES = [
@@ -85,13 +85,15 @@ class Exam(models.Model):
         'accounts.Center',
         blank=True,
         related_name='exams',
-        help_text="Centers whose students can access this exam (when visibility_scope='centers')"
+        help_text="Centers whose students can access this exam (when visibility_scope='centers')",
+        db_constraint=False
     )
     allowed_batches = models.ManyToManyField(
         'accounts.Batch',
         blank=True,
         related_name='exams',
-        help_text="Batches whose students can access this exam (when visibility_scope='batches')"
+        help_text="Batches whose students can access this exam (when visibility_scope='batches')",
+        db_constraint=False
     )
     
     # Exam Mode - Controls how the exam is conducted
@@ -127,7 +129,8 @@ class Exam(models.Model):
         null=True,
         blank=True,
         related_name='exams',
-        help_text="Program this exam belongs to (for program-specific exams)"
+        help_text="Program this exam belongs to (for program-specific exams)",
+        db_constraint=False
     )
     
     # OMR Configuration (for offline_omr mode)
@@ -170,7 +173,7 @@ class Exam(models.Model):
     )
     
     # Metadata
-    created_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='created_exams')
+    created_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='created_exams', db_constraint=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -440,7 +443,7 @@ class ExamReschedule(models.Model):
     new_end_date = models.DateTimeField()
     reason = models.TextField()
     status = models.CharField(max_length=20, choices=RESCHEDULE_STATUS_CHOICES, default='pending')
-    reviewed_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='reviewed_reschedules')
+    reviewed_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='reviewed_reschedules', db_constraint=False)
     review_notes = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     reviewed_at = models.DateTimeField(null=True, blank=True)
@@ -464,7 +467,7 @@ class ExamAttempt(models.Model):
     ]
 
     exam = models.ForeignKey(Exam, on_delete=models.CASCADE, related_name='attempts')
-    student = models.ForeignKey(User, on_delete=models.CASCADE, related_name='exam_attempts')
+    student = models.ForeignKey(User, on_delete=models.CASCADE, related_name='exam_attempts', db_constraint=False)
     attempt_number = models.IntegerField(default=1)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='not_started')
     
@@ -630,9 +633,9 @@ class ExamInvitation(models.Model):
     ]
     
     exam = models.ForeignKey(Exam, on_delete=models.CASCADE, related_name='invitations')
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='exam_invitations')
-    student = models.ForeignKey(User, on_delete=models.CASCADE, related_name='student_invitations', null=True, blank=True)
-    invited_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='sent_invitations')
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='exam_invitations', db_constraint=False)
+    student = models.ForeignKey(User, on_delete=models.CASCADE, related_name='student_invitations', null=True, blank=True, db_constraint=False)
+    invited_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='sent_invitations', db_constraint=False)
     status = models.CharField(max_length=20, choices=INVITATION_STATUS_CHOICES, default='pending')
     invited_at = models.DateTimeField(auto_now_add=True)
     is_accepted = models.BooleanField(default=False)
@@ -775,7 +778,7 @@ class QuestionEvaluation(models.Model):
     is_correct = models.BooleanField(default=False)
     
     # Evaluation metadata
-    evaluated_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='evaluated_questions')
+    evaluated_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='evaluated_questions', db_constraint=False)
     evaluated_at = models.DateTimeField(null=True, blank=True)
     evaluation_notes = models.TextField(blank=True)
     

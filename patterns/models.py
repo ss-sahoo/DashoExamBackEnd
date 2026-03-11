@@ -7,7 +7,7 @@ class Subject(models.Model):
     """Subject model for organizing exam sections"""
     name = models.CharField(max_length=100)
     description = models.TextField(blank=True)
-    institute = models.ForeignKey(Institute, on_delete=models.CASCADE, related_name='subjects')
+    institute = models.ForeignKey(Institute, on_delete=models.CASCADE, related_name='subjects', db_constraint=False)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -37,7 +37,7 @@ class ExamPattern(models.Model):
     
     name = models.CharField(max_length=200)
     description = models.TextField(blank=True)
-    institute = models.ForeignKey(Institute, on_delete=models.CASCADE, related_name='exam_patterns')
+    institute = models.ForeignKey(Institute, on_delete=models.CASCADE, related_name='exam_patterns', db_constraint=False)
     total_questions = models.IntegerField(validators=[MinValueValidator(1), MaxValueValidator(500)])
     total_duration = models.IntegerField(help_text="Duration in minutes", validators=[MinValueValidator(1)])
     total_marks = models.IntegerField(validators=[MinValueValidator(1)])
@@ -54,7 +54,7 @@ class ExamPattern(models.Model):
         help_text="Default OMR configuration (candidate fields, etc.)"
     )
     is_active = models.BooleanField(default=True)
-    created_by = models.ForeignKey('accounts.User', on_delete=models.CASCADE, related_name='created_patterns')
+    created_by = models.ForeignKey('accounts.User', on_delete=models.CASCADE, related_name='created_patterns', db_constraint=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
