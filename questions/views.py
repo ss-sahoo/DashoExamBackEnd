@@ -4,6 +4,7 @@ from rest_framework.response import Response
 from django.db import transaction
 from django.db.models import Q
 from django.http import JsonResponse
+from django.conf import settings
 import pandas as pd
 import io
 import csv
@@ -698,7 +699,9 @@ def generate_ai_question(request):
     if difficulty not in ['easy', 'medium', 'hard']:
         difficulty = 'medium'
 
+    print(f"🧠 AI generate request: user_id={user.id}, type={question_type}, subject={subject or 'N/A'}")
     if not configure_gemini():
+        print("❌ AI generate aborted: Gemini API is not configured")
         return Response(
             {'error': 'Gemini API is not configured on the server.'},
             status=status.HTTP_503_SERVICE_UNAVAILABLE
@@ -1547,7 +1550,9 @@ def solve_question_with_ai(request):
     if not question_text:
         return Response({'error': 'Question text is required'}, status=status.HTTP_400_BAD_REQUEST)
 
+    print(f"🧠 AI solve request: user_id={user.id}, type={question_type}, subject={subject or 'N/A'}")
     if not configure_gemini():
+        print("❌ AI solve aborted: Gemini API is not configured")
         return Response(
             {'error': 'Gemini API is not configured on the server.'},
             status=status.HTTP_503_SERVICE_UNAVAILABLE
@@ -1581,47 +1586,150 @@ Important:
 - Do NOT include any text outside of the JSON object.
 """
 
+    def _fallback_solve_payload(message: str, raw_solution: str = ""):
+        return {
+            "correct_answer": "",
+            "solution": raw_solution or "AI solver is temporarily unavailable. Please try again with a shorter question or fewer options.",
+            "explanation": raw_solution or "AI solver could not generate a structured result.",
+            "_meta": {
+                "fallback": True,
+                "message": message,
+            }
+        }
+
     try:
         if not GOOGLE_AI_AVAILABLE or genai is None:
-            return Response(
-                {"error": "Google AI (Gemini) is not available."},
-                status=status.HTTP_503_SERVICE_UNAVAILABLE
-            )
-        
-        model = genai.GenerativeModel('gemini-2.0-flash')
-        response = model.generate_content(
-            prompt,
-            generation_config={
-                "temperature": 0.2, # Lower temperature for higher accuracy in solving
-                "top_p": 0.9,
-                "max_output_tokens": 2048,
-            }
-        )
+            return Response(_fallback_solve_payload("Google AI (Gemini) package is not available."), status=status.HTTP_200_OK)
 
-        text = response.text.strip()
-        match = re.search(r'\{.*\}', text, re.DOTALL)
-        if match:
-            json_str = match.group(0)
+        configured_model = getattr(settings, 'GEMINI_MODEL', '') or 'gemini-2.5-flash'
+        candidate_models = [configured_model]
+        if configured_model != 'gemini-2.5-flash':
+            candidate_models.append('gemini-2.5-flash')
+
+        response = None
+        last_error = None
+        selected_model = None
+        for model_name in candidate_models:
             try:
-                ai_data = json.loads(json_str)
-            except json.JSONDecodeError:
-                # Common issue: Gemini returns raw LaTeX backslashes which are invalid in JSON
-                # We need to escape backslashes that aren't followed by valid JSON escape chars
-                # This regex finds a backslash followed by any character EXCEPT the valid JSON escape set (up to \uXXXX)
-                # For simplicity, we'll double all backslashes that aren't already part of a valid escape
-                # Let's use a robust approach: replace backslashes that are not followed by " \ / b f n r t u
-                json_str_fixed = re.sub(r'\\(?![\\"/bfnrtu])', r'\\\\', json_str)
-                try:
-                    ai_data = json.loads(json_str_fixed)
-                except json.JSONDecodeError as e:
-                    return Response({'error': f'AI returned invalid JSON: {str(e)}', 'raw_text': text}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-            
-            return Response(ai_data)
-        else:
-            return Response({'error': 'AI failed to return structured data.', 'raw_text': text}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                print(f"🧠 AI solve using model={model_name}")
+                model = genai.GenerativeModel(model_name)
+                response = model.generate_content(
+                    prompt,
+                    generation_config={
+                        "temperature": 0.2,
+                        "top_p": 0.9,
+                        "max_output_tokens": 2048,
+                    }
+                )
+                selected_model = model_name
+                break
+            except Exception as model_exc:
+                last_error = model_exc
+                print(f"⚠️ AI solve model failed ({model_name}): {model_exc}")
+                continue
 
-    except Exception as e:
-        return Response({'error': f'AI solver error: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        if response is None:
+            raise last_error or ValueError("Gemini did not return a response")
+
+        text = ""
+        try:
+            raw_text = getattr(response, 'text', None)
+        except Exception:
+            raw_text = None
+        if raw_text:
+            text = str(raw_text).strip()
+
+        finish_reasons = []
+        candidates = getattr(response, 'candidates', None) or []
+        if candidates:
+            finish_reasons = [str(getattr(candidate, 'finish_reason', None)) for candidate in candidates]
+
+        if not text and candidates:
+            for candidate in candidates:
+                content = getattr(candidate, 'content', None)
+                if content and getattr(content, 'parts', None):
+                    for part in content.parts:
+                        part_text = getattr(part, 'text', None)
+                        if part_text:
+                            text += part_text
+                if text:
+                    break
+            text = text.strip()
+
+        if not text:
+            raise ValueError(f"AI returned no content (finish reasons: {finish_reasons or 'unknown'})")
+
+        ai_data = None
+        try:
+            ai_data = json.loads(text)
+        except json.JSONDecodeError:
+            pass
+
+        if not ai_data:
+            match = re.search(r'\{.*\}', text, re.DOTALL)
+            if match:
+                json_str = match.group(0)
+                try:
+                    ai_data = json.loads(json_str)
+                except json.JSONDecodeError:
+                    json_str_fixed = re.sub(r'\\(?![\\"/bfnrtu])', r'\\\\', json_str)
+                    try:
+                        ai_data = json.loads(json_str_fixed)
+                    except json.JSONDecodeError:
+                        ai_data = None
+
+        if not isinstance(ai_data, dict):
+            # Last-resort fallback for non-JSON responses: still return useful content.
+            extracted_answer = ""
+            answer_patterns = [
+                r'(?im)^\s*correct[_\s-]*answer\s*[:\-]\s*(.+?)\s*$',
+                r'(?im)^\s*answer\s*[:\-]\s*(.+?)\s*$',
+                r'(?im)^\s*final\s*answer\s*[:\-]\s*(.+?)\s*$',
+            ]
+            for pattern in answer_patterns:
+                answer_match = re.search(pattern, text)
+                if answer_match:
+                    extracted_answer = answer_match.group(1).strip()
+                    break
+
+            ai_data = {
+                "correct_answer": extracted_answer,
+                "solution": text,
+                "explanation": text,
+            }
+
+        ai_data['_meta'] = {
+            'model': selected_model,
+            'finish_reasons': finish_reasons,
+        }
+        return Response(ai_data)
+
+    except json.JSONDecodeError as exc:
+        return Response(
+            _fallback_solve_payload(f"AI returned invalid JSON: {exc}"),
+            status=status.HTTP_200_OK
+        )
+    except Exception as exc:
+        if not GOOGLE_AI_AVAILABLE or google_exceptions is None:
+            return Response(
+                _fallback_solve_payload("Google AI (Gemini) is not available. Please install google-generativeai package."),
+                status=status.HTTP_200_OK
+            )
+        if isinstance(exc, google_exceptions.ResourceExhausted):
+            details = str(exc)
+            return Response(
+                _fallback_solve_payload(f"Gemini API quota reached. Details: {details}"),
+                status=status.HTTP_200_OK
+            )
+        if isinstance(exc, google_exceptions.GoogleAPIError):
+            return Response(
+                _fallback_solve_payload(f"Gemini API error: {exc}"),
+                status=status.HTTP_200_OK
+            )
+        return Response(
+            _fallback_solve_payload(f"AI solver error: {exc}"),
+            status=status.HTTP_200_OK
+        )
 
 
 @api_view(['GET'])

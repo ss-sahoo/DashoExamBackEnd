@@ -58,13 +58,31 @@ def configure_gemini():
     """Configure Gemini API"""
     global _gemini_configured
     if not _gemini_configured:
+        if not GOOGLE_AI_AVAILABLE or genai is None:
+            print("❌ Gemini configuration skipped: google-generativeai is not installed")
+            return False
+
         try:
-            from config import GEMINI_API_KEY
-            if GEMINI_API_KEY and GEMINI_API_KEY.strip():
-                genai.configure(api_key=GEMINI_API_KEY)
+            from config import GEMINI_API_KEY as CONFIG_GEMINI_API_KEY
+            api_key = (CONFIG_GEMINI_API_KEY or "").strip()
+            key_source = "config.GEMINI_API_KEY"
+
+            if not api_key:
+                google_key = (os.getenv('GOOGLE_GEMINI_API_KEY', '') or '').strip()
+                legacy_key = (os.getenv('GEMINI_API_KEY', '') or '').strip()
+                api_key = google_key or legacy_key
+                if google_key:
+                    key_source = "GOOGLE_GEMINI_API_KEY"
+                elif legacy_key:
+                    key_source = "GEMINI_API_KEY"
+
+            if api_key:
+                print(f"🔎 Gemini key source: {key_source}")
+                genai.configure(api_key=api_key)
                 _gemini_configured = True
                 print("✅ Gemini configured successfully")
                 return True
+            print("❌ Gemini configuration failed: no API key found in GOOGLE_GEMINI_API_KEY or GEMINI_API_KEY")
         except Exception as e:
             print(f"❌ Gemini configuration error: {e}")
     return _gemini_configured
@@ -495,4 +513,3 @@ def cosine_similarity(vec1: List[float], vec2: List[float]) -> float:
         return 0.0
     
     return float(dot_product / (norm1 * norm2))
-

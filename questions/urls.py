@@ -36,6 +36,7 @@ urlpatterns = [
     
     # AI Generation
     path('ai/generate-question/', views.generate_ai_question, name='ai-generate-question'),
+    path('ai/solve-question/', views.solve_question_with_ai, name='ai-solve-question'),
     
     # Bulk operations
     path('bulk-import/', views.bulk_import_questions, name='bulk-import-questions'),

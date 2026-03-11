@@ -351,10 +351,12 @@ CELERY_TASK_TIME_LIMIT = 30 * 60  # 30 minutes max per task
 # ===========================
 # AI Configuration (Gemini)
 # ===========================
-# PRIMARY API KEY: AIzaSyBRBA_VMMB1B0zzYuL4QJWUmRmTE90TsmI (EXPIRED)
-# Backup key: AIzaSyCCnt7RH4e_Mb2gRcdpCTZoOKpsagjnWBc
-# Priority: CONFIG_GEMINI_API_KEY > GEMINI_API_KEY env var > default
-GEMINI_API_KEY = CONFIG_GEMINI_API_KEY or os.getenv('GEMINI_API_KEY', 'AIzaSyCCnt7RH4e_Mb2gRcdpCTZoOKpsagjnWBc')
+# Priority: config.py resolved key > GOOGLE_GEMINI_API_KEY env var > GEMINI_API_KEY env var
+GEMINI_API_KEY = (
+    CONFIG_GEMINI_API_KEY
+    or os.getenv('GOOGLE_GEMINI_API_KEY', '')
+    or os.getenv('GEMINI_API_KEY', '')
+)
 GEMINI_MODEL = CONFIG_GEMINI_MODEL or os.getenv('GEMINI_MODEL', 'gemini-2.0-flash')
 GEMINI_TEMPERATURE = float(CONFIG_GEMINI_TEMPERATURE or os.getenv('GEMINI_TEMPERATURE', '0.7'))
 GEMINI_TOP_P = float(CONFIG_GEMINI_TOP_P or os.getenv('GEMINI_TOP_P', '0.95'))

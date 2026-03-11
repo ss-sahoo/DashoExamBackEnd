@@ -40,10 +40,9 @@ CORS_ALLOWED_ORIGINS = get_config('CORS_ALLOWED_ORIGINS',
 
 # AI Configuration - Disabled for low-memory deployment
 OPENAI_API_KEY = get_config('OPENAI_API_KEY', default='')
-# Primary Gemini API Key: AIzaSyBRBA_VMMB1B0zzYuL4QJWUmRmTE90TsmI (EXPIRED)
-# Backup key: AIzaSyCCnt7RH4e_Mb2gRcdpCTZoOKpsagjnWBc
-# Can be overridden by GEMINI_API_KEY environment variable
-GEMINI_API_KEY = get_config('GEMINI_API_KEY', default='AIzaSyCCnt7RH4e_Mb2gRcdpCTZoOKpsagjnWBc')
+# Prefer GOOGLE_GEMINI_API_KEY and keep GEMINI_API_KEY as backward-compatible fallback.
+GOOGLE_GEMINI_API_KEY = get_config('GOOGLE_GEMINI_API_KEY', default='')
+GEMINI_API_KEY = GOOGLE_GEMINI_API_KEY or get_config('GEMINI_API_KEY', default='')
 GEMINI_MODEL = get_config('GEMINI_MODEL', default='gemini-1.5-flash')
 GEMINI_TEMPERATURE = get_config('GEMINI_TEMPERATURE', default='0.7', cast=float)
 GEMINI_TOP_P = get_config('GEMINI_TOP_P', default='0.95', cast=float)
