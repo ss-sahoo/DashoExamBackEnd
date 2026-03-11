@@ -173,6 +173,17 @@ class BaseRoleLoginView(APIView):
                 "full_name": user.get_full_name(),
                 "role": user.role,
                 "center_id": user.center_id,
+                "institute_id": user.institute_id,
+                "institute_name": user.institute.name if user.institute else None,
+                "db_name": user.institute.db_name if user.institute else 'default',
+                "associated_institutes": [
+                    {
+                        "id": m.institute.id,
+                        "name": m.institute.name,
+                        "db_name": m.institute.db_name,
+                        "role": m.role
+                    } for m in user.memberships.filter(is_active=True).select_related('institute')
+                ]
             },
         }
         

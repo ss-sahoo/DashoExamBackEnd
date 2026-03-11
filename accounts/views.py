@@ -195,8 +195,17 @@ def user_login_view(request):
             'role': user.role,
             'institute_id': user.institute_id,
             'institute_name': user.institute.name if user.institute else None,
+            'db_name': user.institute.db_name if user.institute else 'default',
             'center_id': center_id,
             'center_name': center_name,
+            'associated_institutes': [
+                {
+                    'id': m.institute.id,
+                    'name': m.institute.name,
+                    'db_name': m.institute.db_name,
+                    'role': m.role
+                } for m in user.memberships.filter(is_active=True).select_related('institute')
+            ]
         },
         'message': 'Login successful'
     }

@@ -4,11 +4,28 @@ Utility functions for user code and password generation.
 
 import random
 import string
+import threading
 from datetime import datetime
 from django.conf import settings
 from django.core.mail import EmailMultiAlternatives
 from django.template.loader import render_to_string
 from .models import User
+
+# Thread-local storage for the current tenant database
+_thread_locals = threading.local()
+
+def set_current_db(db_name):
+    """Set the database name for the current thread"""
+    _thread_locals.current_db = db_name
+
+def get_current_db():
+    """Get the database name for the current thread"""
+    return getattr(_thread_locals, 'current_db', 'default')
+
+def clear_current_db():
+    """Clear the database name for the current thread"""
+    if hasattr(_thread_locals, 'current_db'):
+        del _thread_locals.current_db
 
 
 def generate_user_code(role: str, center_code: str = None, batch_code: str = None) -> str:

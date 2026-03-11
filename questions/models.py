@@ -8,9 +8,9 @@ class QuestionBank(models.Model):
     """Question bank for storing reusable questions"""
     name = models.CharField(max_length=200)
     description = models.TextField(blank=True)
-    institute = models.ForeignKey(Institute, on_delete=models.CASCADE, related_name='question_banks')
+    institute = models.ForeignKey(Institute, on_delete=models.CASCADE, related_name='question_banks', db_constraint=False)
     is_public = models.BooleanField(default=False)
-    created_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='created_question_banks')
+    created_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='created_question_banks', db_constraint=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -80,13 +80,13 @@ class Question(models.Model):
     
     # References
     question_bank = models.ForeignKey(QuestionBank, on_delete=models.CASCADE, related_name='questions', null=True, blank=True)
-    institute = models.ForeignKey(Institute, on_delete=models.CASCADE, related_name='questions')
-    created_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='created_questions')
+    institute = models.ForeignKey(Institute, on_delete=models.CASCADE, related_name='questions', db_constraint=False)
+    created_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='created_questions', db_constraint=False)
     
     # Status
     is_active = models.BooleanField(default=True)
     is_verified = models.BooleanField(default=False)
-    verified_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='verified_questions')
+    verified_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='verified_questions', db_constraint=False)
     verified_at = models.DateTimeField(null=True, blank=True)
     
     # Usage tracking
@@ -150,7 +150,7 @@ class QuestionImage(models.Model):
 class QuestionComment(models.Model):
     """Comments and reviews on questions"""
     question = models.ForeignKey(Question, on_delete=models.CASCADE, related_name='comments')
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='question_comments')
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='question_comments', db_constraint=False)
     comment = models.TextField()
     is_review = models.BooleanField(default=False)
     rating = models.IntegerField(
@@ -191,8 +191,8 @@ class QuestionTemplate(models.Model):
     usage_count = models.PositiveIntegerField(default=0)
     is_public = models.BooleanField(default=True)
     is_featured = models.BooleanField(default=False)
-    created_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='question_templates')
-    institute = models.ForeignKey(Institute, on_delete=models.CASCADE, related_name='question_templates', null=True, blank=True)
+    created_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='question_templates', db_constraint=False)
+    institute = models.ForeignKey(Institute, on_delete=models.CASCADE, related_name='question_templates', null=True, blank=True, db_constraint=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -261,7 +261,7 @@ class QuestionEmbedding(models.Model):
 
 class ChatHistory(models.Model):
     """Store chat conversations for context"""
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='chat_history')
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='chat_history', db_constraint=False)
     session_id = models.CharField(max_length=100, db_index=True)
     role = models.CharField(max_length=20, choices=[
         ('user', 'User'),
@@ -457,7 +457,8 @@ class ExtractionJob(models.Model):
         User, 
         on_delete=models.CASCADE, 
         related_name='extraction_jobs',
-        help_text='User who uploaded the file'
+        help_text='User who uploaded the file',
+        db_constraint=False
     )
     
     # Link to pre-analysis job (for subject-separated content)

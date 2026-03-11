@@ -55,6 +55,7 @@ class Timetable(TimeStampedModel):
         on_delete=models.CASCADE,
         related_name="timetables",
         help_text="Center for which this timetable is created.",
+        db_constraint=False
     )
     
     name = models.CharField(
@@ -269,6 +270,7 @@ class TimetableEntry(TimeStampedModel):
         on_delete=models.CASCADE,
         related_name="timetable_entries",
         help_text="Batch that will have class in this slot.",
+        db_constraint=False
     )
     
     teacher = models.ForeignKey(
@@ -278,6 +280,7 @@ class TimetableEntry(TimeStampedModel):
         blank=True,
         related_name="timetable_entries",
         help_text="Teacher assigned to this slot (from optimization).",
+        db_constraint=False
     )
     
     subject = models.CharField(
@@ -324,6 +327,7 @@ class TeacherConstraint(TimeStampedModel):
         limit_choices_to={"role": User.ROLE_TEACHER},
         related_name="teacher_constraints",
         help_text="Teacher for whom this constraint is set.",
+        db_constraint=False
     )
     
     min_classes = models.PositiveIntegerField(
@@ -369,6 +373,7 @@ class TeacherAvailability(TimeStampedModel):
         limit_choices_to={"role": User.ROLE_TEACHER},
         related_name="teacher_availabilities",
         help_text="Teacher whose availability is being tracked.",
+        db_constraint=False
     )
     
     date = models.DateField(
@@ -428,6 +433,7 @@ class TeacherSlotAvailability(TimeStampedModel):
         limit_choices_to={"role": User.ROLE_TEACHER},
         related_name="weekly_slot_availabilities",
         help_text="Teacher whose weekly slot availability this record describes.",
+        db_constraint=False
     )
 
     day_slot = models.ForeignKey(
@@ -545,6 +551,7 @@ class TimetableBatch(TimeStampedModel):
         on_delete=models.CASCADE,
         related_name="timetable_assignments",
         help_text="Batch assigned to the timetable.",
+        db_constraint=False
     )
 
     class Meta:
@@ -590,6 +597,7 @@ class BatchFacultyLoad(TimeStampedModel):
         limit_choices_to={"role": User.ROLE_TEACHER},
         related_name="batch_faculty_loads",
         help_text="Faculty / teacher. Null for special entries like FREE, Exam.",
+        db_constraint=False
     )
     
     subject_name = models.CharField(
@@ -604,6 +612,7 @@ class BatchFacultyLoad(TimeStampedModel):
         on_delete=models.CASCADE,
         related_name="faculty_loads",
         help_text="Batch to which this load configuration applies.",
+        db_constraint=False
     )
 
     total_lectures = models.PositiveIntegerField(
@@ -688,6 +697,7 @@ class FixedSlot(TimeStampedModel):
         on_delete=models.CASCADE,
         related_name="fixed_slots",
         help_text="Batch affected by this fixed slot.",
+        db_constraint=False
     )
 
     subject = models.CharField(
@@ -707,6 +717,7 @@ class FixedSlot(TimeStampedModel):
         limit_choices_to={"role": User.ROLE_TEACHER},
         related_name="fixed_slots",
         help_text="Teacher code for this fixed slot (optional if free/exam).",
+        db_constraint=False
     )
 
     # When true, optimisation / auto-generation logic MUST NOT change this row.

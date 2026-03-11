@@ -93,7 +93,8 @@ class OMRSubmission(models.Model):
     student = models.ForeignKey(
         'accounts.User',
         on_delete=models.CASCADE,
-        related_name='omr_submissions'
+        related_name='omr_submissions',
+        db_constraint=False
     )
     
     # Uploaded files (list of paths)
@@ -201,7 +202,8 @@ class AnswerKey(models.Model):
         'accounts.User',
         on_delete=models.SET_NULL,
         null=True,
-        related_name='created_answer_keys'
+        related_name='created_answer_keys',
+        db_constraint=False
     )
     
     class Meta:

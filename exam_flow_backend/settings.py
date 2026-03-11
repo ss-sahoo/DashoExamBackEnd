@@ -53,6 +53,7 @@ MIDDLEWARE = [
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'accounts.device_session_middleware.DeviceSessionValidationMiddleware',  # Validate device sessions
+    'accounts.tenant_middleware.TenantMiddleware',  # Multi-tenancy support
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
@@ -119,6 +120,9 @@ else:
             'PORT': os.getenv('DB_PORT', '5432'),
         }
     }
+
+# Multi-tenancy Database Routing
+DATABASE_ROUTERS = ['accounts.router.InstituteRouter']
 
 # Password validation
 AUTH_PASSWORD_VALIDATORS = [
