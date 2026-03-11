@@ -62,6 +62,7 @@ A single user can belong to multiple institutes while maintaining a single login
 3.  **Context Switching**: 
     - To switch contexts, send the header `X-Institute-DB: <db_name>`.
     - `TenantMiddleware` verifies that the user is either a `super_admin` or has a valid membership for that database before switching.
+4.  **Effective Profile**: Use `user.effective_teacher_code` and `user.effective_center` in the backend. These automatically return the profile data for the currently active database context.
 
 ## 5. Database Foreign Keys
 Because databases are physically separate, database-level Foreign Key constraints across databases are disabled (`db_constraint=False`).

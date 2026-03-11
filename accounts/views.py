@@ -203,8 +203,11 @@ def user_login_view(request):
                     'id': m.institute.id,
                     'name': m.institute.name,
                     'db_name': m.institute.db_name,
-                    'role': m.role
-                } for m in user.memberships.filter(is_active=True).select_related('institute')
+                    'role': m.role,
+                    'teacher_code': m.teacher_code,
+                    'center_id': str(m.center_id) if m.center_id else None,
+                    'center_name': m.center.name if m.center else None,
+                } for m in user.memberships.filter(is_active=True).select_related('institute', 'center')
             ]
         },
         'message': 'Login successful'

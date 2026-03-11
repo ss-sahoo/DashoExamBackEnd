@@ -269,11 +269,43 @@ class User(AbstractUser):
             
         return None
 
+    @property
+    def current_membership(self):
+        """Get membership for the currently active tenant database"""
+        from .utils import get_current_db
+        db_name = get_current_db()
+        
+        if not db_name or db_name == 'default':
+            return None
+            
+        return self.memberships.filter(institute__db_name=db_name, is_active=True).first()
+
+    @property
+    def effective_teacher_code(self):
+        """Returns the teacher code for the current institute context or primary as fallback"""
+        membership = self.current_membership
+        if membership and membership.teacher_code:
+            return membership.teacher_code
+        return self.teacher_code
+
+    @property
+    def effective_center(self):
+        """Returns the center for the current institute context or primary as fallback"""
+        membership = self.current_membership
+        if membership and membership.center:
+            return membership.center
+        return self.center
+
 # New junction model for many-to-many user-institute relationships
 class UserInstituteMembership(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='memberships')
     institute = models.ForeignKey(Institute, on_delete=models.CASCADE, related_name='memberships')
     role = models.CharField(max_length=20, choices=User.ROLE_CHOICES, default='student')
+    
+    # Institute-specific profile data
+    teacher_code = models.CharField(max_length=50, blank=True, null=True)
+    center = models.ForeignKey('Center', on_delete=models.SET_NULL, null=True, blank=True)
+    
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
