@@ -22,7 +22,7 @@ def setup_default_institute():
         )
         
         if created:
-            print(f"✅ Created default institute: {institute.name}")
+            print(f" Created default institute: {institute.name}")
         else:
             print(f"ℹ️ Default institute already exists: {institute.name}")
             
@@ -31,7 +31,7 @@ def setup_default_institute():
         for user in users:
             user.institute = institute
             user.save()
-            print(f"✅ Assigned {user.email} to {institute.name}")
+            print(f" Assigned {user.email} to {institute.name}")
             
     except Exception as e:
         print(f"❌ Error during setup: {e}")

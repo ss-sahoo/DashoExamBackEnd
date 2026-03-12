@@ -12,7 +12,7 @@ def migrate_question_types(apps, schema_editor):
     Question.objects.filter(question_type='mcq').update(question_type='single_mcq')
     QuestionTemplate.objects.filter(question_type='mcq').update(question_type='single_mcq')
     
-    print("✅ Migrated Question and QuestionTemplate question types: mcq → single_mcq")
+    print(" Migrated Question and QuestionTemplate question types: mcq → single_mcq")
 
 
 def reverse_migrate_question_types(apps, schema_editor):
@@ -24,7 +24,7 @@ def reverse_migrate_question_types(apps, schema_editor):
     Question.objects.filter(question_type='single_mcq').update(question_type='mcq')
     QuestionTemplate.objects.filter(question_type='single_mcq').update(question_type='mcq')
     
-    print("✅ Reversed Question and QuestionTemplate question types: single_mcq → mcq")
+    print(" Reversed Question and QuestionTemplate question types: single_mcq → mcq")
 
 
 class Migration(migrations.Migration):

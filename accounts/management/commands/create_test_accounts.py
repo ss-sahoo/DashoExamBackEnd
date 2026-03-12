@@ -134,7 +134,7 @@ class Command(BaseCommand):
                             user.teacher_code = user_data['teacher_code']
                             user.save(update_fields=['teacher_code'])
                         
-                        self.stdout.write(self.style.SUCCESS(f'✅ Created: {email}'))
+                        self.stdout.write(self.style.SUCCESS(f' Created: {email}'))
             except Exception as e:
                 self.stdout.write(self.style.ERROR(f'❌ Error creating {email}: {e}'))
                 # Continue with next user

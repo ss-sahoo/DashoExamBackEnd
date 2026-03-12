@@ -17,7 +17,7 @@ def check_super_admins():
         print("❌ No Super Admins found!")
         print("💡 Run 'python manage.py bootstrap_system' to create one.")
     else:
-        print(f"✅ Found {super_admins.count()} Super Admin(s):")
+        print(f" Found {super_admins.count()} Super Admin(s):")
         for user in super_admins:
             print(f"   - ID: {user.id}")
             print(f"     Username: {user.username}")

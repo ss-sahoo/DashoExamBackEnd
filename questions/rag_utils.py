@@ -80,7 +80,7 @@ def configure_gemini():
                 print(f"🔎 Gemini key source: {key_source}")
                 genai.configure(api_key=api_key)
                 _gemini_configured = True
-                print("✅ Gemini configured successfully")
+                print(" Gemini configured successfully")
                 return True
             print("❌ Gemini configuration failed: no API key found in GOOGLE_GEMINI_API_KEY or GEMINI_API_KEY")
         except Exception as e:
@@ -174,7 +174,7 @@ def generate_embedding(text: str, model: str = "text-embedding-ada-002") -> List
     # Try Gemini first (FREE with good quota)
     try:
         if configure_gemini():
-            print("✅ Using Gemini for embeddings (FREE)")
+            print(" Using Gemini for embeddings (FREE)")
             return generate_embedding_gemini(text)
     except Exception as e:
         print(f"Gemini not available: {e}")
@@ -182,7 +182,7 @@ def generate_embedding(text: str, model: str = "text-embedding-ada-002") -> List
     # Try Ollama if enabled
     use_ollama = get_use_ollama()
     if use_ollama and check_ollama_running():
-        print("✅ Using Ollama for embeddings")
+        print(" Using Ollama for embeddings")
         return generate_embedding_ollama(text)
     
     # Fall back to OpenAI
@@ -361,7 +361,7 @@ Be encouraging, clear, and educational in your responses."""
     try:
         # Try Gemini first (FREE with good quota)
         if configure_gemini():
-            print("✅ Using Gemini for chat (FREE)")
+            print(" Using Gemini for chat (FREE)")
             try:
                 # Format messages for Gemini
                 chat_text = ""
@@ -394,7 +394,7 @@ Be encouraging, clear, and educational in your responses."""
         print(f"🤖 AI Backend Check: USE_OLLAMA={use_ollama}, Ollama Running={ollama_running}")
         
         if use_ollama and ollama_running:
-            print("✅ Using Ollama (FREE local AI)")
+            print(" Using Ollama (FREE local AI)")
             # Format messages for Ollama
             prompt = ""
             for msg in messages:

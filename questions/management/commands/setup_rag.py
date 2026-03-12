@@ -34,7 +34,7 @@ class Command(BaseCommand):
             result = cursor.fetchone()
             
             if result:
-                self.stdout.write(self.style.SUCCESS('  ✅ pgvector extension is installed'))
+                self.stdout.write(self.style.SUCCESS('   pgvector extension is installed'))
             else:
                 self.stdout.write(self.style.ERROR('  ❌ pgvector extension is NOT installed'))
                 self.stdout.write('')
@@ -87,7 +87,7 @@ class Command(BaseCommand):
             total_errors += result['errors']
             
             self.stdout.write(self.style.SUCCESS(
-                f"  ✅ Success: {result['success']}/{result['total']}"
+                f"   Success: {result['success']}/{result['total']}"
             ))
             if result['errors'] > 0:
                 self.stdout.write(self.style.ERROR(
@@ -96,7 +96,7 @@ class Command(BaseCommand):
         
         self.stdout.write('')
         self.stdout.write(self.style.SUCCESS('=' * 60))
-        self.stdout.write(self.style.SUCCESS('✅ RAG Setup Complete!'))
+        self.stdout.write(self.style.SUCCESS(' RAG Setup Complete!'))
         self.stdout.write(self.style.SUCCESS('=' * 60))
         self.stdout.write('')
         self.stdout.write(f'  Total Embedded: {total_success}')

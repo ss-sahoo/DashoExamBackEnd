@@ -29,7 +29,7 @@ def create_all_accounts():
             'is_verified': True,
         }
     )
-    print(f"\n✅ Institute: {institute.name} (ID: {institute.id})")
+    print(f"\n Institute: {institute.name} (ID: {institute.id})")
     
     # 2. Get or create Center
     center, _ = Center.objects.get_or_create(
@@ -40,7 +40,7 @@ def create_all_accounts():
             'address': '123 Tech Park, Mumbai',
         }
     )
-    print(f"✅ Center: {center.name} (ID: {center.id})")
+    print(f" Center: {center.name} (ID: {center.id})")
     
     # 3. Get or create Program
     program, _ = Program.objects.get_or_create(
@@ -51,7 +51,7 @@ def create_all_accounts():
             'is_active': True,
         }
     )
-    print(f"✅ Program: {program.name} (ID: {program.id})")
+    print(f" Program: {program.name} (ID: {program.id})")
     
     # 4. Get or create Batch
     batch, _ = Batch.objects.get_or_create(
@@ -61,7 +61,7 @@ def create_all_accounts():
             'name': 'JEE 2026 Batch A',
         }
     )
-    print(f"✅ Batch: {batch.name} (Code: {batch.code})")
+    print(f" Batch: {batch.name} (Code: {batch.code})")
     
     # Center code for generating usernames
     center_code = center.name[:4].replace(" ", "").replace("-", "")
@@ -244,7 +244,7 @@ def create_all_accounts():
     # Print Summary
     # ============================================
     print("\n" + "=" * 70)
-    print("✅ ALL ACCOUNTS CREATED WITH AUTO-GENERATED CODES")
+    print(" ALL ACCOUNTS CREATED WITH AUTO-GENERATED CODES")
     print("=" * 70)
     print(f"\nInstitute: {institute.name}")
     print(f"Center: {center.name} (ID: {center.id})")

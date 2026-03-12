@@ -53,7 +53,7 @@ class Command(BaseCommand):
                 self.stdout.write(self.style.ERROR(f'❌ Institute with domain "{domain}" already exists!'))
                 return
             
-            self.stdout.write(self.style.SUCCESS(f'✅ Created institute: {name}'))
+            self.stdout.write(self.style.SUCCESS(f' Created institute: {name}'))
             self.stdout.write(f'   Domain: {domain}')
             self.stdout.write(f'   Contact: {contact_email}')
             self.stdout.write(f'   Verified: {options["verified"]}')
@@ -106,7 +106,7 @@ class Command(BaseCommand):
         
         self.stdout.write('')
         self.stdout.write(self.style.SUCCESS('=' * 60))
-        self.stdout.write(self.style.SUCCESS('✅ Institute setup completed!'))
+        self.stdout.write(self.style.SUCCESS(' Institute setup completed!'))
         self.stdout.write(self.style.SUCCESS('=' * 60))
         self.stdout.write('')
         self.stdout.write(self.style.WARNING('📋 Users can now register with emails matching:'))

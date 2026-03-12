@@ -13,7 +13,7 @@ def run_command(command, description):
     print(f"🔄 {description}...")
     try:
         result = subprocess.run(command, shell=True, check=True, capture_output=True, text=True)
-        print(f"✅ {description} completed successfully")
+        print(f" {description} completed successfully")
         return result
     except subprocess.CalledProcessError as e:
         print(f"❌ {description} failed: {e.stderr}")
@@ -46,7 +46,7 @@ CORS_ALLOWED_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
     if not env_file.exists():
         with open(env_file, "w") as f:
             f.write(env_content)
-        print("✅ Created .env file")
+        print(" Created .env file")
     else:
         print("ℹ️  .env file already exists")
 

@@ -60,7 +60,7 @@ class Command(BaseCommand):
             )
             
             if created:
-                self.stdout.write(self.style.SUCCESS(f'✅ Created platform institute: {platform_institute.name}'))
+                self.stdout.write(self.style.SUCCESS(f' Created platform institute: {platform_institute.name}'))
             else:
                 self.stdout.write(self.style.WARNING(f'ℹ️  Platform institute already exists: {platform_institute.name}'))
             
@@ -84,7 +84,7 @@ class Command(BaseCommand):
             if created:
                 super_admin.set_password(password)
                 super_admin.save()
-                self.stdout.write(self.style.SUCCESS(f'✅ Created super admin: {email}'))
+                self.stdout.write(self.style.SUCCESS(f' Created super admin: {email}'))
                 self.stdout.write(self.style.SUCCESS(f'   Password: {password}'))
             else:
                 self.stdout.write(self.style.WARNING(f'ℹ️  Super admin already exists: {email}'))

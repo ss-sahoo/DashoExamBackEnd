@@ -94,7 +94,7 @@ class DocumentPreAnalyzer:
                 # Verify it matches the expected key
                 expected_key = "AIzaSyBRBA_VMMB1B0zzYuL4QJWUmRmTE90TsmI"
                 if self.api_key == expected_key:
-                    logger.info("✅ API Key verified: Matches expected key (AIzaSyBRBA...TsmI)")
+                    logger.info(" API Key verified: Matches expected key (AIzaSyBRBA...TsmI)")
                 else:
                     logger.warning(f"⚠️ API Key does NOT match expected key!")
                     logger.warning(f"   Expected: {expected_key[:10]}...{expected_key[-4:]}")
@@ -169,13 +169,13 @@ class DocumentPreAnalyzer:
                     else:
                         response_text = "Response received (format check passed)"
                 
-                logger.info(f"✅ API credentials verified! Test call took {test_elapsed:.2f} seconds")
+                logger.info(f" API credentials verified! Test call took {test_elapsed:.2f} seconds")
                 logger.info(f"   Test response: {response_text[:50]}")
             except Exception as e:
                 error_msg = str(e)
                 # Don't fail on text extraction errors - API is working if we got a response
                 if 'quick accessor' in error_msg or 'parts' in error_msg.lower():
-                    logger.info(f"✅ API credentials verified! (Response format check passed)")
+                    logger.info(f" API credentials verified! (Response format check passed)")
                     logger.info(f"   Note: {error_msg[:100]}")
                 else:
                     logger.error(f"❌ API credentials test FAILED: {error_msg}")
@@ -189,15 +189,15 @@ class DocumentPreAnalyzer:
                 try:
                     logger.info("📝 Step 1: Detecting document type with AI...")
                     doc_type_result = self.detect_document_type(text_content)
-                    logger.info(f"✅ Document type detected: {doc_type_result.get('document_type')} (AI)")
+                    logger.info(f" Document type detected: {doc_type_result.get('document_type')} (AI)")
                 except Exception as e:
                     logger.warning(f"⚠️ AI document type detection failed: {e}, using regex fallback")
                     doc_type_result = self._fallback_document_type_detection(text_content)
-                    logger.info(f"✅ Document type detected: {doc_type_result.get('document_type')} (Regex)")
+                    logger.info(f" Document type detected: {doc_type_result.get('document_type')} (Regex)")
             else:
                 logger.info("📝 Step 1: Detecting document type with regex...")
                 doc_type_result = self._fallback_document_type_detection(text_content)
-                logger.info(f"✅ Document type detected: {doc_type_result.get('document_type')} (Regex)")
+                logger.info(f" Document type detected: {doc_type_result.get('document_type')} (Regex)")
             logger.info(f"   Step 1 took {time.time() - step1_start:.2f} seconds")
             
             if doc_type_result['document_type'] == 'other':
@@ -222,15 +222,15 @@ class DocumentPreAnalyzer:
                 try:
                     logger.info("📚 Step 2: Detecting subjects with AI...")
                     subject_result = self.detect_subjects(text_content, pattern_subjects)
-                    logger.info(f"✅ Subjects detected (AI): {subject_result.get('detected_subjects')}")
+                    logger.info(f" Subjects detected (AI): {subject_result.get('detected_subjects')}")
                 except Exception as e:
                     logger.warning(f"⚠️ AI subject detection failed: {e}, using regex fallback")
                     subject_result = self._fallback_subject_detection(text_content, pattern_subjects)
-                    logger.info(f"✅ Subjects detected (Regex): {subject_result.get('detected_subjects')}")
+                    logger.info(f" Subjects detected (Regex): {subject_result.get('detected_subjects')}")
             else:
                 logger.info("📚 Step 2: Detecting subjects with regex...")
                 subject_result = self._fallback_subject_detection(text_content, pattern_subjects)
-                logger.info(f"✅ Subjects detected (Regex): {subject_result.get('detected_subjects')}")
+                logger.info(f" Subjects detected (Regex): {subject_result.get('detected_subjects')}")
             logger.info(f"   Step 2 took {time.time() - step2_start:.2f} seconds")
 
             # Step 4: AI-powered document structure detection (Moved BEFORE Step 3)
@@ -241,17 +241,17 @@ class DocumentPreAnalyzer:
                     logger.info("📊 Step 4: Detecting document structure with AI...")
                     document_structure = self.detect_document_structure_ai(text_content)
                     sections_count = document_structure.get('total_sections', 0)
-                    logger.info(f"✅ Structure detected (AI): {sections_count} sections found")
+                    logger.info(f" Structure detected (AI): {sections_count} sections found")
                 except Exception as e:
                     logger.warning(f"⚠️ AI structure detection failed: {e}, using regex fallback")
                     document_structure = self._fallback_structure_detection(text_content)
                     sections_count = document_structure.get('total_sections', 0)
-                    logger.info(f"✅ Structure detected (Regex): {sections_count} sections found")
+                    logger.info(f" Structure detected (Regex): {sections_count} sections found")
             else:
                 logger.info("📊 Step 4: Detecting document structure with regex (AI unavailable)...")
                 document_structure = self._fallback_structure_detection(text_content)
                 sections_count = document_structure.get('total_sections', 0)
-                logger.info(f"✅ Structure detected (Regex): {sections_count} sections found")
+                logger.info(f" Structure detected (Regex): {sections_count} sections found")
             logger.info(f"   Step 4 took {time.time() - step4_start:.2f} seconds")
 
             # ENHANCEMENT: Extract subjects from valid section structure and merge with detected subjects
@@ -2356,7 +2356,7 @@ Return JSON only with the actual content (not descriptions):"""
                         logger.warning(f"Could not extract text from response: {parts_error}")
                         response_text = str(response)
                 
-                logger.info(f"✅ Gemini API call SUCCESSFUL in {elapsed_time:.2f} seconds")
+                logger.info(f" Gemini API call SUCCESSFUL in {elapsed_time:.2f} seconds")
                 logger.info(f"   Response length: {len(response_text)} chars")
                 return response_text
             except Exception as e:

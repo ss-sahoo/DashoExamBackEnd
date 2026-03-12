@@ -32,7 +32,7 @@ def delete_pattern(pattern_name):
     if confirm.lower() == 'yes':
         count = patterns.count()
         patterns.delete()
-        print(f"✅ Deleted {count} pattern(s) successfully!")
+        print(f" Deleted {count} pattern(s) successfully!")
         return True
     else:
         print("❌ Deletion cancelled.")

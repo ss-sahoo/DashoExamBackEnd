@@ -27,10 +27,10 @@ This will use regex-based detection instead of AI, which works well for most doc
 ## What the System Does Now
 
 The system automatically:
-1. ✅ Retries API calls up to 3 times with delays
-2. ✅ Falls back to regex-based detection when quota errors occur
-3. ✅ Works even when API is completely unavailable
-4. ✅ Logs which detection method is being used
+1.  Retries API calls up to 3 times with delays
+2.  Falls back to regex-based detection when quota errors occur
+3.  Works even when API is completely unavailable
+4.  Logs which detection method is being used
 
 ## Current API Key
 - **New Key**: AIzaSyBRBA_VMMB1B0zzYuL4QJWUmRmTE90TsmI
