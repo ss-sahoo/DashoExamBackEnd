@@ -6,6 +6,7 @@ import time
 import re
 from typing import List, Dict, Any, Optional
 import google.generativeai as genai
+from PIL import Image
 
 # Setup specialized logging
 logging.basicConfig(level=logging.INFO)
@@ -72,6 +73,7 @@ class AgentExtractionService:
         If separated_content is provided, it uses that instead of full markdown for each subject.
         """
         full_markdown = ""
+        is_image = os.path.splitext(pdf_path)[1].lower() in ['.jpg', '.jpeg', '.png']
         
         # ALWAYS ensure full_markdown is available as fallback/reference if not already doing OCR
         if not separated_content or not subjects_to_process or any(self._normalize_subject(s) not in [self._normalize_subject(k) for k in (separated_content or {}).keys()] for s in (subjects_to_process or [])):
@@ -79,6 +81,7 @@ class AgentExtractionService:
                 logger.info("Pipeline: Ensuring full markdown is available...")
                 if self.mathpix:
                     try:
+                        # Mathpix process_pdf handles images too if they are passed
                         full_markdown = self.mathpix.process_pdf(pdf_path)
                     except Exception as e:
                         logger.warning(f"Mathpix OCR failed: {e}. Falling back to local parser.")
@@ -92,10 +95,15 @@ class AgentExtractionService:
             if separated_content:
                 subjects_to_process = list(separated_content.keys())
                 logger.info(f"Using subjects from pre-separated content: {subjects_to_process}")
-            else:
+            elif full_markdown and len(full_markdown.strip()) > 50:
                 subjects_to_process = self.detect_subjects(full_markdown)
                 logger.info(f"Auto-detected subjects from OCR: {subjects_to_process}")
-        
+            elif is_image:
+                # If it's an image and OCR gave nothing, we must at least guess the subject or try to detect from image
+                # For now, if subjects_to_process is empty and it's an image, let's try a default or detection via vision
+                subjects_to_process = ["General"] # Or we could call a vision-based detection
+                logger.info("Image detected but no OCR text. Defaulting to 'General' subject for vision extraction.")
+
         all_questions = []
         for subj in subjects_to_process:
             logger.info(f">>> EXTRACTING ALL QUESTIONS FOR: {subj}")
@@ -127,43 +135,47 @@ class AgentExtractionService:
                 subject_text = full_markdown
             
             logger.info(f"Subject '{subj}' text length: {len(subject_text or '')}")
-            if not subject_text or len(subject_text.strip()) < 10:
-                logger.warning(f"No text content found for subject '{subj}'.")
+            
+            # For images, we can proceed even with short text if we have the image path
+            image_path = pdf_path if is_image else None
+            
+            if (not subject_text or len(subject_text.strip()) < 10) and not image_path:
+                logger.warning(f"No text content found for subject '{subj}' and not an image.")
                 continue
 
-            questions = self.extract_subject_questions(subject_text, subj)
+            questions = self.extract_subject_questions(subject_text, subj, image_path=image_path)
             all_questions.extend(questions)
             
             time.sleep(2)  # Rate limiting
             
         return all_questions
 
-    def extract_subject_questions(self, text_content: str, subject: str) -> List[Dict]:
-        """Extracts questions for a specific subject from the provided text."""
+    def extract_subject_questions(self, text_content: str, subject: str, image_path: Optional[str] = None) -> List[Dict]:
+        """Extracts questions for a specific subject from the provided text or image."""
         
-        # If text is too short, return empty
-        if len(text_content.strip()) < 50:
-            logger.warning(f"Text content too short for {subject} (length: {len(text_content)}), skipping extraction.")
+        # If text is too short and no image, return empty
+        if len(text_content.strip()) < 50 and not image_path:
+            logger.warning(f"Text content too short for {subject} and no image provided, skipping extraction.")
             return []
 
-        logger.info(f"Generating Gemini content for {subject}...")
+        logger.info(f"Generating Gemini content for {subject} (Vision: {'Yes' if image_path else 'No'})...")
 
         prompt = f"""
         SYSTEM: You are a high-precision Exam Extractor for ANY subject.
-        TASK: Extract ALL questions belonging to the subject '{subject}' or its equivalent variations (e.g., if subject is 'Mathematics', also look for 'Math' or 'Maths').
+        TASK: Extract ALL questions belonging to the subject '{subject}' or its equivalent variations.
         
-        SOURCE TEXT:
+        SOURCE TEXT/CONTEXT:
         {text_content}
         
         STRICT RULES:
-        1. Extract every question (MCQs, Numerical, Subjective, etc.) found in the text that likely belongs to this subject.
+        1. Extract every question (MCQs, Numerical, Subjective, etc.) found in the source that belongs to this subject.
         2. Preserve ALL LaTeX formulas ($...$).
         3. For MCQs, 'correct_answer' MUST be the option letter(s) only (e.g., "A", "B", "A,C").
            - DO NOT include the full text of the answer in 'correct_answer'.
-        4. Capture 'solution' step-by-step.
-        5. If the SOURCE TEXT contains image tags like ![image_id](image_id), and a question refers to that image, INCLUDE the tag EXACTLY as ![image_id](image_id) in the 'question_text'.
+        4. Capture 'solution' step-by-step if available.
+        5. If the SOURCE TEXT contains image tags like ![image_id](image_id), INCLUDE them EXACTLY in 'question_text'.
         
-        Return ONLY a valid JSON array of objects with this structure:
+        Return ONLY a valid JSON array of objects:
         [
             {{
                 "question_text": "...",
@@ -176,9 +188,13 @@ class AgentExtractionService:
         ]
         """
         
-        for attempt in range(3):  # Increased to 3 attempts
+        for attempt in range(3):
             try:
-                response = self.model.generate_content(prompt)
+                if image_path:
+                    img = Image.open(image_path)
+                    response = self.model.generate_content([prompt, img])
+                else:
+                    response = self.model.generate_content(prompt)
                 if not response.text:
                     logger.warning(f"Empty response from Gemini for {subject} (attempt {attempt+1})")
                     continue
@@ -308,9 +324,15 @@ class AgentExtractionService:
         try:
             from questions.services.file_parser import FileParserService
             parser = FileParserService()
-            # Determine file type from extension
             ext = os.path.splitext(file_path)[1].lower()
-            mime_type = 'application/pdf' if ext == '.pdf' else 'text/plain'
+            
+            if ext == '.pdf':
+                mime_type = 'application/pdf'
+            elif ext in ['.jpg', '.jpeg', '.png']:
+                mime_type = 'image/jpeg' if ext in ['.jpg', '.jpeg'] else 'image/png'
+            else:
+                mime_type = 'text/plain'
+                
             return parser.parse_file(file_path, mime_type)
         except Exception as e:
             logger.error(f"Local parsing fallback failed: {e}")
