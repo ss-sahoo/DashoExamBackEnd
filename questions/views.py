@@ -247,15 +247,18 @@ class ExamQuestionListView(generics.ListCreateAPIView):
             # Use a local Random instance for question/section order
             rng = random.Random(seed)
             
-            # 1. Shuffling Logic (Structure)
-            if exam.shuffle_questions or exam.shuffle_within_sections or exam.shuffle_sections or exam.shuffle_subjects:
+            # 1. Global Shuffling (Absolute mix of all questions)
+            if exam.shuffle_questions and not (exam.shuffle_within_sections or exam.shuffle_sections or exam.shuffle_subjects):
+                rng.shuffle(result)
+            
+            # 2. Hierarchical Shuffling (Respecting structure)
+            elif exam.shuffle_within_sections or exam.shuffle_sections or exam.shuffle_subjects:
                 # Group by section/subject to respect hierarchical shuffling
                 # We'll use (subject, section_name) as the group key
                 groups = {}
-                group_keys = [] # to preserve original order of groups if not shuffled
+                group_keys = [] 
                 
                 for q_data in result:
-                    # Determine grouping key
                     q_obj = q_data.get('question', {})
                     subject = q_obj.get('subject', 'General')
                     section = q_data.get('section_name', 'General')
@@ -266,17 +269,16 @@ class ExamQuestionListView(generics.ListCreateAPIView):
                         group_keys.append(key)
                     groups[key].append(q_data)
                 
-                # Shuffle WITHIN groups
-                if exam.shuffle_questions or exam.shuffle_within_sections:
+                # Shuffle WITHIN groups (within section/subject blocks)
+                if exam.shuffle_within_sections or exam.shuffle_questions:
                     for key in groups:
                         rng.shuffle(groups[key])
                 
                 # Shuffle GROUPS themselves
                 if exam.shuffle_sections:
-                    # Note: this shuffles the subject+section blocks
                     rng.shuffle(group_keys)
                 elif exam.shuffle_subjects:
-                    # Group by subject only and shuffle those blocks
+                    # Group keys by subject and shuffle subject blocks
                     subjects = {}
                     subject_order = []
                     for key in group_keys:
@@ -287,13 +289,12 @@ class ExamQuestionListView(generics.ListCreateAPIView):
                         subjects[subj].append(key)
                     
                     rng.shuffle(subject_order)
-                    # Reconstruct group_keys based on shuffled subjects
                     new_group_keys = []
                     for subj in subject_order:
                         new_group_keys.extend(subjects[subj])
                     group_keys = new_group_keys
                 
-                # Reconstruct result list based on shuffled order
+                # Reconstruct result list
                 shuffled_result = []
                 for key in group_keys:
                     shuffled_result.extend(groups[key])

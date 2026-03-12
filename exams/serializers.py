@@ -477,6 +477,7 @@ class ExamStartSerializer(serializers.Serializer):
 class ExamSubmitSerializer(serializers.Serializer):
     attempt_id = serializers.IntegerField()
     answers = serializers.JSONField()
+    is_disqualified = serializers.BooleanField(default=False, required=False)
 
     def validate_attempt_id(self, value):
         try:

@@ -606,6 +606,13 @@ def start_exam(request):
     
     # Check existing attempts
     existing_attempts = ExamAttempt.objects.filter(exam=exam, student=user)
+    completed_attempts = existing_attempts.filter(status__in=['submitted', 'auto_submitted', 'disqualified'])
+    
+    if completed_attempts.exists() and existing_attempts.count() >= exam.max_attempts:
+        return Response({
+            'error': 'You have already submitted this exam and no more attempts are allowed.'
+        }, status=status.HTTP_400_BAD_REQUEST)
+        
     if existing_attempts.count() >= exam.max_attempts:
         return Response({'error': 'Maximum attempts reached'}, status=status.HTTP_400_BAD_REQUEST)
     
@@ -673,7 +680,17 @@ def submit_exam(request):
         final_answers = merged_answers if merged_answers else answers
         
         # Update attempt status
-        attempt.status = 'submitted'
+        is_disqualified = serializer.validated_data.get('is_disqualified', False)
+        
+        # Also check if violations actually reached the limit
+        if attempt.violations_count >= attempt.max_violations_allowed:
+            is_disqualified = True
+
+        if is_disqualified:
+            attempt.status = 'disqualified'
+        else:
+            attempt.status = 'submitted'
+            
         attempt.submitted_at = timezone.now()
         attempt.save()
         
@@ -712,7 +729,7 @@ def submit_exam(request):
     # Prepare response data
     response_data = {
         'attempt': ExamAttemptSerializer(attempt).data,
-        'message': 'Exam submitted successfully.'
+        'message': 'Exam submitted successfully.' if attempt.status != 'disqualified' else 'Exam auto-submitted due to proctoring disqualification.'
     }
     
     # Only include results if they are allowed to be shown immediately
@@ -1603,7 +1620,7 @@ def student_dashboard_data(request):
         end_date__gte=now
     ).exclude(
         attempts__student=user,
-        attempts__status__in=['submitted', 'auto_submitted']
+        attempts__status__in=['submitted', 'auto_submitted', 'disqualified']
     ).distinct()
     
     # Filter scheduled exams (future exams)
