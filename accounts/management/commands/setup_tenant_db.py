@@ -63,7 +63,7 @@ class Command(BaseCommand):
                 cur.execute("SELECT 1 FROM pg_database WHERE datname=%s;", (db_name,))
                 if not cur.fetchone():
                     cur.execute(f'CREATE DATABASE "{db_name}";')
-                    self.stdout.write(self.style.SUCCESS(f"✅ Successfully created database '{db_name}'"))
+                    self.stdout.write(self.style.SUCCESS(f" Successfully created database '{db_name}'"))
                 else:
                     self.stdout.write(f"ℹ️ Database '{db_name}' already exists.")
                     
@@ -85,9 +85,9 @@ class Command(BaseCommand):
             # Actually, the router is already configured to keep shared models in 'default'.
             # So 'migrate --database=...' will only create tables for models that ALLOW migrate to that DB.
             call_command('migrate', database=db_name, interactive=False)
-            self.stdout.write(self.style.SUCCESS(f"✅ Successfully migrated database '{db_name}'"))
+            self.stdout.write(self.style.SUCCESS(f" Successfully migrated database '{db_name}'"))
         except Exception as e:
-            self.stderr.write(self.style.ERROR(f"❌ Error running migrations: {e}"))
+            self.stderr.write(self.style.ERROR(f" Error running migrations: {e}"))
             
         self.stdout.write(self.style.SUCCESS(f"\n✨ Multi-tenancy setup complete for '{institute.name}'"))
         self.stdout.write(f"Clients should now include 'X-Institute-DB: {db_name}' in headers or login as a user of this institute.")

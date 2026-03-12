@@ -30,12 +30,12 @@ def create_admin_user(email, username, password, role, is_superuser=False):
             user.is_superuser = True
             user.is_staff = True
             user.save()
-            print(f"✅ Super Admin created: {email}")
+            print(f" Super Admin created: {email}")
         else:
-            print(f"✅ Regular Admin created: {email}")
+            print(f" Regular Admin created: {email}")
             
     except Exception as e:
-        print(f"❌ Error creating user {email}: {e}")
+        print(f" Error creating user {email}: {e}")
 
 if __name__ == '__main__':
     # Create Super Admin

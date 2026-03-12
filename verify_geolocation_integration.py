@@ -20,7 +20,7 @@ try:
     import django
     django.setup()
 except Exception as e:
-    print(f"❌ Failed to setup Django: {e}")
+    print(f" Failed to setup Django: {e}")
     sys.exit(1)
 
 def verify_backend():
@@ -32,16 +32,16 @@ def verify_backend():
     # Check GeolocationService
     try:
         from exams.geolocation_service import GeolocationService
-        print("✅ GeolocationService imported successfully")
+        print(" GeolocationService imported successfully")
         
         # Check methods exist
         assert hasattr(GeolocationService, 'capture_location'), "Missing capture_location method"
         assert hasattr(GeolocationService, 'validate_coordinates'), "Missing validate_coordinates method"
         assert hasattr(GeolocationService, 'get_location_for_attempt'), "Missing get_location_for_attempt method"
-        print("✅ GeolocationService has all required methods")
+        print(" GeolocationService has all required methods")
         
     except Exception as e:
-        print(f"❌ GeolocationService verification failed: {e}")
+        print(f" GeolocationService verification failed: {e}")
         return False
     
     # Check ExamAttempt model has geolocation fields
@@ -53,10 +53,10 @@ def verify_backend():
         assert hasattr(attempt, 'geolocation_longitude'), "Missing geolocation_longitude field"
         assert hasattr(attempt, 'geolocation_captured_at'), "Missing geolocation_captured_at field"
         assert hasattr(attempt, 'geolocation_permission_denied'), "Missing geolocation_permission_denied field"
-        print("✅ ExamAttempt model has all geolocation fields")
+        print(" ExamAttempt model has all geolocation fields")
         
     except Exception as e:
-        print(f"❌ ExamAttempt model verification failed: {e}")
+        print(f" ExamAttempt model verification failed: {e}")
         return False
     
     # Check API endpoints are registered
@@ -66,13 +66,13 @@ def verify_backend():
         
         try:
             resolve('/api/exams/capture-location/')
-            print("✅ Geolocation capture endpoint is registered")
+            print(" Geolocation capture endpoint is registered")
         except Resolver404:
-            print("❌ Geolocation capture endpoint not found")
+            print(" Geolocation capture endpoint not found")
             return False
             
     except Exception as e:
-        print(f"❌ URL verification failed: {e}")
+        print(f" URL verification failed: {e}")
         return False
     
     return True
@@ -89,7 +89,7 @@ def verify_frontend():
     # Check GeolocationTracker service exists
     tracker_path = os.path.join(frontend_path, 'services', 'GeolocationTracker.ts')
     if os.path.exists(tracker_path):
-        print(f"✅ GeolocationTracker service exists at {tracker_path}")
+        print(f" GeolocationTracker service exists at {tracker_path}")
         
         # Read and verify key methods
         with open(tracker_path, 'r') as f:
@@ -104,58 +104,58 @@ def verify_frontend():
             
             for method in required_methods:
                 if method in content:
-                    print(f"✅ GeolocationTracker has {method} method")
+                    print(f" GeolocationTracker has {method} method")
                 else:
-                    print(f"❌ GeolocationTracker missing {method} method")
+                    print(f" GeolocationTracker missing {method} method")
                     return False
     else:
-        print(f"❌ GeolocationTracker service not found at {tracker_path}")
+        print(f" GeolocationTracker service not found at {tracker_path}")
         return False
     
     # Check SecureExamView integration
     secure_exam_path = os.path.join(frontend_path, 'pages', 'SecureExamView.tsx')
     if os.path.exists(secure_exam_path):
-        print(f"✅ SecureExamView component exists")
+        print(f" SecureExamView component exists")
         
         with open(secure_exam_path, 'r') as f:
             content = f.read()
             
             if 'geolocationTracker' in content:
-                print("✅ SecureExamView imports GeolocationTracker")
+                print(" SecureExamView imports GeolocationTracker")
             else:
-                print("❌ SecureExamView does not import GeolocationTracker")
+                print(" SecureExamView does not import GeolocationTracker")
                 return False
                 
             if 'captureGeolocation' in content:
-                print("✅ SecureExamView has captureGeolocation function")
+                print(" SecureExamView has captureGeolocation function")
             else:
-                print("❌ SecureExamView missing captureGeolocation function")
+                print(" SecureExamView missing captureGeolocation function")
                 return False
     else:
-        print(f"❌ SecureExamView component not found")
+        print(f" SecureExamView component not found")
         return False
     
     # Check SecureExamExperience integration
     secure_exam_exp_path = os.path.join(frontend_path, 'pages', 'SecureExamExperience.tsx')
     if os.path.exists(secure_exam_exp_path):
-        print(f"✅ SecureExamExperience component exists")
+        print(f" SecureExamExperience component exists")
         
         with open(secure_exam_exp_path, 'r') as f:
             content = f.read()
             
             if 'geolocationTracker' in content:
-                print("✅ SecureExamExperience imports GeolocationTracker")
+                print(" SecureExamExperience imports GeolocationTracker")
             else:
-                print("❌ SecureExamExperience does not import GeolocationTracker")
+                print(" SecureExamExperience does not import GeolocationTracker")
                 return False
                 
             if 'captureGeolocation' in content:
-                print("✅ SecureExamExperience has captureGeolocation function")
+                print(" SecureExamExperience has captureGeolocation function")
             else:
-                print("❌ SecureExamExperience missing captureGeolocation function")
+                print(" SecureExamExperience missing captureGeolocation function")
                 return False
     else:
-        print(f"❌ SecureExamExperience component not found")
+        print(f" SecureExamExperience component not found")
         return False
     
     return True
@@ -184,7 +184,7 @@ def main():
     print("=" * 60)
     
     if backend_ok and frontend_ok:
-        print("✅ ALL VERIFICATIONS PASSED")
+        print(" ALL VERIFICATIONS PASSED")
         print("\nGeolocation integration is complete and properly configured.")
         print("\nNext steps:")
         print("  1. Start the Django backend server")
@@ -194,7 +194,7 @@ def main():
         print("  5. Verify geolocation data is stored in the database")
         return 0
     else:
-        print("❌ SOME VERIFICATIONS FAILED")
+        print(" SOME VERIFICATIONS FAILED")
         print("\nPlease review the errors above and fix any issues.")
         return 1
 

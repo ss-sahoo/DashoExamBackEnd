@@ -42,7 +42,7 @@ def convert_roles():
                 total_fixed += 1
     
     print(f"\n{'='*80}")
-    print(f"✅ DONE! Converted {total_fixed} users to lowercase roles")
+    print(f" DONE! Converted {total_fixed} users to lowercase roles")
     print(f"{'='*80}")
     
     # Verify
@@ -54,7 +54,7 @@ def convert_roles():
         else:
             print(f"  ✓ No users with role '{old_role}'")
     
-    print("\n✅ All roles converted successfully!")
+    print("\n All roles converted successfully!")
 
 if __name__ == '__main__':
     convert_roles()

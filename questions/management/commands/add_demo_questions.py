@@ -128,9 +128,9 @@ class Command(BaseCommand):
 
             if is_new:
                 created += 1
-                self.stdout.write(self.style.SUCCESS(f"✅ {q['topic']}"))
+                self.stdout.write(self.style.SUCCESS(f" {q['topic']}"))
 
         total = Question.objects.filter(institute=institute).count()
         self.stdout.write(self.style.SUCCESS(f"\n📊 Created: {created} new questions"))
         self.stdout.write(self.style.SUCCESS(f"📚 Total: {total} questions in database"))
-        self.stdout.write(self.style.SUCCESS("\n✅ Demo questions ready for AI chatbot!"))
+        self.stdout.write(self.style.SUCCESS("\n Demo questions ready for AI chatbot!"))

@@ -139,7 +139,7 @@ class SubjectSectionDetector:
                     retry_delay = retry_delay * 2  # Exponential backoff: 5s, 10s, 20s
                     continue
                 elif is_timeout_error:
-                    logger.error(f"❌ Timeout error after {max_retries} attempts. Falling back to regex.")
+                    logger.error(f" Timeout error after {max_retries} attempts. Falling back to regex.")
                     break
                 
                 if is_quota_error and attempt < max_retries - 1:

@@ -59,7 +59,7 @@ def configure_gemini():
     global _gemini_configured
     if not _gemini_configured:
         if not GOOGLE_AI_AVAILABLE or genai is None:
-            print("❌ Gemini configuration skipped: google-generativeai is not installed")
+            print(" Gemini configuration skipped: google-generativeai is not installed")
             return False
 
         try:
@@ -80,11 +80,11 @@ def configure_gemini():
                 print(f"🔎 Gemini key source: {key_source}")
                 genai.configure(api_key=api_key)
                 _gemini_configured = True
-                print("✅ Gemini configured successfully")
+                print(" Gemini configured successfully")
                 return True
-            print("❌ Gemini configuration failed: no API key found in GOOGLE_GEMINI_API_KEY or GEMINI_API_KEY")
+            print(" Gemini configuration failed: no API key found in GOOGLE_GEMINI_API_KEY or GEMINI_API_KEY")
         except Exception as e:
-            print(f"❌ Gemini configuration error: {e}")
+            print(f" Gemini configuration error: {e}")
     return _gemini_configured
 
 
@@ -95,10 +95,10 @@ def check_ollama_running():
         response = requests.get(f'{ollama_url}/api/tags', timeout=2)
         is_running = response.status_code == 200
         if not is_running:
-            print(f"❌ Ollama check failed: status {response.status_code}")
+            print(f" Ollama check failed: status {response.status_code}")
         return is_running
     except Exception as e:
-        print(f"❌ Ollama connection error: {e}")
+        print(f" Ollama connection error: {e}")
         return False
 
 
@@ -124,7 +124,7 @@ def generate_embedding_gemini(text: str) -> List[float]:
             embedding = embedding + [0.0] * (768 - len(embedding))
         return embedding[:768]
     except Exception as e:
-        print(f"❌ Gemini embedding error: {e}")
+        print(f" Gemini embedding error: {e}")
         return [0.0] * 768
 
 
@@ -174,7 +174,7 @@ def generate_embedding(text: str, model: str = "text-embedding-ada-002") -> List
     # Try Gemini first (FREE with good quota)
     try:
         if configure_gemini():
-            print("✅ Using Gemini for embeddings (FREE)")
+            print(" Using Gemini for embeddings (FREE)")
             return generate_embedding_gemini(text)
     except Exception as e:
         print(f"Gemini not available: {e}")
@@ -182,7 +182,7 @@ def generate_embedding(text: str, model: str = "text-embedding-ada-002") -> List
     # Try Ollama if enabled
     use_ollama = get_use_ollama()
     if use_ollama and check_ollama_running():
-        print("✅ Using Ollama for embeddings")
+        print(" Using Ollama for embeddings")
         return generate_embedding_ollama(text)
     
     # Fall back to OpenAI
@@ -361,7 +361,7 @@ Be encouraging, clear, and educational in your responses."""
     try:
         # Try Gemini first (FREE with good quota)
         if configure_gemini():
-            print("✅ Using Gemini for chat (FREE)")
+            print(" Using Gemini for chat (FREE)")
             try:
                 # Format messages for Gemini
                 chat_text = ""
@@ -394,7 +394,7 @@ Be encouraging, clear, and educational in your responses."""
         print(f"🤖 AI Backend Check: USE_OLLAMA={use_ollama}, Ollama Running={ollama_running}")
         
         if use_ollama and ollama_running:
-            print("✅ Using Ollama (FREE local AI)")
+            print(" Using Ollama (FREE local AI)")
             # Format messages for Ollama
             prompt = ""
             for msg in messages:

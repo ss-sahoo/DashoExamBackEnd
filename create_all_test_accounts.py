@@ -32,7 +32,7 @@ def create_test_accounts():
             'is_verified': True,
         }
     )
-    print(f"\n✅ Institute: {institute.name} (ID: {institute.id})")
+    print(f"\n Institute: {institute.name} (ID: {institute.id})")
     
     # 2. Create a Center under the institute
     center, created = Center.objects.get_or_create(
@@ -43,7 +43,7 @@ def create_test_accounts():
             'address': '123 Tech Park, Mumbai, India',
         }
     )
-    print(f"✅ Center: {center.name} (ID: {center.id})")
+    print(f" Center: {center.name} (ID: {center.id})")
     
     # 3. Create Institute SuperAdmin (super_admin role)
     superadmin, created = User.objects.get_or_create(
@@ -62,7 +62,7 @@ def create_test_accounts():
     )
     superadmin.set_password('superadmin123')
     superadmin.save()
-    print(f"\n✅ SUPER ADMIN Created:")
+    print(f"\n SUPER ADMIN Created:")
     print(f"   Email: superadmin@diracai.com")
     print(f"   Password: superadmin123")
     print(f"   Role: super_admin")
@@ -86,7 +86,7 @@ def create_test_accounts():
     inst_admin.save()
     # Add as center admin
     center.admins.add(inst_admin)
-    print(f"\n✅ INSTITUTE ADMIN Created:")
+    print(f"\n INSTITUTE ADMIN Created:")
     print(f"   Email: instituteadmin@diracai.com")
     print(f"   Password: instadmin123")
     print(f"   Role: institute_admin")
@@ -111,7 +111,7 @@ def create_test_accounts():
     center_admin.save()
     # Add as center admin
     center.admins.add(center_admin)
-    print(f"\n✅ CENTER ADMIN Created:")
+    print(f"\n CENTER ADMIN Created:")
     print(f"   Email: centeradmin@diracai.com")
     print(f"   Username: centeradmin")
     print(f"   Password: centeradmin123")
@@ -139,7 +139,7 @@ def create_test_accounts():
     teacher.set_password('teacher123')
     teacher.teacher_code = 'TCH001'
     teacher.save()
-    print(f"\n✅ TEACHER Created:")
+    print(f"\n TEACHER Created:")
     print(f"   Email: teacher@diracai.com")
     print(f"   Username: teacher1")
     print(f"   Teacher Code: TCH001")
@@ -164,7 +164,7 @@ def create_test_accounts():
     )
     student.set_password('student123')
     student.save()
-    print(f"\n✅ STUDENT Created:")
+    print(f"\n STUDENT Created:")
     print(f"   Email: student@diracai.com")
     print(f"   Username: student1")
     print(f"   Password: student123")
@@ -188,7 +188,7 @@ def create_test_accounts():
     )
     staff.set_password('staff123')
     staff.save()
-    print(f"\n✅ STAFF Created:")
+    print(f"\n STAFF Created:")
     print(f"   Email: staff@diracai.com")
     print(f"   Username: staff1")
     print(f"   Password: staff123")

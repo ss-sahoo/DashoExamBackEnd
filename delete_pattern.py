@@ -18,7 +18,7 @@ def delete_pattern(pattern_name):
     patterns = ExamPattern.objects.filter(name=pattern_name)
     
     if not patterns.exists():
-        print(f"❌ No pattern found with name: '{pattern_name}'")
+        print(f" No pattern found with name: '{pattern_name}'")
         print("\n📋 Available patterns:")
         for p in ExamPattern.objects.all().order_by('institute', 'name'):
             print(f"   - '{p.name}' (Institute: {p.institute.name})")
@@ -32,10 +32,10 @@ def delete_pattern(pattern_name):
     if confirm.lower() == 'yes':
         count = patterns.count()
         patterns.delete()
-        print(f"✅ Deleted {count} pattern(s) successfully!")
+        print(f" Deleted {count} pattern(s) successfully!")
         return True
     else:
-        print("❌ Deletion cancelled.")
+        print(" Deletion cancelled.")
         return False
 
 if __name__ == '__main__':
