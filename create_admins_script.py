@@ -35,7 +35,7 @@ def create_admin_user(email, username, password, role, is_superuser=False):
             print(f" Regular Admin created: {email}")
             
     except Exception as e:
-        print(f"❌ Error creating user {email}: {e}")
+        print(f" Error creating user {email}: {e}")
 
 if __name__ == '__main__':
     # Create Super Admin

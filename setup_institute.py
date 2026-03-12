@@ -34,7 +34,7 @@ def setup_default_institute():
             print(f" Assigned {user.email} to {institute.name}")
             
     except Exception as e:
-        print(f"❌ Error during setup: {e}")
+        print(f" Error during setup: {e}")
 
 if __name__ == '__main__':
     setup_default_institute()

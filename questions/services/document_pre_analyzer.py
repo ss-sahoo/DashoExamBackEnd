@@ -178,7 +178,7 @@ class DocumentPreAnalyzer:
                     logger.info(f" API credentials verified! (Response format check passed)")
                     logger.info(f"   Note: {error_msg[:100]}")
                 else:
-                    logger.error(f"❌ API credentials test FAILED: {error_msg}")
+                    logger.error(f" API credentials test FAILED: {error_msg}")
                     logger.warning("⚠️ Will use regex fallback for all operations")
                     use_ai = False
         
@@ -2375,7 +2375,7 @@ Return JSON only with the actual content (not descriptions):"""
                     continue
                 elif is_timeout_error:
                     logger.error(
-                        f"❌ TIMEOUT ERROR after {max_retries} attempts. "
+                        f" TIMEOUT ERROR after {max_retries} attempts. "
                         f"API is taking too long. Falling back to regex."
                     )
                     raise DocumentPreAnalysisError(f"Request timed out after {max_retries} attempts")

@@ -20,7 +20,7 @@ try:
     import django
     django.setup()
 except Exception as e:
-    print(f"❌ Failed to setup Django: {e}")
+    print(f" Failed to setup Django: {e}")
     sys.exit(1)
 
 def verify_backend():
@@ -41,7 +41,7 @@ def verify_backend():
         print(" GeolocationService has all required methods")
         
     except Exception as e:
-        print(f"❌ GeolocationService verification failed: {e}")
+        print(f" GeolocationService verification failed: {e}")
         return False
     
     # Check ExamAttempt model has geolocation fields
@@ -56,7 +56,7 @@ def verify_backend():
         print(" ExamAttempt model has all geolocation fields")
         
     except Exception as e:
-        print(f"❌ ExamAttempt model verification failed: {e}")
+        print(f" ExamAttempt model verification failed: {e}")
         return False
     
     # Check API endpoints are registered
@@ -68,11 +68,11 @@ def verify_backend():
             resolve('/api/exams/capture-location/')
             print(" Geolocation capture endpoint is registered")
         except Resolver404:
-            print("❌ Geolocation capture endpoint not found")
+            print(" Geolocation capture endpoint not found")
             return False
             
     except Exception as e:
-        print(f"❌ URL verification failed: {e}")
+        print(f" URL verification failed: {e}")
         return False
     
     return True
@@ -106,10 +106,10 @@ def verify_frontend():
                 if method in content:
                     print(f" GeolocationTracker has {method} method")
                 else:
-                    print(f"❌ GeolocationTracker missing {method} method")
+                    print(f" GeolocationTracker missing {method} method")
                     return False
     else:
-        print(f"❌ GeolocationTracker service not found at {tracker_path}")
+        print(f" GeolocationTracker service not found at {tracker_path}")
         return False
     
     # Check SecureExamView integration
@@ -123,16 +123,16 @@ def verify_frontend():
             if 'geolocationTracker' in content:
                 print(" SecureExamView imports GeolocationTracker")
             else:
-                print("❌ SecureExamView does not import GeolocationTracker")
+                print(" SecureExamView does not import GeolocationTracker")
                 return False
                 
             if 'captureGeolocation' in content:
                 print(" SecureExamView has captureGeolocation function")
             else:
-                print("❌ SecureExamView missing captureGeolocation function")
+                print(" SecureExamView missing captureGeolocation function")
                 return False
     else:
-        print(f"❌ SecureExamView component not found")
+        print(f" SecureExamView component not found")
         return False
     
     # Check SecureExamExperience integration
@@ -146,16 +146,16 @@ def verify_frontend():
             if 'geolocationTracker' in content:
                 print(" SecureExamExperience imports GeolocationTracker")
             else:
-                print("❌ SecureExamExperience does not import GeolocationTracker")
+                print(" SecureExamExperience does not import GeolocationTracker")
                 return False
                 
             if 'captureGeolocation' in content:
                 print(" SecureExamExperience has captureGeolocation function")
             else:
-                print("❌ SecureExamExperience missing captureGeolocation function")
+                print(" SecureExamExperience missing captureGeolocation function")
                 return False
     else:
-        print(f"❌ SecureExamExperience component not found")
+        print(f" SecureExamExperience component not found")
         return False
     
     return True
@@ -194,7 +194,7 @@ def main():
         print("  5. Verify geolocation data is stored in the database")
         return 0
     else:
-        print("❌ SOME VERIFICATIONS FAILED")
+        print(" SOME VERIFICATIONS FAILED")
         print("\nPlease review the errors above and fix any issues.")
         return 1
 

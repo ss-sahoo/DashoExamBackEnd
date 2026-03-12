@@ -16,7 +16,7 @@ def run_command(command, description):
         print(f" {description} completed successfully")
         return result
     except subprocess.CalledProcessError as e:
-        print(f"❌ {description} failed: {e.stderr}")
+        print(f" {description} failed: {e.stderr}")
         return None
 
 def setup_database():
@@ -56,7 +56,7 @@ def main():
     
     # Check if we're in the right directory
     if not Path("manage.py").exists():
-        print("❌ Please run this script from the exam_flow_backend directory")
+        print(" Please run this script from the exam_flow_backend directory")
         sys.exit(1)
     
     # Create virtual environment if it doesn't exist

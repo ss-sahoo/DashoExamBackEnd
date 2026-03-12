@@ -36,7 +36,7 @@ class Command(BaseCommand):
             if result:
                 self.stdout.write(self.style.SUCCESS('   pgvector extension is installed'))
             else:
-                self.stdout.write(self.style.ERROR('  ❌ pgvector extension is NOT installed'))
+                self.stdout.write(self.style.ERROR('   pgvector extension is NOT installed'))
                 self.stdout.write('')
                 self.stdout.write(self.style.WARNING('  Please install pgvector:'))
                 self.stdout.write('    sudo apt-get install postgresql-14-pgvector')
@@ -56,7 +56,7 @@ class Command(BaseCommand):
                 institute = Institute.objects.get(id=institute_id)
                 self.stdout.write(f'📚 Generating embeddings for: {institute.name}')
             except Institute.DoesNotExist:
-                self.stdout.write(self.style.ERROR(f'❌ Institute with ID {institute_id} not found'))
+                self.stdout.write(self.style.ERROR(f' Institute with ID {institute_id} not found'))
                 return
             
             institutes = [institute]
@@ -91,7 +91,7 @@ class Command(BaseCommand):
             ))
             if result['errors'] > 0:
                 self.stdout.write(self.style.ERROR(
-                    f"  ❌ Errors: {result['errors']}"
+                    f"   Errors: {result['errors']}"
                 ))
         
         self.stdout.write('')

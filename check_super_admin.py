@@ -14,7 +14,7 @@ def check_super_admins():
     super_admins = User.objects.filter(role__in=['super_admin', 'SUPER_ADMIN'])
     
     if not super_admins.exists():
-        print("❌ No Super Admins found!")
+        print(" No Super Admins found!")
         print("💡 Run 'python manage.py bootstrap_system' to create one.")
     else:
         print(f" Found {super_admins.count()} Super Admin(s):")

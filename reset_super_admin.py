@@ -16,7 +16,7 @@ def reset_password(email, new_password):
         user.save()
         print(f" Password for {email} has been reset to: {new_password}")
     except User.DoesNotExist:
-        print(f"❌ User with email {email} not found.")
+        print(f" User with email {email} not found.")
 
 if __name__ == '__main__':
     reset_password('admin@demo.edu', 'admin123')

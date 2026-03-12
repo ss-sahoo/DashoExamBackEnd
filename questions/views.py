@@ -701,7 +701,7 @@ def generate_ai_question(request):
 
     print(f"🧠 AI generate request: user_id={user.id}, type={question_type}, subject={subject or 'N/A'}")
     if not configure_gemini():
-        print("❌ AI generate aborted: Gemini API is not configured")
+        print(" AI generate aborted: Gemini API is not configured")
         return Response(
             {'error': 'Gemini API is not configured on the server.'},
             status=status.HTTP_503_SERVICE_UNAVAILABLE
@@ -1552,7 +1552,7 @@ def solve_question_with_ai(request):
 
     print(f"🧠 AI solve request: user_id={user.id}, type={question_type}, subject={subject or 'N/A'}")
     if not configure_gemini():
-        print("❌ AI solve aborted: Gemini API is not configured")
+        print(" AI solve aborted: Gemini API is not configured")
         return Response(
             {'error': 'Gemini API is not configured on the server.'},
             status=status.HTTP_503_SERVICE_UNAVAILABLE

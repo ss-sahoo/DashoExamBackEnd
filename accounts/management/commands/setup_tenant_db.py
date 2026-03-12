@@ -87,7 +87,7 @@ class Command(BaseCommand):
             call_command('migrate', database=db_name, interactive=False)
             self.stdout.write(self.style.SUCCESS(f" Successfully migrated database '{db_name}'"))
         except Exception as e:
-            self.stderr.write(self.style.ERROR(f"❌ Error running migrations: {e}"))
+            self.stderr.write(self.style.ERROR(f" Error running migrations: {e}"))
             
         self.stdout.write(self.style.SUCCESS(f"\n✨ Multi-tenancy setup complete for '{institute.name}'"))
         self.stdout.write(f"Clients should now include 'X-Institute-DB: {db_name}' in headers or login as a user of this institute.")

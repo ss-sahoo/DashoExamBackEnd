@@ -50,7 +50,7 @@ class Command(BaseCommand):
             )
             
             if not created:
-                self.stdout.write(self.style.ERROR(f'❌ Institute with domain "{domain}" already exists!'))
+                self.stdout.write(self.style.ERROR(f' Institute with domain "{domain}" already exists!'))
                 return
             
             self.stdout.write(self.style.SUCCESS(f' Created institute: {name}'))
@@ -70,7 +70,7 @@ class Command(BaseCommand):
                 email_domain = admin_email.split('@')[1]
                 if email_domain != domain:
                     self.stdout.write(self.style.ERROR(
-                        f'❌ Admin email domain "{email_domain}" must match institute domain "{domain}"'
+                        f' Admin email domain "{email_domain}" must match institute domain "{domain}"'
                     ))
                     return
                 

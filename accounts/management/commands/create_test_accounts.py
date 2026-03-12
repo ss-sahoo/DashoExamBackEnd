@@ -136,7 +136,7 @@ class Command(BaseCommand):
                         
                         self.stdout.write(self.style.SUCCESS(f' Created: {email}'))
             except Exception as e:
-                self.stdout.write(self.style.ERROR(f'❌ Error creating {email}: {e}'))
+                self.stdout.write(self.style.ERROR(f' Error creating {email}: {e}'))
                 # Continue with next user
 
         self.stdout.write('')
