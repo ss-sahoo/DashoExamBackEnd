@@ -169,23 +169,26 @@ class AgentExtractionService:
         
         STRICT RULES:
         1. Extract every question (MCQs, Numerical, Subjective, etc.) found in the source that belongs to this subject.
-        2. Preserve ALL LaTeX formulas ($...$).
+        2. Preserve ALL LaTeX formulas ($...$) but ensure they are properly escaped in JSON strings.
         3. For MCQs, 'correct_answer' MUST be the option letter(s) only (e.g., "A", "B", "A,C").
            - DO NOT include the full text of the answer in 'correct_answer'.
         4. Capture 'solution' step-by-step if available.
         5. If the SOURCE TEXT contains image tags like ![image_id](image_id), INCLUDE them EXACTLY in 'question_text'.
+        6. CRITICAL: Return ONLY valid JSON. All property names must be in double quotes. All string values must be properly escaped.
         
-        Return ONLY a valid JSON array of objects:
+        Return ONLY a valid JSON array of objects (no markdown, no extra text):
         [
             {{
                 "question_text": "...",
-                "question_type": "single_mcq|multiple_mcq|numerical|subjective|true_false|fill_blank",
+                "question_type": "single_mcq",
                 "options": ["A) ...", "B) ..."],
                 "correct_answer": "A", 
                 "solution": "...",
                 "subject": "{subject}"
             }}
         ]
+        
+        IMPORTANT: Ensure all backslashes in LaTeX are properly escaped (use \\\\ instead of \\).
         """
         
         for attempt in range(3):
@@ -202,7 +205,7 @@ class AgentExtractionService:
                 logger.info(f"Gemini response received for {subject}. Length: {len(response.text)}")
                 # logger.debug(f"Raw Gemini response: {response.text}")
                 
-                questions = self._clean_json_response(response.text)
+                questions = self._clean_json_response(response.text, subject)
                 if len(questions) > 0:
                     # Enforce cleaning and subject tag
                     cleaned_questions = []
@@ -358,7 +361,7 @@ class AgentExtractionService:
         }
         return aliases.get(s, s)
 
-    def _clean_json_response(self, text: str) -> Any:
+    def _clean_json_response(self, text: str, subject: str = "Unknown") -> Any:
         """Extracts and parses JSON from a string that might contain other text."""
         if not text:
             return []
@@ -369,12 +372,19 @@ class AgentExtractionService:
             s = re.sub(r'//.*?\n', '\n', s)
             # 2. Remove trailing commas in arrays/objects
             s = re.sub(r',\s*([\]\}])', r'\1', s)
-            # 3. Fix invalid backslash escapes (LaTeX common issue)
+            # 3. Fix control characters (ASCII 0-31 except \t, \n, \r)
+            # These often appear in LaTeX formulas and break JSON parsing
+            s = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F]', '', s)
+            # 4. Fix invalid backslash escapes (LaTeX common issue)
             # Matches backslash NOT preceded by another backslash,
             # and NOT followed by valid escape chars: b, f, n, r, t, u, ", \, /
             s = re.sub(r'(?<!\\)\\(?![bfnrtu"\\/])', r'\\\\', s)
-            # 4. Specifically for \u, ensure it's followed by 4 hex digits or escape it
+            # 5. Specifically for \u, ensure it's followed by 4 hex digits or escape it
             s = re.sub(r'(?<!\\)\\u(?![0-9a-fA-F]{4})', r'\\\\u', s)
+            # 6. Fix unescaped quotes in strings (common in LaTeX)
+            # This is tricky - we need to escape quotes that are inside string values
+            # but not the structural quotes. We'll do a simple fix for obvious cases.
+            s = re.sub(r'(?<=[^\\])"(?=[^,\]\}:\s])', r'\\"', s)
             return s.strip()
 
         # 1. Try to find JSON block in markdown
@@ -385,6 +395,8 @@ class AgentExtractionService:
                 return json.loads(content)
             except json.JSONDecodeError as e:
                 logger.warning(f"JSON parse error in code block: {e}")
+                # Try to save the problematic JSON for debugging
+                logger.debug(f"Problematic JSON content: {content[:500]}...")
         
         # 2. Try to find the first '[' or '{' and last matching bracket
         try:
@@ -392,18 +404,77 @@ class AgentExtractionService:
             array_match = re.search(r'\[.*\]', text, re.DOTALL)
             if array_match:
                 try:
-                    return json.loads(sanitize_json(array_match.group(0)))
+                    content = sanitize_json(array_match.group(0))
+                    return json.loads(content)
                 except json.JSONDecodeError as e:
                     logger.warning(f"JSON parse error in array search: {e}")
+                    logger.debug(f"Problematic array content: {content[:500]}...")
             
             # Look for an object
             object_match = re.search(r'\{.*\}', text, re.DOTALL)
             if object_match:
                 try:
-                    return [json.loads(sanitize_json(object_match.group(0)))]
+                    content = sanitize_json(object_match.group(0))
+                    return [json.loads(content)]
                 except json.JSONDecodeError as e:
                     logger.warning(f"JSON parse error in object search: {e}")
+                    logger.debug(f"Problematic object content: {content[:500]}...")
         except Exception as e:
             logger.error(f"Error during JSON extraction regex: {e}")
+            
+        # 3. Last resort: try to manually fix common LaTeX issues
+        try:
+            # Save the raw response for debugging
+            logger.debug(f"Raw AI response that failed JSON parsing: {text[:1000]}...")
+            
+            # Try a more aggressive cleaning approach
+            cleaned_text = text
+            # Remove all control characters
+            cleaned_text = ''.join(char for char in cleaned_text if ord(char) >= 32 or char in '\t\n\r')
+            
+            # Try parsing again
+            json_match = re.search(r'```(?:json)?\s*(.*?)\s*```', cleaned_text, re.DOTALL)
+            if json_match:
+                content = json_match.group(1)
+                # More aggressive LaTeX fixing
+                content = re.sub(r'\\(?![bfnrtu"\\/])', r'\\\\', content)
+                return json.loads(content)
+                
+        except Exception as e:
+            logger.error(f"Final JSON parsing attempt failed: {e}")
+            
+        # 4. Ultimate fallback: try to extract questions manually using regex
+        try:
+            logger.info("Attempting manual question extraction from AI response...")
+            questions = []
+            
+            # Look for question patterns in the text
+            # This is a fallback when JSON parsing completely fails
+            question_pattern = r'"question_text":\s*"([^"]+)".*?"question_type":\s*"([^"]+)".*?"options":\s*\[(.*?)\].*?"correct_answer":\s*"([^"]+)"'
+            
+            matches = re.findall(question_pattern, text, re.DOTALL)
+            for match in matches:
+                question_text, question_type, options_str, correct_answer = match
+                
+                # Parse options
+                options = []
+                option_matches = re.findall(r'"([^"]+)"', options_str)
+                options = option_matches if option_matches else []
+                
+                questions.append({
+                    "question_text": question_text,
+                    "question_type": question_type,
+                    "options": options,
+                    "correct_answer": correct_answer,
+                    "solution": "",
+                    "subject": subject
+                })
+            
+            if questions:
+                logger.info(f"Manual extraction found {len(questions)} questions")
+                return questions
+                
+        except Exception as e:
+            logger.error(f"Manual extraction failed: {e}")
             
         return []
