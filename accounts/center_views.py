@@ -13,6 +13,125 @@ from timetable.models import Timetable
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
+def list_people(request, center_id=None):
+    """
+    GET /api/timetable/centers/<center_id>/users/
+    
+    List all users in a center.
+    Also used by the Exam app's People Management page.
+    
+    If center_id is provided as URL param, filter by that center.
+    Otherwise, use query param center_id or the user's own center.
+    
+    Query params:
+    - role: Filter by role
+    - search: Search by name, email, username
+    - is_active: Filter by active status
+    - center_id: (query param) Filter by center
+    - institute_id: (query param) Filter by institute
+    """
+    user = request.user
+    
+    # Determine center_id from URL param, query param, or user's center
+    effective_center_id = center_id or request.query_params.get('center_id')
+    institute_id = request.query_params.get('institute_id')
+    
+    # Build base queryset
+    if user.role in ['super_admin', 'SUPER_ADMIN']:
+        if effective_center_id:
+            queryset = User.objects.filter(
+                Q(center_id=effective_center_id) | Q(center__isnull=True, institute=user.institute)
+            )
+        elif institute_id:
+            queryset = User.objects.filter(institute_id=institute_id)
+        elif user.institute:
+            queryset = User.objects.filter(institute=user.institute)
+        else:
+            queryset = User.objects.all()
+    elif user.role in ['institute_admin', 'admin', 'exam_admin', 'ADMIN']:
+        if effective_center_id:
+            queryset = User.objects.filter(
+                Q(center_id=effective_center_id) | Q(center__isnull=True, institute=user.institute)
+            )
+        elif user.institute:
+            queryset = User.objects.filter(
+                Q(institute=user.institute) | Q(center__institute=user.institute)
+            )
+        else:
+            queryset = User.objects.none()
+    else:
+        if user.institute:
+            queryset = User.objects.filter(institute=user.institute)
+        else:
+            queryset = User.objects.none()
+    
+    # Apply filters
+    role_filter = request.query_params.get('role')
+    if role_filter:
+        role_variants = [role_filter, role_filter.lower(), role_filter.upper()]
+        queryset = queryset.filter(role__in=role_variants)
+    
+    search = request.query_params.get('search')
+    if search:
+        queryset = queryset.filter(
+            Q(first_name__icontains=search) |
+            Q(last_name__icontains=search) |
+            Q(email__icontains=search) |
+            Q(username__icontains=search)
+        )
+    
+    is_active = request.query_params.get('is_active')
+    if is_active is not None:
+        queryset = queryset.filter(is_active=is_active.lower() == 'true')
+    
+    # Exclude super admins from the list by default
+    queryset = queryset.exclude(role__in=['super_admin', 'SUPER_ADMIN'])
+    
+    # Order by name
+    queryset = queryset.order_by('first_name', 'last_name')
+    
+    # Serialize
+    users_data = []
+    for u in queryset:
+        users_data.append({
+            'id': str(u.id),
+            'username': u.username,
+            'email': u.email,
+            'first_name': u.first_name,
+            'last_name': u.last_name,
+            'full_name': u.get_full_name(),
+            'role': u.role,
+            'is_active': u.is_active,
+            'phone': getattr(u, 'phone', '') or getattr(u, 'phone_number', ''),
+            'teacher_code': getattr(u, 'teacher_code', ''),
+            'institute_id': u.institute_id,
+            'institute_name': u.institute.name if u.institute else None,
+            'center_id': str(u.center_id) if u.center_id else None,
+            'center_name': u.center.name if u.center else None,
+            'created_at': u.created_at.isoformat() if hasattr(u, 'created_at') and u.created_at else None,
+        })
+    
+    # Role counts
+    role_counts = {
+        'teacher': queryset.filter(role__in=['teacher', 'TEACHER']).count(),
+        'student': queryset.filter(role__in=['student', 'STUDENT']).count(),
+        'staff': queryset.filter(role__in=['staff', 'STAFF']).count(),
+        'admin': queryset.filter(role__in=['admin', 'ADMIN', 'institute_admin']).count(),
+    }
+    
+    return Response(
+        {
+            'users': users_data,
+            'results': users_data,
+            'count': len(users_data),
+            'role_counts': role_counts,
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
 def list_centers(request):
     """
     GET /api/timetable/centers/
@@ -297,102 +416,6 @@ def list_center_batches(request, center_id: str):
             {"detail": f"Error fetching batches: {str(e)}"},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
-
-
-@api_view(["GET"])
-@permission_classes([IsAuthenticated])
-def list_center_users(request, center_id: str):
-    """
-    GET /api/timetable/centers/<center_id>/users/
-    
-    List all users in a center.
-    
-    Query params:
-    - role: Filter by role (admin, teacher, student, staff)
-    - search: Search by username, email, or name
-    """
-    try:
-        center = Center.objects.get(id=center_id)
-    except Center.DoesNotExist:
-        return Response(
-            {"detail": "Center not found."},
-            status=status.HTTP_404_NOT_FOUND,
-        )
-    
-    # Check permissions - Admins can only access their center, Super Admins can access all
-    user = request.user
-    if user.role in ['admin', 'ADMIN', 'institute_admin'] and user.center and user.center.id != center.id:
-        return Response(
-            {"detail": "You can only access your own center."},
-            status=status.HTTP_403_FORBIDDEN,
-        )
-    
-    # Verify user belongs to same institute as the center
-    if user.institute and center.institute and user.institute.id != center.institute.id:
-        return Response(
-            {"detail": "You do not have access to this center."},
-            status=status.HTTP_403_FORBIDDEN,
-        )
-    
-    # Get users in this center AND same institute
-    users = User.objects.filter(center=center).exclude(id=request.user.id)
-    if center.institute:
-        users = users.filter(institute=center.institute)
-    
-    # Query filters
-    role = request.query_params.get('role')
-    if role:
-        users = users.filter(role=role)
-        # Exclude FREE virtual teachers from teacher list
-        if role.lower() == 'teacher':
-            users = users.exclude(teacher_code__istartswith='FREE')
-            users = users.exclude(teacher_subjects__iexact='FREE')
-    
-    search = request.query_params.get('search')
-    if search:
-        users = users.filter(
-            Q(username__icontains=search) |
-            Q(email__icontains=search) |
-            Q(first_name__icontains=search) |
-            Q(last_name__icontains=search)
-        )
-    
-    # Serialize
-    users_data = []
-    for user_obj in users:
-        user_data = {
-            "id": str(user_obj.id),
-            "username": user_obj.username,
-            "email": user_obj.email,
-            "first_name": user_obj.first_name,
-            "last_name": user_obj.last_name,
-            "role": user_obj.role,
-            "is_active": user_obj.is_active,
-        }
-        
-        # Add role-specific fields
-        if user_obj.role in ['teacher', 'TEACHER']:
-            user_data.update({
-                "teacher_code": user_obj.teacher_code,
-                "teacher_subjects": user_obj.teacher_subjects,
-                "teacher_employee_id": user_obj.teacher_employee_id,
-            })
-        elif user_obj.role in ['student', 'STUDENT']:
-            user_data.update({
-                "student_code": getattr(user_obj, 'student_code', None),
-            })
-        
-        users_data.append(user_data)
-    
-    return Response(
-        {
-            "center_id": str(center.id),
-            "center_name": center.name,
-            "count": len(users_data),
-            "results": users_data,
-        },
-        status=status.HTTP_200_OK,
-    )
 
 
 @api_view(["GET"])
