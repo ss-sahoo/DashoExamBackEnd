@@ -3,6 +3,7 @@ API views for question extraction
 """
 import os
 import logging
+from typing import Dict, List
 from uuid import UUID
 from datetime import timedelta
 from decimal import Decimal
@@ -1539,6 +1540,74 @@ from questions.services.section_mapper import SectionMapper, ImportConfirmationF
 from questions.services.subject_section_detector import SubjectSectionDetector
 
 
+def _build_subject_sections_for_pattern(subject: str, section_structure: Dict, fallback_count: int) -> List[Dict]:
+    """
+    Build pattern sections from detected section structure.
+    
+    Args:
+        subject: Subject name
+        section_structure: Detected section structure with sections list
+        fallback_count: Fallback question count if no structure detected
+    
+    Returns:
+        List of section dictionaries for pattern creation
+    """
+    sections = []
+    detected_sections = section_structure.get('sections', [])
+    
+    if detected_sections:
+        # Use detected sections
+        for i, section in enumerate(detected_sections):
+            section_name = section.get('name', f'{subject} Section {i+1}')
+            question_type = section.get('type_hint', 'single_mcq')
+            question_range = section.get('question_range', '1-10')
+            question_count = section.get('question_count', 10)
+            
+            # Parse question range
+            if '-' in question_range:
+                try:
+                    start_q, end_q = map(int, question_range.split('-'))
+                except ValueError:
+                    start_q, end_q = 1, question_count
+            else:
+                start_q = 1
+                end_q = question_count
+            
+            sections.append({
+                'name': section_name,
+                'question_type': question_type,
+                'start_question': start_q,
+                'end_question': end_q,
+                'marks_per_question': 1,
+                'negative_marking': 0.25 if question_type in ['single_mcq', 'multiple_mcq'] else 0,
+            })
+    else:
+        # Fallback: create a single section
+        sections.append({
+            'name': f'{subject} Section',
+            'question_type': 'single_mcq',  # Default type
+            'start_question': 1,
+            'end_question': max(1, fallback_count),
+            'marks_per_question': 1,
+            'negative_marking': 0.25,
+        })
+    
+    return sections
+
+
+def _normalize_qtype_for_models(question_type: str) -> str:
+    """Normalize question type for model storage"""
+    type_mapping = {
+        'single_mcq': 'single_mcq',
+        'multiple_mcq': 'multiple_mcq', 
+        'numerical': 'numerical',
+        'subjective': 'subjective',
+        'true_false': 'true_false',
+        'fill_blank': 'fill_blank',
+    }
+    return type_mapping.get(question_type, 'single_mcq')
+
+
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def extract_questions_by_section(request):
@@ -2210,16 +2279,75 @@ def full_extraction_flow(request):
             if not subject_content:
                 continue
             
-            # Get document structure (basic for now)
-            document_structure = {
-                'sections': [{
-                    'name': 'General',
-                    'type_hint': 'single_mcq',
-                    'question_range': str(job.subject_question_counts.get(subject, 20)),
-                    'format_description': 'Mixed questions',
-                    'start_marker': ''
-                }]
-            }
+            # Get document structure from pre-analysis job if available
+            document_structure = {'sections': []}
+            
+            if job.document_structure and job.document_structure.get('sections'):
+                # Use the actual detected document structure
+                document_structure = job.document_structure
+                logger.info(f"Using detected document structure for {subject}: {len(document_structure['sections'])} sections")
+            else:
+                # Fallback to basic structure but try to detect question types
+                logger.info(f"No document structure found, using fallback for {subject}")
+                
+                # Try to detect if this subject has different question types
+                subject_content_lower = subject_content.lower()
+                has_mcq = bool(re.search(r'\([abcd]\)', subject_content_lower) or 
+                              re.search(r'\(a\).*\(b\).*\(c\).*\(d\)', subject_content_lower))
+                has_numerical = bool(re.search(r'calculate|find|determine|answer.*\d+', subject_content_lower))
+                has_subjective = bool(re.search(r'explain|describe|discuss|derive|prove', subject_content_lower))
+                
+                # Create sections based on detected types
+                sections = []
+                question_count = job.subject_question_counts.get(subject, 20)
+                
+                if has_mcq and has_numerical:
+                    # Mixed document - create separate sections
+                    mcq_count = int(question_count * 0.6)  # Assume 60% MCQ
+                    num_count = question_count - mcq_count
+                    
+                    sections.append({
+                        'name': f'{subject} - MCQ Section',
+                        'type_hint': 'single_mcq',
+                        'question_range': f'1-{mcq_count}',
+                        'question_count': mcq_count,
+                        'format_description': 'Multiple choice questions'
+                    })
+                    
+                    sections.append({
+                        'name': f'{subject} - Numerical Section',
+                        'type_hint': 'numerical',
+                        'question_range': f'{mcq_count + 1}-{question_count}',
+                        'question_count': num_count,
+                        'format_description': 'Numerical questions'
+                    })
+                elif has_subjective:
+                    sections.append({
+                        'name': f'{subject} - Subjective Section',
+                        'type_hint': 'subjective',
+                        'question_range': f'1-{question_count}',
+                        'question_count': question_count,
+                        'format_description': 'Subjective questions'
+                    })
+                elif has_numerical:
+                    sections.append({
+                        'name': f'{subject} - Numerical Section',
+                        'type_hint': 'numerical',
+                        'question_range': f'1-{question_count}',
+                        'question_count': question_count,
+                        'format_description': 'Numerical questions'
+                    })
+                else:
+                    # Default to MCQ
+                    sections.append({
+                        'name': f'{subject} - General Section',
+                        'type_hint': 'single_mcq',
+                        'question_range': f'1-{question_count}',
+                        'question_count': question_count,
+                        'format_description': 'Mixed questions'
+                    })
+                
+                document_structure = {'sections': sections}
             
             # Extract questions
             extraction_result = extractor.extract_questions_by_sections(

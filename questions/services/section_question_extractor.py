@@ -250,7 +250,8 @@ class SectionQuestionExtractor:
         """
         Extract questions with retry logic if count is below threshold.
         
-        If extracted count < 80% of expected, retry with more aggressive extraction.
+        ENHANCED: Now also checks for missing question types (e.g., numerical)
+        and performs targeted extraction for them.
         """
         all_questions = self._ai_extract_and_classify(
             text_content, subject, document_structure, expected_count
@@ -258,12 +259,23 @@ class SectionQuestionExtractor:
         
         extracted_count = len(all_questions)
         
-        # Check if we need to retry
-        if expected_count > 0 and extracted_count < expected_count * self.RETRY_THRESHOLD:
-            logger.warning(
-                f"Extraction incomplete: {extracted_count}/{expected_count} "
-                f"({extracted_count/expected_count*100:.1f}%). Retrying with aggressive extraction..."
-            )
+        # Check for missing question types based on document structure
+        missing_types = self._check_missing_question_types(all_questions, document_structure)
+        
+        # Check if we need to retry (either low count OR missing types)
+        needs_retry = (
+            (expected_count > 0 and extracted_count < expected_count * self.RETRY_THRESHOLD) or
+            missing_types
+        )
+        
+        if needs_retry:
+            if missing_types:
+                logger.warning(f"Missing question types detected: {missing_types}")
+            if extracted_count < expected_count * self.RETRY_THRESHOLD:
+                logger.warning(
+                    f"Extraction incomplete: {extracted_count}/{expected_count} "
+                    f"({extracted_count/expected_count*100:.1f}%)"
+                )
             
             for retry in range(self.MAX_EXTRACTION_RETRIES):
                 if progress_callback:
@@ -272,31 +284,176 @@ class SectionQuestionExtractor:
                         f"Retry {retry + 1}: Re-extracting missing questions..."
                     )
                 
-                # Try aggressive extraction with smaller chunks and explicit missing ranges
+                # First, try targeted extraction for missing types
+                if missing_types:
+                    targeted_questions = self._extract_missing_question_types(
+                        text_content, subject, document_structure, missing_types, expected_count
+                    )
+                    
+                    if targeted_questions:
+                        existing_nums = {q.get('question_number') for q in all_questions}
+                        added_count = 0
+                        for q in targeted_questions:
+                            if q.get('question_number') not in existing_nums:
+                                all_questions.append(q)
+                                existing_nums.add(q.get('question_number'))
+                                added_count += 1
+                        
+                        logger.info(f"Targeted extraction added {added_count} questions of missing types")
+                        
+                        # Re-check missing types
+                        missing_types = self._check_missing_question_types(all_questions, document_structure)
+                
+                # Then try general missing question extraction
                 missing_questions = self._extract_missing_questions(
                     text_content, subject, document_structure, 
                     all_questions, expected_count
                 )
                 
                 if missing_questions:
-                    # Merge with existing questions
                     existing_nums = {q.get('question_number') for q in all_questions}
+                    added_count = 0
                     for q in missing_questions:
                         if q.get('question_number') not in existing_nums:
                             all_questions.append(q)
                             existing_nums.add(q.get('question_number'))
+                            added_count += 1
                     
-                    logger.info(
-                        f"Retry {retry + 1}: Added {len(missing_questions)} questions. "
-                        f"Total now: {len(all_questions)}"
-                    )
+                    logger.info(f"General retry added {added_count} questions. Total now: {len(all_questions)}")
                 
-                # Check if we've reached threshold
-                if len(all_questions) >= expected_count * self.RETRY_THRESHOLD:
-                    logger.info(f"Reached threshold after retry {retry + 1}")
+                # Check if we've reached threshold AND have all expected types
+                current_missing_types = self._check_missing_question_types(all_questions, document_structure)
+                if (len(all_questions) >= expected_count * self.RETRY_THRESHOLD and 
+                    not current_missing_types):
+                    logger.info(f"Reached threshold and found all question types after retry {retry + 1}")
                     break
         
         return all_questions
+    
+    def _check_missing_question_types(self, questions: List[Dict], document_structure: Dict) -> List[str]:
+        """Check if any expected question types are missing from extraction results."""
+        if not document_structure or not document_structure.get('sections'):
+            return []
+        
+        # Get expected types from document structure
+        expected_types = set()
+        for section in document_structure['sections']:
+            type_hint = section.get('type_hint', 'mixed')
+            if type_hint != 'mixed':
+                expected_types.add(type_hint)
+        
+        # Get actual types from extracted questions
+        actual_types = set()
+        for q in questions:
+            q_type = q.get('question_type', 'single_mcq')
+            actual_types.add(q_type)
+        
+        # Find missing types
+        missing_types = expected_types - actual_types
+        
+        if missing_types:
+            logger.warning(f"Missing question types: {missing_types}")
+            logger.info(f"Expected types: {expected_types}")
+            logger.info(f"Actual types: {actual_types}")
+        
+        return list(missing_types)
+    
+    def _extract_missing_question_types(
+        self,
+        text_content: str,
+        subject: str,
+        document_structure: Dict,
+        missing_types: List[str],
+        expected_count: int
+    ) -> List[Dict]:
+        """Perform targeted extraction for specific missing question types."""
+        logger.info(f"Performing targeted extraction for missing types: {missing_types}")
+        
+        # Build targeted prompt focusing on missing types
+        targeted_prompt = self._build_targeted_extraction_prompt(
+            text_content, subject, document_structure, missing_types, expected_count
+        )
+        
+        try:
+            response = self.model.generate_content(
+                targeted_prompt,
+                generation_config={
+                    'temperature': 0.1,
+                    'top_p': 0.95,
+                    'max_output_tokens': 65536,
+                }
+            )
+            
+            response_text = response.text if hasattr(response, 'text') else str(response)
+            questions = self._parse_ai_response(response_text, text_content, subject)
+            
+            # Filter to only include the missing types
+            filtered_questions = []
+            for q in questions:
+                if q.get('question_type') in missing_types:
+                    filtered_questions.append(q)
+            
+            logger.info(f"Targeted extraction found {len(filtered_questions)} questions of missing types")
+            return filtered_questions
+            
+        except Exception as e:
+            logger.error(f"Targeted extraction failed: {e}")
+            return []
+    
+    def _build_targeted_extraction_prompt(
+        self,
+        content: str,
+        subject: str,
+        document_structure: Dict,
+        missing_types: List[str],
+        expected_count: int
+    ) -> str:
+        """Build a targeted prompt focusing on specific missing question types."""
+        
+        type_descriptions = {
+            'numerical': 'questions asking for calculations, numeric values, or mathematical computations',
+            'single_mcq': 'multiple choice questions with options A, B, C, D and one correct answer',
+            'multiple_mcq': 'multiple choice questions with multiple correct answers',
+            'true_false': 'true/false questions',
+            'subjective': 'open-ended descriptive questions',
+            'fill_blank': 'fill-in-the-blank questions'
+        }
+        
+        missing_descriptions = [
+            f"- **{mtype}**: {type_descriptions.get(mtype, 'questions of this type')}"
+            for mtype in missing_types
+        ]
+        
+        sections_info = ""
+        if document_structure and document_structure.get('sections'):
+            sections = document_structure['sections']
+            relevant_sections = [s for s in sections if s.get('type_hint') in missing_types]
+            if relevant_sections:
+                sections_info = f"""
+**FOCUS ON THESE SECTIONS:**
+{chr(10).join([f"- {s.get('name')}: {s.get('type_hint')} (Questions {s.get('question_range')})" for s in relevant_sections])}
+"""
+        
+        return f"""You are performing TARGETED EXTRACTION to find missing question types.
+
+**MISSING QUESTION TYPES TO FIND:**
+{chr(10).join(missing_descriptions)}
+
+{sections_info}
+
+**CRITICAL INSTRUCTIONS:**
+1. ONLY extract questions of the missing types listed above
+2. Look specifically for sections or question ranges that contain these types
+3. For NUMERICAL questions: Look for "Calculate", "Find", "Determine", questions with numeric answers
+4. For MCQ questions: Look for questions with options (A), (B), (C), (D)
+5. Pay special attention to section headers that might indicate question type changes
+
+**CONTENT TO SEARCH:**
+{content}
+
+Extract ONLY the missing question types in JSON format:
+[{{"question_number": X, "question_text": "...", "options": [...], "correct_answer": "...", "question_type": "numerical"}}]
+"""
     
     def _extract_missing_questions(
         self,
@@ -450,7 +607,7 @@ class SectionQuestionExtractor:
         """Preprocess content to handle problematic elements before AI extraction.
         
         - Replaces inline base64 SVG/image data with placeholders
-        - Truncates answer key / solution summary sections to prevent duplicates
+        - Carefully truncates answer key sections to avoid cutting off numerical sections
         """
         # Replace inline base64 SVG images that can cause JSON parsing issues
         base64_svg_pattern = r'<img[^>]*src="data:image/svg\+xml;base64,[^"]+?"[^>]*>'
@@ -460,23 +617,33 @@ class SectionQuestionExtractor:
         base64_img_pattern = r'<img[^>]*src="data:image/[^;]+;base64,[^"]+?"[^>]*>'
         content = re.sub(base64_img_pattern, '[INLINE_IMAGE]', content, flags=re.IGNORECASE)
         
-        # Truncate Answer Key / Solutions Summary to prevent duplicate extraction
+        # IMPROVED: More careful truncation of Answer Key sections
+        # Only truncate if we're sure it's not cutting off actual questions
         key_markers = [
-            r'##\s*Answer\s*Key',
+            r'##\s*Answer\s*Key\s*Summary',  # More specific
             r'ANSWER\s*KEY\s*SUMMARY',
-            r'Key\s*Results',
-            r'®\s*ANSWER\s*KEY',
-            r'Section\s*A\s*-\s*Single\s*Correct\s*MCQ\s*\|', # Table header style
+            r'®\s*ANSWER\s*KEY\s*®',  # More specific
+            r'Answer\s*Key\s*\|\s*Page',  # Table header with page reference
         ]
         
         for marker in key_markers:
             match = re.search(marker, content, re.IGNORECASE)
             if match:
-                # Only truncate if it's in the latter half of the document
-                if match.start() > len(content) * 0.5:
-                    logger.info(f"Truncating Answer Key section at position {match.start()} for AI extraction")
-                    content = content[:match.start()]
-                    break
+                # More conservative truncation - only if it's in the last 25% of document
+                # AND there's no question numbering after it
+                truncate_pos = match.start()
+                if truncate_pos > len(content) * 0.75:  # Changed from 0.5 to 0.75
+                    # Check if there are actual questions after this point
+                    remaining_content = content[truncate_pos:]
+                    question_pattern = r'(?:^|\n)\s*(?:Q\.?\s*)?(\d+)[\.\)]\s+[A-Za-z0-9]'
+                    questions_after = re.findall(question_pattern, remaining_content, re.MULTILINE)
+                    
+                    if len(questions_after) < 3:  # Less than 3 questions after = likely just answer key
+                        logger.info(f"Truncating Answer Key section at position {truncate_pos} (found {len(questions_after)} questions after)")
+                        content = content[:truncate_pos]
+                        break
+                    else:
+                        logger.info(f"NOT truncating at position {truncate_pos} - found {len(questions_after)} questions after marker")
 
         return content
 
@@ -645,6 +812,7 @@ DO NOT hallucinate or invent questions that don't exist in the content.
 """
         
         structure_instruction = ""
+        section_specific_rules = ""
         if document_structure and document_structure.get('sections'):
             sections = document_structure['sections']
             sections_str = "\n".join([
@@ -658,27 +826,54 @@ The following sections were detected in this document:
 
 Use this structure to guide your 'question_type' classification for each question.
 """
+            
+            # Add section-specific extraction rules
+            has_numerical = any(s.get('type_hint') == 'numerical' for s in sections)
+            has_mcq = any(s.get('type_hint') in ['single_mcq', 'multiple_mcq'] for s in sections)
+            
+            if has_numerical and has_mcq:
+                section_specific_rules = """
+**SECTION-SPECIFIC EXTRACTION RULES:**
+This document contains BOTH MCQ and NUMERICAL sections. Pay special attention to:
+
+1. **MCQ SECTIONS**: Look for questions with options (A), (B), (C), (D) or similar
+   - Extract options into the 'options' array
+   - Answer is typically a letter (A, B, C, D)
+
+2. **NUMERICAL SECTIONS**: Look for questions asking for calculations or numeric values
+   - These questions typically ask "Find...", "Calculate...", "What is the value of..."
+   - Answer is a NUMBER (e.g., "5", "3.14", "42", "100")
+   - NO options array needed - leave options empty []
+   - Look for answers in formats like "Answer: 42" or "Ans: 3.5"
+
+**CRITICAL**: Do NOT skip numerical questions just because they don't have options!
+"""
 
         return f"""You are an expert question extractor. Extract ALL questions from this {subject} content.
 {count_instruction}
 {structure_instruction}
+{section_specific_rules}
 
 **CRITICAL: DETECT QUESTION TYPE FROM SECTION HEADERS AND CONTENT**
 Look for section headers (e.g. "SECTION A", "SECTION B") to determine the type of questions that follow.
 **MATCH EACH QUESTION TO THE CORRECT 'question_type' FROM THE DETECTED DOCUMENT STRUCTURE CORRESPONDING TO ITS QUESTION NUMBER.**
+
 **QUESTION TYPE RULES:**
 
-1. **single_mcq** - Multiple Choice Questions
+1. **single_mcq** - Multiple Choice Questions with ONE correct answer
    - Options can be labeled (1), (2), (3), (4) OR (A), (B), (C), (D) or just A, B, C, D.
    - EXTRACT OPTIONS INTO THE 'options' LIST. Do not keep them in question_text.
    - Answer format: "1", "2", "3", "4" OR "A", "B", "C", "D"
 
-2. **multiple_mcq** - ONE OR MORE correct answers from options A/B/C/D
+2. **multiple_mcq** - Multiple Choice Questions with ONE OR MORE correct answers
    - Same format as single_mcq but may have multiple letters in 'correct_answer' (e.g. "A, B, D")
 
-3. **numerical** - Answer is a NUMBER (Integer or Decimal)
-   - Answer format: "5", "3.14", "42", "100"
-   - NO options, just a direct numeric answer.
+3. **numerical** - Questions requiring NUMERIC answers (VERY IMPORTANT!)
+   - Questions asking to "Calculate", "Find", "Determine", "What is the value"
+   - Answer is a NUMBER: "5", "3.14", "42", "100", "-2.5"
+   - NO options array - set options to empty []
+   - Look for answers like "Answer: 42", "Ans: 3.5", or just the number
+   - Common patterns: "The answer is X", "Answer (X)", "X is the correct value"
 
 4. **true_false** - Answer is True or False
    - Questions are statements to verify.
@@ -686,43 +881,47 @@ Look for section headers (e.g. "SECTION A", "SECTION B") to determine the type o
 5. **fill_blank** - Has blanks (_____ or ______) to fill
    - Answer is the word or phrase that fills the blank.
 
-6. **subjective** - Open-ended questions requiring a descriptive or derivation-based answer.
+6. **subjective** - Open-ended questions requiring descriptive answers
 
 **FIELD SEPARATION RULES (CRITICAL):**
 - **question_text**: The main question ONLY. Do NOT include options (A, B, C, D) or the 'Sol.' text here.
-- **options**: Array of option strings. 
-  - **CRITICAL**: If multiple options are on one line (e.g., "(A) 10m (B) 20m"), YOU MUST SPLIT them into separate elements in the array.
+- **options**: 
+  - For MCQ: Array of option strings ["option1", "option2", "option3", "option4"]
+  - For NUMERICAL: Empty array []
+  - **CRITICAL**: If multiple options are on one line (e.g., "(A) 10m (B) 20m"), YOU MUST SPLIT them into separate elements.
   - Remove labels (A), (B), (C), (D) or (1), (2), (3), (4).
-  - Example output: `["10m", "20m", "30m", "40m"]`.
 - **correct_answer**: 
-  - If "Answer: (B)" or similar is found, use "B".
-  - If an option has a marker like `\boxtimes`, `\checkmark`, `[X]`, `(X)`, or is **bolded**, that is the correct answer. 
-  - Convert markers to labels (e.g., if option B has `\boxtimes`, correct_answer is "B").
-- **solution**: Text starting after "Sol.", "Solution:", or "Explanation:".
+  - For MCQ: If "Answer: (B)" or similar is found, use "B"
+  - For NUMERICAL: Extract the numeric value (e.g., "42", "3.14")
+  - If an option has a marker like `\\boxtimes`, `\\checkmark`, `[X]`, `(X)`, or is **bolded**, that is the correct answer
+- **solution**: Text starting after "Sol.", "Solution:", or "Explanation:"
 
 **CRITICAL RULES:**
-1. **EXTRACT ONLY ACTUAL QUESTIONS**. 
-   - DO NOT extract text that starts with "Instructions:", "Note:", "Directions:", "Section:", or "Date:".
-   - DO NOT extract rules about marking schemes (e.g., "+4 marks", "no negative marking").
-   - DO NOT extract text that describes how to use the OMR sheet.
-   - If a question number is found in a line of instructions, IGNORE IT.
-2. **SPLIT IN-LINE OPTIONS**: If you see `(A) option1 (B) option2`, you MUST produce `["option1", "option2"]`. NEVER put both in one string.
-3. LOOK AT SECTION HEADERS and the provided structure to determine question type.
-4. Extract EVERY question that ACTUALLY EXISTS in the content - don't invent or skip any.
-5. If the content only has Questions 1-30, DO NOT output Question 31, 61, or 91.
-6. **PRESERVE IMAGE LINKS**: If you see image links like `![](https://cdn.mathpix.com/...)`, include them EXACTLY as they are in the `question_text` or `solution`.
-7. **TOTAL EXPECTED: {expected_count} questions** - if you find significantly more or less, double-check your extraction!
+1. **EXTRACT ALL QUESTION TYPES** - Do not skip numerical questions!
+2. **DO NOT extract instructions** - Skip text starting with "Instructions:", "Note:", "Directions:", "Section:", or "Date:"
+3. **NUMERICAL QUESTIONS ARE EQUALLY IMPORTANT** - They often appear in later sections
+4. **Look for section breaks** - "SECTION A", "SECTION B" indicate different question types
+5. **Preserve question numbering** - If you see Q1-Q20 (MCQ) then Q21-Q30 (Numerical), extract ALL 30
+6. **PRESERVE IMAGE LINKS**: Include `![](https://cdn.mathpix.com/...)` exactly as they are
 
 **OUTPUT FORMAT (JSON array):**
 ```json
 [
   {{
     "question_number": 1, 
-    "question_text": "What is the acceleration? ![](https://cdn.mathpix.com/example.jpg)", 
-    "options": ["2 m/s", "5 m/s", "10 m/s", "20 m/s"], 
+    "question_text": "What is the acceleration?", 
+    "options": ["2 m/s²", "5 m/s²", "10 m/s²", "20 m/s²"], 
     "correct_answer": "B", 
     "solution": "a = F/m", 
     "question_type": "single_mcq"
+  }},
+  {{
+    "question_number": 21, 
+    "question_text": "Calculate the velocity after 5 seconds.", 
+    "options": [], 
+    "correct_answer": "25", 
+    "solution": "v = u + at = 0 + 5×5 = 25 m/s", 
+    "question_type": "numerical"
   }}
 ]
 ```
@@ -732,7 +931,6 @@ Look for section headers (e.g. "SECTION A", "SECTION B") to determine the type o
 
 **IGNORE PAGE HEADERS/FOOTERS:**
 - Ignore text like "Page no. 128", "Exam 2024", "Space for rough work"
-- Do not treat them as part of the question text
 
 **Return ONLY the JSON array:**"""
 
