@@ -4,9 +4,27 @@ class ExamUser(HttpUser):
     wait_time = between(1, 2)
 
     def on_start(self):
-        self.headers = {
-            "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoicmVmcmVzaCIsImV4cCI6MTc3Mzg5MDI4NSwiaWF0IjoxNzczMjg1NDg1LCJqdGkiOiI0NGRjNjJmYjY4MTM0YmVhYTRjMmVlZWFkOGIzYTRkYSIsInVzZXJfaWQiOjEsImRldmljZV9maW5nZXJwcmludCI6ImZiZWU2YTJmNjdlNTdmZGY0YjRhNWM5MTMyMmNiMGM5Mjk1MTIwMDg5ZmQ2ZTIyOWM5ZGRjMjMyZWUwNDQ4ODMifQ.X69qEBMP8_PHQP_1uXX2x4hEl4KyC9xGCR8lqd8l8_8"
-        }
+        # Login first
+        response = self.client.post(
+            "api/auth/login/",
+            json={
+                "email": "mtapas.mohanty95@gmail.com",
+                "password": "Test@1234"
+            }
+        )
+
+        data = response.json()
+
+        if "tokens" in data:
+            self.token = data["tokens"]["access"]
+
+            self.headers = {
+                "Authorization": f"Bearer {self.token}"
+            }
+
+            print("Login successful")
+        else:
+            print("Login failed:", data)
 
     @task
     def exams(self):
