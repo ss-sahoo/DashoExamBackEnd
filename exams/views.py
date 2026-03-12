@@ -117,6 +117,11 @@ class ExamListView(generics.ListCreateAPIView):
                 Q(allowed_batches__id=batch_id)
             ).distinct()
             
+        # Program filter
+        program_id = self.request.query_params.get('program_id')
+        if program_id:
+            queryset = queryset.filter(program_id=program_id)
+            
         return queryset
 
     def get_queryset(self):
@@ -149,6 +154,11 @@ class ExamListView(generics.ListCreateAPIView):
             
             if has_batches:
                 visibility_filter |= Q(visibility_scope='batches', allowed_batches__in=student_batches)
+                
+                # Program-specific exams - visible if student is in any batch belonging to the program
+                student_program_ids = [b.program_id for b in student_batches if b.program_id]
+                if student_program_ids:
+                    visibility_filter |= Q(visibility_scope='program', program_id__in=student_program_ids)
             
             # Also allow explicitly allowed users
             visibility_filter |= Q(allowed_users=user)
@@ -699,12 +709,27 @@ def submit_exam(request):
         attempt.percentage = (evaluation_result['final_score'] / attempt.exam.total_marks) * 100 if attempt.exam.total_marks > 0 else 0
         attempt.save()
     
-    return Response({
+    # Prepare response data
+    response_data = {
         'attempt': ExamAttemptSerializer(attempt).data,
-        'result': ExamResultSerializer(result).data,
-        'evaluation_result': evaluation_result,
-        'message': 'Exam submitted successfully. Evaluation in progress.'
-    })
+        'message': 'Exam submitted successfully.'
+    }
+    
+    # Only include results if they are allowed to be shown immediately
+    show_results = True
+    if attempt.exam.show_result_after_exam_end and timezone.now() < attempt.exam.end_date:
+        show_results = False
+        response_data['message'] = 'Exam submitted successfully. Results will be available after the exam period ends.'
+        response_data['results_available_at'] = attempt.exam.end_date
+    
+    if show_results:
+        response_data.update({
+            'result': ExamResultSerializer(result).data,
+            'evaluation_result': evaluation_result
+        })
+        response_data['message'] = 'Exam submitted successfully. Evaluation in progress.'
+        
+    return Response(response_data)
 
 
 class ExamInvitationListView(generics.ListCreateAPIView):
@@ -1273,6 +1298,26 @@ def get_exam_result(request, attempt_id):
     
     # Determine what results to show based on question types
     exam = attempt.exam
+    
+    # NEW: Check if results should be hidden until exam ends
+    if request.user.role in ['student', 'STUDENT']:
+        # If the exam has a specific setting to hide results until the end
+        if exam.show_result_after_exam_end:
+            now = timezone.now()
+            # Add grace period to end_date check if needed, but end_date is the standard
+            if now < exam.end_date:
+                remaining_time = exam.end_date - now
+                hours, remainder = divmod(remaining_time.total_seconds(), 3600)
+                minutes, _ = divmod(remainder, 60)
+                
+                time_str = f"{int(hours)}h {int(minutes)}m" if hours > 0 else f"{int(minutes)}m"
+                
+                return Response({
+                    'status': 'hidden',
+                    'message': f"Results will be available after the exam period ends (in approximately {time_str}).",
+                    'available_at': exam.end_date
+                }, status=status.HTTP_200_OK)
+
     pattern = exam.pattern
     
     # Try to get result data, but don't fail if it doesn't exist
@@ -1403,16 +1448,21 @@ def get_exam_result(request, attempt_id):
 def get_answer_sheet_pdf(request, attempt_id):
     """Return (and optionally regenerate) the answer sheet PDF link for an attempt."""
     try:
-        if request.user.role in ['student', 'STUDENT']:
+        if request.user.role.lower() == 'student':
             attempt = ExamAttempt.objects.get(id=attempt_id, student=request.user)
+            # Check if results are hidden
+            if attempt.exam.show_result_after_exam_end and timezone.now() < attempt.exam.end_date:
+                return Response({
+                    'error': 'Results are not yet available for this exam.',
+                    'status': 'hidden',
+                    'available_at': attempt.exam.end_date
+                }, status=status.HTTP_403_FORBIDDEN)
         else:
             attempt = ExamAttempt.objects.get(id=attempt_id)
+            if not request.user.role.lower().endswith('admin') and attempt.exam.institute != request.user.institute:
+                 return Response({'error': 'Access denied'}, status=status.HTTP_403_FORBIDDEN)
     except ExamAttempt.DoesNotExist:
         return Response({'error': 'Exam attempt not found'}, status=status.HTTP_404_NOT_FOUND)
-
-        if request.user.role not in ['student', 'STUDENT'] and request.user.role not in ['super_admin', 'SUPER_ADMIN']:
-            if attempt.exam.institute != request.user.institute:
-                return Response({'error': 'Access denied'}, status=status.HTTP_403_FORBIDDEN)
 
     regenerate_flag = str(request.query_params.get('regenerate', '')).lower() in ['1', 'true', 'yes']
     context = ensure_answer_sheet_pdf(
@@ -1651,6 +1701,7 @@ def student_dashboard_data(request):
     # Format completed exams
     completed_exams_data = []
     for attempt in completed_attempts:
+        hide_results = attempt.exam.show_result_after_exam_end and now < attempt.exam.end_date
         completed_exams_data.append({
             'id': attempt.exam.id,  # Use exam ID for frontend compatibility
             'attempt_id': attempt.id,
@@ -1659,14 +1710,16 @@ def student_dashboard_data(request):
             'title': attempt.exam.title,
             'started_at': attempt.started_at,
             'submitted_at': attempt.submitted_at,
-            'score': attempt.score,
-            'percentage': attempt.percentage,
+            'score': None if hide_results else attempt.score,
+            'percentage': None if hide_results else attempt.percentage,
             'total_marks': attempt.exam.total_marks,
             'total_questions': attempt.exam.total_questions,
             'time_spent': attempt.time_spent,
             'violations_count': attempt.violations_count,
             'status': attempt.status,
-            'exam_mode': attempt.exam.exam_mode
+            'exam_mode': attempt.exam.exam_mode,
+            'results_hidden': hide_results,
+            'results_available_at': attempt.exam.end_date if hide_results else None
         })
     
     # Format scheduled exams
@@ -1690,6 +1743,7 @@ def student_dashboard_data(request):
     # Format disqualified exams
     disqualified_exams_data = []
     for attempt in disqualified_attempts:
+        hide_results = attempt.exam.show_result_after_exam_end and now < attempt.exam.end_date
         disqualified_exams_data.append({
             'id': attempt.exam.id,  # Use exam ID for frontend compatibility
             'attempt_id': attempt.id,
@@ -1698,14 +1752,28 @@ def student_dashboard_data(request):
             'title': attempt.exam.title,
             'started_at': attempt.started_at,
             'submitted_at': attempt.submitted_at,
-            'score': attempt.score,
-            'percentage': attempt.percentage,
+            'score': None if hide_results else attempt.score,
+            'percentage': None if hide_results else attempt.percentage,
             'total_marks': attempt.exam.total_marks,
             'total_questions': attempt.exam.total_questions,
             'time_spent': attempt.time_spent,
             'violations_count': attempt.violations_count,
-            'status': 'disqualified'
+            'status': 'disqualified',
+            'exam_mode': attempt.exam.exam_mode,
+            'results_hidden': hide_results,
+            'results_available_at': attempt.exam.end_date if hide_results else None
         })
+    
+    # Recalculate average score for stats to exclude hidden results
+    visible_completed = ExamAttempt.objects.filter(
+        student=user,
+        status__in=['submitted', 'auto_submitted']
+    ).exclude(
+        exam__show_result_after_exam_end=True,
+        exam__end_date__gt=now
+    )
+    
+    average_score = visible_completed.aggregate(avg=Avg('percentage'))['avg'] or 0
     
     return Response({
         'stats': {

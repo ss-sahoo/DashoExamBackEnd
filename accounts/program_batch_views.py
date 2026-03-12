@@ -103,18 +103,17 @@ def create_program(request):
     if error_response:
         return error_response
     
-    # Check if program already exists for this center
-    # Program is linked to Institute, not Center directly
-    # Get the institute from the center
-    if Program.objects.filter(institute=center.institute, name=name).exists():
+    # Check if program already exists for this center/institute
+    if Program.objects.filter(institute=center.institute, center=center, name=name).exists():
         return Response(
-            {"detail": f"Program '{name}' already exists for center '{center_name}'."},
+            {"detail": f"Program '{name}' already exists for center '{center.name}'."},
             status=status.HTTP_400_BAD_REQUEST,
         )
     
     try:
         program = Program.objects.create(
             institute=center.institute,
+            center=center,
             name=name,
             description=description,
             category=category,
@@ -125,6 +124,7 @@ def create_program(request):
                 "id": str(program.id),
                 "name": program.name,
                 "center": center.name,
+                "center_id": str(center.id),
                 "description": program.description,
                 "category": program.category,
                 "is_active": program.is_active,
@@ -518,6 +518,8 @@ def list_programs(request):
             "name": program.name,
             "institute": program.institute.name,
             "institute_id": str(program.institute.id),
+            "center": program.center.name if program.center else None,
+            "center_id": str(program.center.id) if program.center else None,
             "description": program.description,
             "category": program.category,
             "is_active": program.is_active,

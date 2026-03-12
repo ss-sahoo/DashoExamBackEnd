@@ -103,6 +103,63 @@ class Question(models.Model):
     def __str__(self):
         return f"Exam {self.exam_id} - Q{self.question_number}: {self.question_text[:50]}..."
 
+    def normalize_correct_answer(self):
+        """
+        Convert index-based or label-based correct_answer (e.g., '1', 'A') 
+        to the actual option text. This is critical for robust evaluation 
+        when options are shuffled for different students.
+        """
+        if self.question_type not in ['single_mcq', 'multiple_mcq', 'true_false']:
+            return
+
+        if not self.options or not self.correct_answer:
+            return
+
+        def map_value_to_text(val, opts):
+            # 1. Check if it's already an exact match
+            val_str = str(val).strip()
+            if val_str in opts:
+                return val_str
+            
+            # 1b. Check case-insensitive match
+            val_lower = val_str.lower()
+            for opt in opts:
+                if str(opt).strip().lower() == val_lower:
+                    return str(opt).strip()
+
+            # 2. Check if it's a numeric index (1-based)
+            if val_str.isdigit():
+                idx = int(val_str) - 1
+                if 0 <= idx < len(opts):
+                    return str(opts[idx])
+
+            # 3. Check if it's a label (A, B, C...)
+            if len(val_str) == 1 and val_str.isalpha():
+                idx = ord(val_str.upper()) - 65
+                if 0 <= idx < len(opts):
+                    return str(opts[idx])
+            
+            return val_str
+
+        if self.question_type == 'multiple_mcq':
+            # Handle multiple answers (comma or pipe separated)
+            if '|' in self.correct_answer:
+                parts = [p.strip() for p in self.correct_answer.split('|') if p.strip()]
+            else:
+                parts = [p.strip() for p in self.correct_answer.split(',') if p.strip()]
+            
+            normalized_parts = [map_value_to_text(p, self.options) for p in parts]
+            # Use pipe as standard internal separator
+            self.correct_answer = '|'.join(filter(None, normalized_parts))
+        else:
+            # Single MCQ or True/False
+            self.correct_answer = map_value_to_text(self.correct_answer, self.options)
+
+    def save(self, *args, **kwargs):
+        # Normalize correct_answer before saving
+        self.normalize_correct_answer()
+        super().save(*args, **kwargs)
+
     def increment_usage(self):
         self.usage_count += 1
         self.save(update_fields=['usage_count'])

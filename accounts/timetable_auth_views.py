@@ -21,19 +21,19 @@ def _get_user_by_identifier(identifier: str) -> Optional[User]:
     Allow login using username (which can be a code like ADM001, TCH001, STU001),
     email, OR teacher_code (for teachers).
     
+    Uses prioritized lookup to avoid MultipleObjectsReturned when the
+    identifier matches different fields on different users.
+    
     Code-based login:
     - Admin: username like ADM001, ADM002, etc.
     - Teacher: username or teacher_code like TCH001, TCH002, etc.
     - Student: username like STU001, STU002, etc.
     """
-    try:
-        return User.objects.get(
-            Q(username__iexact=identifier) 
-            | Q(email__iexact=identifier)
-            | Q(teacher_code__iexact=identifier)  # Allow login with teacher code
-        )
-    except User.DoesNotExist:
-        return None
+    return (
+        User.objects.filter(username__iexact=identifier).first()
+        or User.objects.filter(email__iexact=identifier).first()
+        or User.objects.filter(teacher_code__iexact=identifier).first()
+    )
 
 
 def _build_tokens_for_user(user: User) -> dict:

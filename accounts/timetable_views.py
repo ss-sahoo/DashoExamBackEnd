@@ -1476,3 +1476,164 @@ def bulk_create_staff(request):
         'center': center.name,
     }, status=status.HTTP_201_CREATED if created_staff else status.HTTP_400_BAD_REQUEST)
 
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def list_people(request):
+    """
+    Consolidated view to get all people with filters and role information.
+    Used by both Exam and Timetable systems.
+    
+    Query Parameters:
+    - role: Filter by role (e.g., 'teacher', 'student', 'admin')
+    - search: Search by name, email, or username
+    - is_active: Filter by active status ('true' or 'false')
+    - center_id: Filter by center (Special: if provided, also includes unassigned users of same institute)
+    - institute_id: Filter by institute
+    - page: Page number (default: 1)
+    - page_size: Items per page (default: 20, max: 100)
+    """
+    from django.db.models import Q
+    from django.core.paginator import Paginator
+    
+    user = request.user
+    
+    # Priority: User's assigned institute > Query parameter (filter)
+    target_institute = user.institute
+    institute_id = request.GET.get('institute_id')
+    
+    if user.role in ['super_admin', 'SUPER_ADMIN']:
+        if institute_id:
+            try:
+                target_institute = Institute.objects.get(id=institute_id)
+            except (Institute.DoesNotExist, ValueError):
+                pass
+        
+        if target_institute:
+            queryset = User.objects.filter(institute=target_institute)
+        else:
+            queryset = User.objects.all()
+    elif user.role in ['institute_admin', 'admin', 'exam_admin', 'ADMIN']:
+        # Admins see everyone in their institute
+        if user.institute:
+            queryset = User.objects.filter(
+                Q(institute=user.institute) | Q(center__institute=user.institute)
+            )
+        elif user.center and user.center.institute:
+            # Fallback: user has a center but no direct institute
+            queryset = User.objects.filter(
+                Q(institute=user.center.institute) | Q(center__institute=user.center.institute)
+            )
+        else:
+            # Last resort: check admin_centers
+            admin_centers = user.admin_centers.all() if hasattr(user, 'admin_centers') else []
+            if admin_centers:
+                center_institutes = [c.institute for c in admin_centers if c.institute]
+                if center_institutes:
+                    queryset = User.objects.filter(
+                        Q(institute__in=center_institutes) | Q(center__institute__in=center_institutes)
+                    )
+                else:
+                    queryset = User.objects.none()
+            else:
+                queryset = User.objects.none()
+    else:
+        # Regular users see people in their institute
+        if user.institute:
+            queryset = User.objects.filter(institute=user.institute)
+        else:
+            queryset = User.objects.none()
+    
+    # Apply filters
+    role_filter = request.GET.get('role')
+    if role_filter:
+        role_variants = [role_filter, role_filter.lower(), role_filter.upper()]
+        queryset = queryset.filter(role__in=role_variants)
+    
+    search = request.GET.get('search')
+    if search:
+        queryset = queryset.filter(
+            Q(first_name__icontains=search) |
+            Q(last_name__icontains=search) |
+            Q(email__icontains=search) |
+            Q(username__icontains=search) |
+            Q(teacher_code__icontains=search)
+        )
+    
+    is_active = request.GET.get('is_active')
+    if is_active is not None:
+        queryset = queryset.filter(is_active=is_active.lower() == 'true')
+    
+    center_id = request.GET.get('center_id')
+    if center_id:
+        # Smart Filter: Include users in this center OR users in the same institute with NO center
+        queryset = queryset.filter(
+            Q(center_id=center_id) | Q(center__isnull=True)
+        )
+    
+    # Order by name
+    queryset = queryset.order_by('first_name', 'last_name')
+    
+    # Pagination
+    try:
+        page = int(request.GET.get('page', 1))
+        page_size = min(int(request.GET.get('page_size', 20)), 100)
+    except ValueError:
+        page = 1
+        page_size = 20
+    
+    paginator = Paginator(queryset, page_size)
+    page_obj = paginator.get_page(page)
+    
+    # Roles for metadata
+    all_roles = [
+        {'value': 'super_admin', 'label': 'Super Admin'},
+        {'value': 'institute_admin', 'label': 'Institute Admin'},
+        {'value': 'teacher', 'label': 'Teacher'},
+        {'value': 'student', 'label': 'Student'},
+        {'value': 'admin', 'label': 'Center Admin'},
+        {'value': 'staff', 'label': 'Staff'},
+    ]
+    
+    # Get role counts (respecting the base queryset but ignore pagination/search)
+    role_counts = {}
+    count_base = queryset.only('role')
+    for role_choice in all_roles:
+        role_val = role_choice['value']
+        count = count_base.filter(role__in=[role_val, role_val.lower(), role_val.upper()]).count()
+        role_counts[role_val] = count
+    
+    # Serialize users
+    users_data = []
+    for u in page_obj:
+        users_data.append({
+            'id': str(u.id),
+            'username': u.username,
+            'email': u.email,
+            'first_name': u.first_name,
+            'last_name': u.last_name,
+            'full_name': u.get_full_name(),
+            'role': u.role,
+            'role_display': dict(User.ROLE_CHOICES).get(u.role, u.role),
+            'is_active': u.is_active,
+            'is_verified': u.is_verified,
+            'phone': u.phone or u.phone_number,
+            'teacher_code': u.teacher_code,
+            'institute_id': u.institute_id,
+            'institute_name': u.institute.name if u.institute else None,
+            'center_id': str(u.center_id) if u.center_id else None,
+            'center_name': u.center.name if u.center else None,
+            'created_at': u.created_at.isoformat() if u.created_at else None,
+        })
+    
+    return Response({
+        'users': users_data,
+        'results': users_data, # Compatibility with different frontend versions
+        'total_count': paginator.count,
+        'page': page,
+        'page_size': page_size,
+        'total_pages': paginator.num_pages,
+        'roles': all_roles,
+        'role_counts': role_counts,
+    })
+

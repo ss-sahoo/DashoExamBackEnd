@@ -8,6 +8,8 @@ from django.conf import settings
 import pandas as pd
 import io
 import csv
+import random
+import hashlib
 import json
 import re
 from .models import Question, QuestionBank, ExamQuestion, QuestionImage, QuestionComment, QuestionTemplate
@@ -185,32 +187,143 @@ class ExamQuestionListView(generics.ListCreateAPIView):
         if exam_questions.exists():
             # Use ExamQuestion data
             serializer = ExamQuestionSerializer(exam_questions, many=True)
-            return Response(serializer.data)
+            result = serializer.data
+        else:
+            # Fallback: Get questions directly from Question model
+            questions = Question.objects.filter(exam_id=exam_id, is_active=True).order_by('question_number', 'question_number_in_pattern')
+            
+            if questions.exists():
+                # Return questions in a format similar to ExamQuestion serializer
+                result = []
+                for q in questions:
+                    # Get pattern section info for section_name
+                    section_name = q.pattern_section_name or q.subject or 'General'
+                    
+                    result.append({
+                        'id': q.id,
+                        'exam': int(exam_id),
+                        'question': QuestionSerializer(q).data,
+                        'question_id': q.id,
+                        'question_number': q.question_number or q.question_number_in_pattern or 0,
+                        'section_name': section_name,
+                        'marks': q.marks,
+                        'negative_marks': float(q.negative_marks) if q.negative_marks else 0.25,
+                        'order': q.question_number_in_pattern or q.question_number or 0
+                    })
+            else:
+                return Response([])
+
+        # Apply shuffling if enabled and user is a student
+        user = request.user
+        from exams.models import Exam
+        try:
+            exam = Exam.objects.get(id=exam_id)
+        except Exam.DoesNotExist:
+            return Response(result) # Should not happen
+
+        # Detect if it's a student (students should see shuffled, admins/teachers might not)
+        is_student = user.role in ['student', 'STUDENT']
         
-        # Fallback: Get questions directly from Question model
-        questions = Question.objects.filter(exam_id=exam_id, is_active=True).order_by('question_number', 'question_number_in_pattern')
-        
-        if questions.exists():
-            # Return questions in a format similar to ExamQuestion serializer
-            result = []
-            for q in questions:
-                # Get pattern section info for section_name
-                section_name = q.pattern_section_name or q.subject or 'General'
+        # Check if any shuffle is enabled
+        shuffle_enabled = (
+            exam.shuffle_questions or 
+            exam.shuffle_within_sections or 
+            exam.shuffle_sections or 
+            exam.shuffle_subjects or 
+            exam.shuffle_options
+        )
+
+        if is_student and shuffle_enabled:
+            # Generate stable seed for the student/exam combination
+            seed_source = f"exam_{exam.id}"
+            if exam.shuffle_seed_per_student:
+                seed_source += f"_user_{user.id}"
+            
+            # Create a deterministic seed (integer)
+            seed_hex = hashlib.sha256(seed_source.encode()).hexdigest()
+            # Use fixed part for reproducibility
+            seed = int(seed_hex[:8], 16)
+            
+            # Use a local Random instance for question/section order
+            rng = random.Random(seed)
+            
+            # 1. Shuffling Logic (Structure)
+            if exam.shuffle_questions or exam.shuffle_within_sections or exam.shuffle_sections or exam.shuffle_subjects:
+                # Group by section/subject to respect hierarchical shuffling
+                # We'll use (subject, section_name) as the group key
+                groups = {}
+                group_keys = [] # to preserve original order of groups if not shuffled
                 
-                result.append({
-                    'id': q.id,
-                    'exam': exam_id,
-                    'question': QuestionSerializer(q).data,
-                    'question_id': q.id,
-                    'question_number': q.question_number or q.question_number_in_pattern or 0,
-                    'section_name': section_name,
-                    'marks': q.marks,
-                    'negative_marks': float(q.negative_marks) if q.negative_marks else 0.25,
-                    'order': q.question_number_in_pattern or q.question_number or 0
-                })
-            return Response(result)
-        
-        return Response([])
+                for q_data in result:
+                    # Determine grouping key
+                    q_obj = q_data.get('question', {})
+                    subject = q_obj.get('subject', 'General')
+                    section = q_data.get('section_name', 'General')
+                    key = (subject, section)
+                    
+                    if key not in groups:
+                        groups[key] = []
+                        group_keys.append(key)
+                    groups[key].append(q_data)
+                
+                # Shuffle WITHIN groups
+                if exam.shuffle_questions or exam.shuffle_within_sections:
+                    for key in groups:
+                        rng.shuffle(groups[key])
+                
+                # Shuffle GROUPS themselves
+                if exam.shuffle_sections:
+                    # Note: this shuffles the subject+section blocks
+                    rng.shuffle(group_keys)
+                elif exam.shuffle_subjects:
+                    # Group by subject only and shuffle those blocks
+                    subjects = {}
+                    subject_order = []
+                    for key in group_keys:
+                        subj = key[0]
+                        if subj not in subjects:
+                            subjects[subj] = []
+                            subject_order.append(subj)
+                        subjects[subj].append(key)
+                    
+                    rng.shuffle(subject_order)
+                    # Reconstruct group_keys based on shuffled subjects
+                    new_group_keys = []
+                    for subj in subject_order:
+                        new_group_keys.extend(subjects[subj])
+                    group_keys = new_group_keys
+                
+                # Reconstruct result list based on shuffled order
+                shuffled_result = []
+                for key in group_keys:
+                    shuffled_result.extend(groups[key])
+                result = shuffled_result
+
+            # 2. Shuffle options for each question independently
+            if exam.shuffle_options:
+                for q_data in result:
+                    q_obj_data = q_data.get('question')
+                    if q_obj_data and q_obj_data.get('question_type') in ['single_mcq', 'multiple_mcq']:
+                        options = q_obj_data.get('options', [])
+                        if options and len(options) > 1:
+                            # Use a question-specific seed to ensure stable but different options per question
+                            q_seed_source = f"{seed_source}_q_{q_data['id']}"
+                            q_seed = int(hashlib.sha256(q_seed_source.encode()).hexdigest()[:8], 16)
+                            q_rng = random.Random(q_seed)
+                            q_rng.shuffle(options)
+                            q_obj_data['options'] = options
+
+        # Security: Strip answer-revealing fields from student-facing response.
+        # Students should NOT be able to see correct_answer / solution during the exam.
+        # These are only returned via the results endpoint after submission.
+        if is_student:
+            for q_data in result:
+                q_obj_data = q_data.get('question')
+                if isinstance(q_obj_data, dict):
+                    q_obj_data.pop('correct_answer', None)
+                    q_obj_data.pop('solution', None)
+
+        return Response(result)
 
     def get_queryset(self):
         exam_id = self.kwargs.get('exam_id')
@@ -274,7 +387,10 @@ def bulk_import_questions(request):
                 if topic:
                     question_data['topic'] = topic
                 
-                question = Question.objects.create(**question_data)
+                # Use QuestionCreateSerializer to ensure normalization and validation
+                serializer = QuestionCreateSerializer(data=question_data, context={'request': request})
+                serializer.is_valid(raise_exception=True)
+                question = serializer.save()
                 created_questions.append(QuestionSerializer(question).data)
                 
             except Exception as e:
@@ -353,7 +469,10 @@ def bulk_import_csv(request):
                     if question_bank_id:
                         question_data['question_bank_id'] = question_bank_id
                     
-                    question = Question.objects.create(**question_data)
+                    # Use QuestionCreateSerializer to ensure normalization and validation
+                    serializer = QuestionCreateSerializer(data=question_data, context={'request': request})
+                    serializer.is_valid(raise_exception=True)
+                    question = serializer.save()
                     created_questions.append(QuestionSerializer(question).data)
                     
                 except Exception as e:
@@ -434,7 +553,10 @@ def bulk_import_excel(request):
                     if question_bank_id:
                         question_data['question_bank_id'] = question_bank_id
                     
-                    question = Question.objects.create(**question_data)
+                    # Use QuestionCreateSerializer to ensure normalization and validation
+                    serializer = QuestionCreateSerializer(data=question_data, context={'request': request})
+                    serializer.is_valid(raise_exception=True)
+                    question = serializer.save()
                     created_questions.append(QuestionSerializer(question).data)
                     
                 except Exception as e:

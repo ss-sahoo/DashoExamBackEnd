@@ -24,7 +24,9 @@ class EvaluationService:
     def __init__(self, exam_attempt: ExamAttempt):
         self.attempt = exam_attempt
         self.exam = exam_attempt.exam
+        self.student = exam_attempt.student
         self.settings = self._get_evaluation_settings()
+        self.question_configs = {} # Cache for dynamic marks/negative marks {question_id: {'marks': X, 'negative': Y}}
     
     def _get_evaluation_settings(self) -> EvaluationSettings:
         """Get or create evaluation settings for the exam"""
@@ -81,10 +83,18 @@ class EvaluationService:
             manual_evaluation_required = []
             ai_evaluation_required = []
             
-            for question in questions:
-                question_number = self._get_question_number(question)
+            for idx, question in enumerate(questions, 1):
+                # Use 1-based index as the question number for this attempt
+                # This avoids the bug where all questions without question_number_in_pattern all get number=1
+                question_number = self._get_question_number(question, idx)
                 
-                # Try to get answer by question ID first, then by question number
+                # Get dynamic configs for this question
+                config = self.question_configs.get(question.id, {
+                    'marks': float(question.marks),
+                    'negative': float(question.negative_marks) if getattr(question, 'negative_marking', None) is None else float(question.negative_marking)
+                })
+
+                # Try to get answer by question ID first (most reliable), then by question number
                 answer_data = answers.get(str(question.id)) or answers.get(str(question_number))
                 
                 # Extract actual answer from the data
@@ -103,13 +113,14 @@ class EvaluationService:
                         'question_number': question_number,
                         'student_answer': student_answer,
                         'is_answered': bool(student_answer.strip()),
-                        'max_marks': Decimal(str(question.marks)),
+                        'max_marks': Decimal(str(config['marks'])),
                     }
                 )
                 
                 if not created:
                     q_eval.student_answer = student_answer
                     q_eval.is_answered = bool(student_answer.strip())
+                    q_eval.max_marks = Decimal(str(config['marks']))
                     q_eval.save()
                 
                 # Determine evaluation type and process
@@ -117,7 +128,7 @@ class EvaluationService:
                 q_eval.evaluation_type = eval_type
                 
                 if eval_type == 'auto':
-                    result = self._auto_evaluate_question(q_eval, question, student_answer)
+                    result = self._auto_evaluate_question(q_eval, question, student_answer, config)
                     auto_evaluated_count += 1
                 elif eval_type == 'manual':
                     q_eval.evaluation_status = 'pending'
@@ -167,21 +178,50 @@ class EvaluationService:
         collected: List[Question] = []
         seen_ids = set()
 
-        def add_questions(queryset):
+        def add_questions(queryset, marks=None, negative=None):
             for question in queryset:
                 if question.id not in seen_ids:
                     collected.append(question)
                     seen_ids.add(question.id)
+                    # Store marks config
+                    if marks is not None:
+                        self.question_configs[question.id] = {
+                            'marks': float(marks),
+                            'negative': float(negative if negative is not None else 0)
+                        }
+                    else:
+                        # Fallback to question or exam-question mapping
+                        try:
+                            from questions.models import ExamQuestion
+                            eq = ExamQuestion.objects.filter(exam=self.exam, question=question).first()
+                            if eq:
+                                self.question_configs[question.id] = {
+                                    'marks': float(eq.marks),
+                                    'negative': float(eq.negative_marks)
+                                }
+                            else:
+                                self.question_configs[question.id] = {
+                                    'marks': float(question.marks),
+                                    'negative': float(question.negative_marks)
+                                }
+                        except:
+                            self.question_configs[question.id] = {
+                                'marks': float(question.marks),
+                                'negative': float(question.negative_marks)
+                            }
 
         pattern = getattr(self.exam, 'pattern', None)
         if pattern and hasattr(pattern, 'sections'):
             for section in pattern.sections.all().order_by('start_question'):
                 before_count = len(collected)
+                marks = section.marks_per_question
+                negative = section.negative_marking
 
                 add_questions(
                     Question.objects.filter(
                         pattern_section_id=section.id
-                    ).order_by('question_number_in_pattern', 'question_number', 'id')
+                    ).order_by('question_number_in_pattern', 'question_number', 'id'),
+                    marks=marks, negative=negative
                 )
 
                 if len(collected) == before_count and section.name:
@@ -189,7 +229,8 @@ class EvaluationService:
                         Question.objects.filter(
                             exam=self.exam,
                             pattern_section_name=section.name
-                        ).order_by('question_number_in_pattern', 'question_number', 'id')
+                        ).order_by('question_number_in_pattern', 'question_number', 'id'),
+                        marks=marks, negative=negative
                     )
 
                 if len(collected) == before_count:
@@ -199,7 +240,8 @@ class EvaluationService:
                             subject__iexact=section.subject,
                             question_number__gte=section.start_question,
                             question_number__lte=section.end_question
-                        ).order_by('question_number', 'id')
+                        ).order_by('question_number', 'id'),
+                        marks=marks, negative=negative
                     )
 
         if not collected:
@@ -209,9 +251,12 @@ class EvaluationService:
 
         return collected
     
-    def _get_question_number(self, question: Question) -> int:
-        """Get the question number within the exam"""
-        return question.question_number_in_pattern or 1
+    def _get_question_number(self, question: Question, fallback_idx: int = 1) -> int:
+        """Get the question number within the exam.
+        Falls back to the 1-based index of the question in the exam list
+        to avoid the bug where every question without a pattern number returns 1.
+        """
+        return question.question_number_in_pattern or question.question_number or fallback_idx
     
     def _determine_evaluation_type(self, question: Question) -> str:
         """Determine the evaluation type for a question"""
@@ -233,19 +278,25 @@ class EvaluationService:
         # Default to manual if nothing else is configured
         return 'manual'
     
-    def _auto_evaluate_question(self, q_eval: QuestionEvaluation, question: Question, student_answer: str) -> Dict:
+    def _auto_evaluate_question(self, q_eval: QuestionEvaluation, question: Question, student_answer: str, config: Dict = None) -> Dict:
         """Auto-evaluate objective questions"""
         try:
+            if not config:
+                config = self.question_configs.get(question.id, {
+                    'marks': float(question.marks),
+                    'negative': float(question.negative_marks)
+                })
+
             if question.question_type == 'single_mcq':
-                result = self._evaluate_single_mcq(question, student_answer)
+                result = self._evaluate_single_mcq(question, student_answer, marks=config['marks'], negative=config['negative'])
             elif question.question_type == 'multiple_mcq':
-                result = self._evaluate_multiple_mcq(question, student_answer)
+                result = self._evaluate_multiple_mcq(question, student_answer, marks=config['marks'], negative=config['negative'])
             elif question.question_type == 'true_false':
-                result = self._evaluate_true_false(question, student_answer)
+                result = self._evaluate_true_false(question, student_answer, marks=config['marks'], negative=config['negative'])
             elif question.question_type == 'numerical':
-                result = self._evaluate_numerical(question, student_answer)
+                result = self._evaluate_numerical(question, student_answer, marks=config['marks'], negative=config['negative'])
             elif question.question_type == 'fill_blank':
-                result = self._evaluate_fill_blank(question, student_answer)
+                result = self._evaluate_fill_blank(question, student_answer, marks=config['marks'], negative=config['negative'])
             else:
                 result = {'is_correct': False, 'marks_obtained': 0, 'feedback': 'Unsupported question type for auto-evaluation'}
             
@@ -272,23 +323,40 @@ class EvaluationService:
                 'error': True
             }
     
-    def _evaluate_single_mcq(self, question: Question, student_answer: str) -> Dict:
-        """Evaluate single correct MCQ"""
+    def _evaluate_single_mcq(self, question: Question, student_answer: str, marks: float = None, negative: float = None) -> Dict:
+        """Evaluate single correct MCQ with negative marking support"""
+        if marks is None: marks = float(question.marks)
+        if negative is None: negative = float(question.negative_marks) if question.negative_marks else 0.0
+
         correct_answer = question.correct_answer.strip().lower()
-        student_answer = student_answer.strip().lower()
+
+        student_answer_stripped = student_answer.strip().lower()
         
-        is_correct = correct_answer == student_answer
-        marks_obtained = float(question.marks) if is_correct else 0
+        is_correct = correct_answer == student_answer_stripped
+        
+        if is_correct:
+            marks_obtained = float(marks)
+        elif student_answer_stripped:  # Wrong answer — apply negative marks
+            marks_obtained = -float(negative)
+        else:  # Unanswered
+            marks_obtained = 0
         
         return {
             'is_correct': is_correct,
             'marks_obtained': marks_obtained,
-            'feedback': 'Correct!' if is_correct else f'Incorrect. Correct answer: {question.correct_answer}'
+            'feedback': 'Correct!' if is_correct else (
+                f'Wrong answer. Correct answer: {question.correct_answer}'
+                if student_answer_stripped else 'Not attempted.'
+            )
         }
     
-    def _evaluate_multiple_mcq(self, question: Question, student_answer: str) -> Dict:
-        """Evaluate multiple correct MCQ"""
+    def _evaluate_multiple_mcq(self, question: Question, student_answer: str, marks: float = None, negative: float = None) -> Dict:
+        """Evaluate multiple correct MCQ with negative marking support"""
+        if marks is None: marks = float(question.marks)
+        if negative is None: negative = float(question.negative_marks) if question.negative_marks else 0.0
+
         try:
+
             # Handle pipe-separated format: "option1|option2|option3"
             if isinstance(student_answer, str) and '|' in student_answer:
                 student_answers = [ans.strip() for ans in student_answer.split('|') if ans.strip()]
@@ -297,7 +365,7 @@ class EvaluationService:
                     # Try JSON format as fallback
                     student_answers = json.loads(student_answer)
                 except:
-                    student_answers = [student_answer]
+                    student_answers = [student_answer] if student_answer.strip() else []
             else:
                 student_answers = [student_answer]
             
@@ -317,12 +385,22 @@ class EvaluationService:
             student_set = set(str(ans).strip().lower() for ans in student_answers)
             
             is_correct = correct_set == student_set
-            marks_obtained = float(question.marks) if is_correct else 0
+            
+            if is_correct:
+                marks_obtained = float(marks)
+            elif student_set:  # Wrong answer — apply negative marks
+                marks_obtained = -float(negative)
+            else:  # Unanswered
+                marks_obtained = 0
+
             
             return {
                 'is_correct': is_correct,
                 'marks_obtained': marks_obtained,
-                'feedback': 'Correct!' if is_correct else f'Incorrect. Correct answers: {", ".join(correct_answers)}'
+                'feedback': 'Correct!' if is_correct else (
+                    f'Wrong answer. Correct answers: {", ".join(correct_answers)}'
+                    if student_set else 'Not attempted.'
+                )
             }
         except Exception as e:
             return {
@@ -331,40 +409,70 @@ class EvaluationService:
                 'feedback': f'Error parsing answers: {str(e)}'
             }
     
-    def _evaluate_true_false(self, question: Question, student_answer: str) -> Dict:
-        """Evaluate True/False questions"""
+    def _evaluate_true_false(self, question: Question, student_answer: str, marks: float = None, negative: float = None) -> Dict:
+        """Evaluate True/False questions with negative marking support"""
+        if marks is None: marks = float(question.marks)
+        if negative is None: negative = float(question.negative_marks) if question.negative_marks else 0.0
+
         correct_answer = question.correct_answer.strip().lower()
-        student_answer = student_answer.strip().lower()
+
+        student_answer_stripped = student_answer.strip().lower()
         
         # Normalize answers
         correct_bool = correct_answer in ['true', 't', 'yes', 'y', '1']
-        student_bool = student_answer in ['true', 't', 'yes', 'y', '1']
+        student_bool = student_answer_stripped in ['true', 't', 'yes', 'y', '1']
         
-        is_correct = correct_bool == student_bool
-        marks_obtained = float(question.marks) if is_correct else 0
+        is_correct = correct_bool == student_bool and bool(student_answer_stripped)
+        
+        if is_correct:
+            marks_obtained = float(marks)
+        elif student_answer_stripped:  # Wrong answer — apply negative marks
+            marks_obtained = -float(negative)
+        else:  # Unanswered
+            marks_obtained = 0
+
         
         return {
             'is_correct': is_correct,
             'marks_obtained': marks_obtained,
-            'feedback': 'Correct!' if is_correct else f'Incorrect. Correct answer: {question.correct_answer}'
+            'feedback': 'Correct!' if is_correct else (
+                f'Wrong answer. Correct answer: {question.correct_answer}'
+                if student_answer_stripped else 'Not attempted.'
+            )
         }
     
-    def _evaluate_numerical(self, question: Question, student_answer: str) -> Dict:
-        """Evaluate numerical questions with tolerance"""
+    def _evaluate_numerical(self, question: Question, student_answer: str, marks: float = None, negative: float = None) -> Dict:
+        """Evaluate numerical questions with tolerance and negative marking support"""
+        if marks is None: marks = float(question.marks)
+        if negative is None: negative = float(question.negative_marks) if question.negative_marks else 0.0
+
+        student_answer_stripped = student_answer.strip() if student_answer else ''
+
+        if not student_answer_stripped:
+            return {
+                'is_correct': False,
+                'marks_obtained': 0,
+                'feedback': 'Not attempted.'
+            }
         try:
             correct_value = float(question.correct_answer)
-            student_value = float(student_answer)
+            student_value = float(student_answer_stripped)
             
             # Default tolerance of 1% or 0.01, whichever is larger
             tolerance = max(abs(correct_value) * 0.01, 0.01)
             
             is_correct = abs(correct_value - student_value) <= tolerance
-            marks_obtained = float(question.marks) if is_correct else 0
+            
+            if is_correct:
+                marks_obtained = float(marks)
+            else:  # Wrong numerical answer — apply negative marks
+                marks_obtained = -float(negative)
+
             
             return {
                 'is_correct': is_correct,
                 'marks_obtained': marks_obtained,
-                'feedback': 'Correct!' if is_correct else f'Incorrect. Correct answer: {correct_value} (±{tolerance})'
+                'feedback': 'Correct!' if is_correct else f'Wrong answer. Correct answer: {correct_value} (±{tolerance})'
             }
         except (ValueError, TypeError):
             return {
@@ -373,19 +481,32 @@ class EvaluationService:
                 'feedback': 'Invalid numerical answer'
             }
     
-    def _evaluate_fill_blank(self, question: Question, student_answer: str) -> Dict:
-        """Evaluate fill-in-the-blank questions"""
+    def _evaluate_fill_blank(self, question: Question, student_answer: str, marks: float = None, negative: float = None) -> Dict:
+        """Evaluate fill-in-the-blank questions with negative marking support"""
+        if marks is None: marks = float(question.marks)
+        if negative is None: negative = float(question.negative_marks) if question.negative_marks else 0.0
+
         correct_answer = question.correct_answer.strip().lower()
-        student_answer = student_answer.strip().lower()
+
+        student_answer_stripped = student_answer.strip().lower()
         
         # Simple string matching (can be enhanced with fuzzy matching)
-        is_correct = correct_answer == student_answer
-        marks_obtained = float(question.marks) if is_correct else 0
+        is_correct = correct_answer == student_answer_stripped
+        
+        if is_correct:
+            marks_obtained = float(marks)
+        elif student_answer_stripped:  # Wrong answer — apply negative marks
+            marks_obtained = -float(negative)
+        else:  # Unanswered
+            marks_obtained = 0
         
         return {
             'is_correct': is_correct,
             'marks_obtained': marks_obtained,
-            'feedback': 'Correct!' if is_correct else f'Incorrect. Correct answer: {question.correct_answer}'
+            'feedback': 'Correct!' if is_correct else (
+                f'Wrong answer. Correct answer: {question.correct_answer}'
+                if student_answer_stripped else 'Not attempted.'
+            )
         }
     
     def _create_evaluation_batch(self, batch_type: str, question_evaluations: List[QuestionEvaluation]) -> EvaluationBatch:
