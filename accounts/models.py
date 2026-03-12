@@ -372,6 +372,14 @@ class Program(TimeStampedModel):
         related_name="programs",
         help_text="Institute where this program is offered.",
     )
+    center = models.ForeignKey(
+        'Center',
+        on_delete=models.CASCADE,
+        related_name="programs",
+        null=True,
+        blank=True,
+        help_text="Optional center where this program is specifically offered.",
+    )
     name = models.CharField(
         max_length=255,
         help_text="Program name, e.g. 'Super 30', 'Only Board'.",

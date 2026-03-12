@@ -12,6 +12,8 @@ from accounts.serializers import UserSerializer
 class ExamSerializer(serializers.ModelSerializer):
     pattern = serializers.SerializerMethodField()
     pattern_id = serializers.IntegerField(write_only=True)
+    program_id = serializers.IntegerField(write_only=True, required=False, allow_null=True)
+    center_id = serializers.IntegerField(write_only=True, required=False, allow_null=True)
     created_by_name = serializers.CharField(source='created_by.get_full_name', read_only=True)
     institute_name = serializers.CharField(source='institute.name', read_only=True)
     is_active = serializers.ReadOnlyField()
@@ -50,7 +52,8 @@ class ExamSerializer(serializers.ModelSerializer):
     class Meta:
         model = Exam
         fields = [
-            'id', 'title', 'description', 'institute', 'institute_name', 'pattern', 'pattern_id',
+            'id', 'title', 'description', 'institute', 'institute_name', 'program', 'program_id',
+            'center', 'center_id', 'pattern', 'pattern_id',
             'status', 'start_date', 'end_date', 'duration_minutes', 'max_attempts',
             'allow_late_submission', 'late_submission_penalty', 'require_fullscreen',
             'disable_copy_paste', 'disable_right_click', 'enable_webcam_proctoring',
@@ -73,7 +76,7 @@ class ExamSerializer(serializers.ModelSerializer):
             'questions_added', 'questions_required', 'questions_remaining',
             'question_completion_percent', 'is_question_complete', 'share_url',
             'exam_mode', 'omr_config', 'omr_metadata', 'omr_sheet_generated', 'omr_sheet_file',
-            'ai_evaluation_enabled', 'marking_strictness'
+            'ai_evaluation_enabled', 'marking_strictness', 'show_result_after_exam_end'
         ]
         read_only_fields = [
             'id', 'created_by', 'created_at', 'updated_at',
@@ -131,8 +134,22 @@ class ExamSerializer(serializers.ModelSerializer):
         center_ids = validated_data.pop('center_ids', [])
         batch_ids = validated_data.pop('batch_ids', [])
         
-        # Automatically set duration_minutes, exam_mode and omr_config from the pattern
-        pattern = validated_data['pattern']
+        # Handle program_id and center_id if provided as write_only fields
+        program_id = validated_data.pop('program_id', None)
+        center_id = validated_data.pop('center_id', None)
+        if program_id:
+            validated_data['program_id'] = program_id
+        if center_id:
+            validated_data['center_id'] = center_id
+        # Get the pattern object and set duration_minutes from it
+        pattern_id = validated_data.pop('pattern_id', None)
+        from patterns.models import ExamPattern
+        try:
+            pattern = ExamPattern.objects.get(id=pattern_id)
+        except (ExamPattern.DoesNotExist, TypeError):
+            raise serializers.ValidationError({'pattern_id': 'Valid exam pattern is required'})
+
+        validated_data['pattern'] = pattern
         validated_data['duration_minutes'] = pattern.total_duration
         
         if 'exam_mode' not in validated_data or validated_data['exam_mode'] == 'online':
@@ -161,6 +178,14 @@ class ExamSerializer(serializers.ModelSerializer):
         center_ids = validated_data.pop('center_ids', None)
         batch_ids = validated_data.pop('batch_ids', None)
         
+        # Handle program_id and center_id
+        program_id = validated_data.pop('program_id', None)
+        center_id = validated_data.pop('center_id', None)
+        if program_id is not None:
+            instance.program_id = program_id
+        if center_id is not None:
+            instance.center_id = center_id
+            
         # If pattern_id is provided, update the pattern and duration
         if 'pattern_id' in validated_data:
             pattern_id = validated_data.pop('pattern_id')
@@ -199,6 +224,8 @@ class ExamSerializer(serializers.ModelSerializer):
 
 class ExamCreateSerializer(serializers.ModelSerializer):
     pattern_id = serializers.IntegerField(write_only=True, required=False, allow_null=True)
+    program_id = serializers.IntegerField(write_only=True, required=False, allow_null=True)
+    center_id = serializers.IntegerField(write_only=True, required=False, allow_null=True)
     copy_from_exam_id = serializers.IntegerField(write_only=True, required=False, allow_null=True)
     id = serializers.IntegerField(read_only=True)
     public_access_token = serializers.UUIDField(read_only=True)
@@ -217,7 +244,7 @@ class ExamCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Exam
         fields = [
-            'id', 'title', 'description', 'pattern_id', 'copy_from_exam_id', 'start_date', 'end_date',
+            'id', 'title', 'description', 'pattern_id', 'program_id', 'center_id', 'copy_from_exam_id', 'start_date', 'end_date',
             'max_attempts', 'allow_late_submission', 'late_submission_penalty',
             'require_fullscreen', 'disable_copy_paste', 'disable_right_click',
             'enable_webcam_proctoring', 'allow_tab_switching',
@@ -231,7 +258,8 @@ class ExamCreateSerializer(serializers.ModelSerializer):
             'auto_end', 'reschedule_allowed', 'max_reschedules', 'reschedule_deadline',
             'public_access_token', 'public_token_expires_at', 'public_allowed_ip_ranges',
             'public_allow_multiple_devices', 'public_link_created_at', 'public_link_last_used_at',
-            'public_link_usage_count', 'share_url', 'exam_mode', 'ai_evaluation_enabled', 'marking_strictness'
+            'public_link_usage_count', 'share_url', 'exam_mode', 'ai_evaluation_enabled', 'marking_strictness',
+            'show_result_after_exam_end'
         ]
         read_only_fields = [
             'id', 'public_access_token', 'public_token_expires_at', 'public_allowed_ip_ranges',
@@ -247,6 +275,14 @@ class ExamCreateSerializer(serializers.ModelSerializer):
         center_ids = validated_data.pop('center_ids', [])
         batch_ids = validated_data.pop('batch_ids', [])
         
+        # Handle program_id and center_id
+        program_id = validated_data.pop('program_id', None)
+        center_id = validated_data.pop('center_id', None)
+        if program_id:
+            validated_data['program_id'] = program_id
+        if center_id:
+            validated_data['center_id'] = center_id
+            
         # Extract copy source if provided
         copy_from_exam_id = validated_data.pop('copy_from_exam_id', None)
         
@@ -328,6 +364,20 @@ class ExamAttemptSerializer(serializers.ModelSerializer):
             'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'student', 'created_at', 'updated_at']
+
+    def to_representation(self, instance):
+        representation = super().to_representation(instance)
+        request = self.context.get('request')
+        
+        # Mask score, percentage, and rank for students if results are hidden
+        if request and request.user and request.user.role in ['student', 'STUDENT']:
+            exam = instance.exam
+            if exam.show_result_after_exam_end and timezone.now() < exam.end_date:
+                representation['score'] = None
+                representation['percentage'] = None
+                representation['rank'] = None
+                
+        return representation
 
 
 class ExamResultSerializer(serializers.ModelSerializer):

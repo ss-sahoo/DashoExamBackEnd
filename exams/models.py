@@ -58,6 +58,12 @@ class Exam(models.Model):
     shuffle_options = models.BooleanField(default=False, help_text="Shuffle MCQ options for each question")
     shuffle_seed_per_student = models.BooleanField(default=True, help_text="Use different shuffle order for each student")
     
+    # Result settings
+    show_result_after_exam_end = models.BooleanField(
+        default=True, 
+        help_text="If enabled, students can only see their results after the exam's end_date has passed"
+    )
+    
     # Access control
     is_public = models.BooleanField(default=True)
     public_access_token = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
@@ -74,6 +80,7 @@ class Exam(models.Model):
         ('institute', 'Institute-Wide'),
         ('centers', 'Specific Centers'),
         ('batches', 'Specific Batches'),
+        ('program', 'Specific Program'),
     ]
     visibility_scope = models.CharField(
         max_length=20,
@@ -130,6 +137,17 @@ class Exam(models.Model):
         blank=True,
         related_name='exams',
         help_text="Program this exam belongs to (for program-specific exams)",
+        db_constraint=False
+    )
+    
+    # Center reference
+    center = models.ForeignKey(
+        'accounts.Center',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='owned_exams',
+        help_text="Center this exam belongs to",
         db_constraint=False
     )
     
@@ -417,12 +435,16 @@ class Exam(models.Model):
         if self.visibility_scope == 'batches':
             # Check if student is in any of the allowed batches
             student_batches = student.batches.all() if hasattr(student, 'batches') else []
-            for batch in student_batches:
-                if self.allowed_batches.filter(id=batch.id).exists():
-                    return True
-            return False
+            return self.allowed_batches.filter(id__in=[b.id for b in student_batches]).exists()
         
-        # Default: deny access
+        # Program-specific: only students in the specified program can access
+        if self.visibility_scope == 'program':
+            if not self.program:
+                return False
+            # Check if student is in any batch belonging to this program
+            student_batches = student.batches.all() if hasattr(student, 'batches') else []
+            return any(batch.program_id == self.program_id for batch in student_batches)
+            
         return False
 
 

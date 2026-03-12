@@ -41,6 +41,63 @@ class QuestionSerializer(serializers.ModelSerializer):
         ]
 
 
+    def normalize_correct_answer(self, data):
+        """
+        Convert index-based or label-based correct_answer (e.g., '1', 'A') 
+        to the actual option text. Consistent with QuestionCreateSerializer.
+        """
+        question_type = data.get('question_type')
+        if question_type not in ['single_mcq', 'multiple_mcq', 'true_false']:
+            return data
+
+        options = data.get('options', [])
+        if not options:
+            return data
+
+        raw_correct = data.get('correct_answer', '')
+        if not raw_correct:
+            return data
+
+        def map_value_to_text(val, opts):
+            val_str = str(val).strip()
+            if val_str in opts:
+                return val_str
+            
+            val_lower = val_str.lower()
+            for opt in opts:
+                if str(opt).strip().lower() == val_lower:
+                    return str(opt).strip()
+
+            if val_str.isdigit():
+                idx = int(val_str) - 1
+                if 0 <= idx < len(opts):
+                    return str(opts[idx])
+
+            if len(val_str) == 1 and val_str.isalpha():
+                idx = ord(val_str.upper()) - 65
+                if 0 <= idx < len(opts):
+                    return str(opts[idx])
+            
+            return val_str
+
+        if question_type == 'multiple_mcq':
+            if '|' in raw_correct:
+                parts = [p.strip() for p in raw_correct.split('|') if p.strip()]
+            else:
+                parts = [p.strip() for p in raw_correct.split(',') if p.strip()]
+            
+            normalized_parts = [map_value_to_text(p, options) for p in parts]
+            data['correct_answer'] = '|'.join(filter(None, normalized_parts))
+        else:
+            data['correct_answer'] = map_value_to_text(raw_correct, options)
+
+        return data
+
+    def validate(self, data):
+        # Normalize correct_answer during updates
+        data = self.normalize_correct_answer(data)
+        return data
+
 class QuestionCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Question
@@ -78,6 +135,66 @@ class QuestionCreateSerializer(serializers.ModelSerializer):
                 if 'unique set' in str(exc).lower():
                     continue
                 raise
+
+    def normalize_correct_answer(self, data):
+        """
+        Convert index-based or label-based correct_answer (e.g., '1', 'A') 
+        to the actual option text. This is critical for robust evaluation 
+        when options are shuffled for different students.
+        """
+        question_type = data.get('question_type')
+        if question_type not in ['single_mcq', 'multiple_mcq', 'true_false']:
+            return data
+
+        options = data.get('options', [])
+        if not options:
+            return data
+
+        raw_correct = data.get('correct_answer', '')
+        if not raw_correct:
+            return data
+
+        def map_value_to_text(val, opts):
+            # 1. Check if it's already an exact match to one of the options
+            val_str = str(val).strip()
+            if val_str in opts:
+                return val_str
+            
+            # 1b. Check case-insensitive match
+            val_lower = val_str.lower()
+            for opt in opts:
+                if str(opt).strip().lower() == val_lower:
+                    return str(opt).strip()
+
+            # 2. Check if it's a numeric index (1-based)
+            if val_str.isdigit():
+                idx = int(val_str) - 1
+                if 0 <= idx < len(opts):
+                    return str(opts[idx])
+
+            # 3. Check if it's a label (A, B, C...)
+            if len(val_str) == 1 and val_str.isalpha():
+                idx = ord(val_str.upper()) - 65
+                if 0 <= idx < len(opts):
+                    return str(opts[idx])
+            
+            return val_str
+
+        if question_type == 'multiple_mcq':
+            # Handle multiple answers (comma or pipe separated)
+            if '|' in raw_correct:
+                parts = [p.strip() for p in raw_correct.split('|') if p.strip()]
+            else:
+                parts = [p.strip() for p in raw_correct.split(',') if p.strip()]
+            
+            normalized_parts = [map_value_to_text(p, options) for p in parts]
+            # Use pipe as standard internal separator
+            data['correct_answer'] = '|'.join(filter(None, normalized_parts))
+        else:
+            # Single MCQ or True/False
+            data['correct_answer'] = map_value_to_text(raw_correct, options)
+
+        return data
 
     def validate(self, data):
         initial = getattr(self, 'initial_data', {})
@@ -124,6 +241,9 @@ class QuestionCreateSerializer(serializers.ModelSerializer):
         options = data.get('options', [])
         if question_type in ['single_mcq', 'multiple_mcq'] and (not options or len(options) < 2):
             raise serializers.ValidationError({'options': 'MCQ questions must have at least 2 options'})
+        
+        # Normalize correct_answer to be text-based
+        data = self.normalize_correct_answer(data)
         
         return data
     
