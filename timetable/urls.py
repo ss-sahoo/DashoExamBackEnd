@@ -65,13 +65,14 @@ from accounts.timetable_views import (
     bulk_create_teachers,
     bulk_create_students,
     bulk_create_staff,
+    list_people,
 )
 from accounts.center_views import (
     list_centers,
     get_center,
     list_center_programs,
     list_center_batches,
-    list_center_users,
+    list_people as list_center_users,
     list_center_timetables,
 )
 from accounts.program_batch_views import (

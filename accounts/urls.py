@@ -2,6 +2,7 @@ from django.urls import path
 from . import views
 from .analytics_views import dashboard_analytics
 from .admin_center_views import assign_center_to_admin, remove_center_from_admin, get_available_centers
+from .timetable_views import list_people
 from .timetable_auth_views import (
     SuperAdminLoginView,
     AdminLoginView,
@@ -41,7 +42,7 @@ urlpatterns = [
     # User listing
     path('users/', views.UserListView.as_view(), name='user-list'),
     path('users/<int:pk>/', views.UserDetailView.as_view(), name='user-detail'),
-    path('people/', views.all_people_view, name='all-people'),  # New comprehensive endpoint
+    path('people/', list_people, name='all-people'),  # Generic unified view
     
     # Permissions
     path('permissions/', views.UserPermissionListView.as_view(), name='user-permission-list'),
