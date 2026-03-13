@@ -27,6 +27,9 @@ from questions.extraction_serializers import (
 )
 from questions.tasks import extract_questions_task, extract_questions_v3_task
 from questions.services.bulk_import import BulkImportService, BulkImportError
+from questions.services.section_question_extractor import SectionQuestionExtractor, SectionExtractionError
+from questions.services.section_mapper import SectionMapper, ImportConfirmationFlow
+from questions.services.subject_section_detector import SubjectSectionDetector
 
 logger = logging.getLogger('extraction')
 
@@ -1535,10 +1538,6 @@ def get_import_preview(request, job_id):
 # Section-Based Extraction & Import Confirmation Endpoints
 # ===========================
 
-from questions.services.section_question_extractor import SectionQuestionExtractor, SectionExtractionError
-from questions.services.section_mapper import SectionMapper, ImportConfirmationFlow
-from questions.services.subject_section_detector import SubjectSectionDetector
-
 
 def _build_subject_sections_for_pattern(subject: str, section_structure: Dict, fallback_count: int) -> List[Dict]:
     """
@@ -1612,7 +1611,7 @@ def _normalize_qtype_for_models(question_type: str) -> str:
 @permission_classes([IsAuthenticated])
 def extract_questions_by_section(request):
     """
-    Extract questions for a specific subject using AgentExtractionService.
+    Extract questions for a specific subject using SectionQuestionExtractor.
     Saves questions to the ExtractionJob so they appear in review.
     
     POST /api/questions/extract-by-section/
@@ -1673,44 +1672,96 @@ def extract_questions_by_section(request):
         if job.exam.institute != request.user.institute:
             return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
             
-        # Get separated content from pre-analysis if available
+        # Get separated content and document structure from pre-analysis
         separated_content = None
-        if job.pre_analysis_job and job.pre_analysis_job.subject_separated_content:
-            raw_content = job.pre_analysis_job.subject_separated_content
-            separated_content = {}
+        document_structure = {}
+        expected_count = 0
+        
+        if job.pre_analysis_job:
+            # Get separated content
+            if job.pre_analysis_job.subject_separated_content:
+                raw_content = job.pre_analysis_job.subject_separated_content
+                separated_content = {}
+                
+                # Normalize content format
+                for s, data in raw_content.items():
+                    if isinstance(data, dict):
+                        separated_content[s] = data.get('content', '')
+                    else:
+                        separated_content[s] = str(data)
             
-            # 1. Initialize Agent Service (needed for normalization)
-            from questions.services.agent_extraction_service import AgentExtractionService
-            service_for_norm = AgentExtractionService(gemini_key=getattr(settings, 'GEMINI_API_KEY', ''))
+            # Get document structure and expected count
+            document_structure = job.pre_analysis_job.document_structure or {}
+            subject_counts = job.pre_analysis_job.subject_question_counts or {}
+            expected_count = subject_counts.get(subject, 0)
+        
+        # Get subject content
+        subject_text = ""
+        if separated_content:
+            # Use fuzzy matching for subject keys
+            normalized_subj = subject.lower().strip()
+            found_key = None
+            for key in separated_content.keys():
+                if normalized_subj == key.lower().strip():
+                    found_key = key
+                    break
             
-             # Normalize content format
-            for s, data in raw_content.items():
-                if isinstance(data, dict):
-                    separated_content[s] = data.get('content', '')
+            if found_key:
+                content_data = separated_content[found_key]
+                if isinstance(content_data, dict):
+                    subject_text = content_data.get('content', '')
                 else:
-                    separated_content[s] = str(data)
+                    subject_text = str(content_data)
+                logger.info(f"Using separated content for {subject} (match: {found_key}, length: {len(subject_text)})")
+            else:
+                logger.warning(f"Subject '{subject}' not found in separated content keys: {list(separated_content.keys())}")
+        
+        if not subject_text:
+            # Fallback to full file processing
+            logger.info(f"No separated content found for {subject}, processing full file")
+            from questions.services.agent_extraction_service import AgentExtractionService
+            service = AgentExtractionService(
+                gemini_key=getattr(settings, 'GEMINI_API_KEY', ''),
+                mathpix_id=getattr(settings, 'MATHPIX_APP_ID', ''),
+                mathpix_key=getattr(settings, 'MATHPIX_APP_KEY', '')
+            )
+            all_questions = service.run_full_pipeline(
+                job.file_path, 
+                subjects_to_process=[subject],
+                separated_content=separated_content
+            )
+        else:
+            # Use SectionQuestionExtractor for better section-based extraction
+            logger.info(f"Using SectionQuestionExtractor for {subject}")
+            extractor = SectionQuestionExtractor(
+                api_key=getattr(settings, 'GEMINI_API_KEY', '')
+            )
             
-            # IMPORTANT: If subject (e.g. "Math") is in separated_content under a different name (e.g. "Mathematics")
-            # we should ensure the right content is used by run_full_pipeline
-            # run_full_pipeline now handles this internally if we pass the whole separated_content map
+            # Extract questions using section-based logic
+            extraction_result = extractor.extract_questions_by_sections(
+                text_content=subject_text,
+                document_structure=document_structure,
+                subject=subject,
+                expected_question_count=expected_count
+            )
+            
+            # Convert SectionQuestionResult objects to question dictionaries
+            all_questions = []
+            for section_result in extraction_result.get('sections', []):
+                for question in section_result.questions:
+                    # Ensure question has required fields
+                    question_dict = {
+                        'question_text': question.get('question_text', ''),
+                        'question_type': question.get('question_type', 'single_mcq'),
+                        'options': question.get('options', []),
+                        'correct_answer': question.get('correct_answer', ''),
+                        'solution': question.get('solution', ''),
+                        'subject': subject,
+                        'question_number': question.get('question_number', 0)
+                    }
+                    all_questions.append(question_dict)
         
-        # 1. Initialize Agent Service
-        from questions.services.agent_extraction_service import AgentExtractionService
-        service = AgentExtractionService(
-            gemini_key=getattr(settings, 'GEMINI_API_KEY', ''),
-            mathpix_id=getattr(settings, 'MATHPIX_APP_ID', ''),
-            mathpix_key=getattr(settings, 'MATHPIX_APP_KEY', '')
-        )
-        
-        # 2. Run Extraction for the Subject
-        # Pass separated_content so it doesn't re-OCR
-        all_questions = service.run_full_pipeline(
-            job.file_path, 
-            subjects_to_process=[subject],
-            separated_content=separated_content
-        )
-        
-        # 3. Save Questions to DB
+        # Save Questions to DB
         saved_questions = []
         for q_data in all_questions:
             eq = ExtractedQuestion.objects.create(
@@ -1726,7 +1777,7 @@ def extract_questions_by_section(request):
             )
             saved_questions.append(eq)
         
-        # Update job status if needed (though frontend handles flow)
+        # Update job status if needed
         if job.status == 'pending':
             job.status = 'processing'
             job.save(update_fields=['status'])
@@ -1734,26 +1785,29 @@ def extract_questions_by_section(request):
         job.questions_extracted += len(saved_questions)
         job.save(update_fields=['questions_extracted'])
         
-        # 4. Format response for frontend (sections grouped)
+        # Format response for frontend (sections grouped)
         from questions.extraction_serializers import ExtractedQuestionSerializer
         
-        # Simple grouping by subject/type for the preview
-        # In a real section-based extraction, AgentExtractionService might provide sections
-        # Here we'll wrap the results in a "sections" list as expected by frontend
+        # Group questions by type for better organization
+        questions_by_type = {}
+        for q in saved_questions:
+            q_type = q.question_type
+            if q_type not in questions_by_type:
+                questions_by_type[q_type] = []
+            questions_by_type[q_type].append(q)
         
-        questions_serialized = ExtractedQuestionSerializer(saved_questions, many=True).data
-        
-        sections_response = [
-            {
-                'section_name': f"{subject} Section",
-                'section_type': 'mixed',
+        sections_response = []
+        for q_type, questions in questions_by_type.items():
+            questions_serialized = ExtractedQuestionSerializer(questions, many=True).data
+            sections_response.append({
+                'section_name': f"{subject} - {q_type.upper()}",
+                'section_type': q_type,
                 'questions': questions_serialized,
-                'total_extracted': len(saved_questions),
-                'expected_count': len(saved_questions),
+                'total_extracted': len(questions),
+                'expected_count': len(questions),
                 'extraction_confidence': 0.95,
                 'warnings': []
-            }
-        ]
+            })
         
         return Response({
             'success': True,
@@ -1765,7 +1819,7 @@ def extract_questions_by_section(request):
         }, status=status.HTTP_200_OK)
         
     except Exception as e:
-        logger.error(f"Agent extraction failed: {e}", exc_info=True)
+        logger.error(f"Section-based extraction failed: {e}", exc_info=True)
         return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 

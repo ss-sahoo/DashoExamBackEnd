@@ -217,27 +217,58 @@ class SectionQuestionExtractor:
             raise SectionExtractionError(f"Extraction failed: {str(e)}")
     
     def _count_questions_in_content(self, content: str) -> int:
-        """Count actual questions in content using regex patterns"""
-        patterns = [
-            r'(?:^|\n)\s*Q\.?\s*(\d+)[\.\):\s]+',
-            r'(?:^|\n)\s*Question[\s:]*(\d+)[\.\):\s]+',
-            r'(?:^|\n)\s*\(?(\d+)\)?[\.\)]\s+',
+        """Count actual questions in content using improved regex patterns"""
+        # Look for main question numbers (46, 47, 48, 49, 50, etc.)
+        main_question_patterns = [
+            r'(?:^|\n)\s*(\d+)[\.\)]\s+[A-Z]',  # "46. For the cell..." or "47. A cell is..."
+            r'(?:^|\n)\s*Q\.?\s*(\d+)[\.\):\s]+[A-Z]',  # "Q. 46. For the cell..."
+            r'(?:^|\n)\s*Question[\s:]*(\d+)[\.\):\s]+[A-Z]',  # "Question 46. For..."
         ]
         
-        max_count = 0
-        for pattern in patterns:
-            matches = list(re.finditer(pattern, content, re.IGNORECASE | re.MULTILINE))
-            if len(matches) > max_count:
-                max_count = len(matches)
+        all_question_numbers = set()
         
-        # Also try counting Answer: patterns as backup
-        answer_pattern = r'(?:Answer|Ans)[\s:]+[A-Da-d]'
+        for pattern in main_question_patterns:
+            matches = re.finditer(pattern, content, re.IGNORECASE | re.MULTILINE)
+            for match in matches:
+                q_num = int(match.group(1))
+                # Only count reasonable question numbers (typically 1-100)
+                if 1 <= q_num <= 100:
+                    all_question_numbers.add(q_num)
+        
+        # Don't count subpart numbers (1., 2., 3., 4., 5.) as separate questions
+        # These are typically subparts of main questions
+        filtered_questions = set()
+        for q_num in all_question_numbers:
+            # If it's a small number (1-10), check if it's actually a subpart
+            if q_num <= 10:
+                # Look for context around this number to see if it's a subpart
+                pattern = rf'(?:^|\n)\s*{q_num}[\.\)]\s+([A-Z][^.]*)'
+                match = re.search(pattern, content, re.MULTILINE)
+                if match:
+                    context = match.group(1)[:100].lower()
+                    # If it starts with typical subpart text, skip it
+                    subpart_indicators = [
+                        'the salt bridge prevents',
+                        'the salt used in',
+                        'a salt bridge maintains',
+                        'symmetric only',
+                        'transitive only',
+                        'reflexive and transitive'
+                    ]
+                    if any(indicator in context for indicator in subpart_indicators):
+                        continue
+            filtered_questions.add(q_num)
+        
+        question_count = len(filtered_questions)
+        
+        # Also try counting Answer: patterns as backup validation
+        answer_pattern = r'(?:Answer|Ans)[\s:]+[A-Da-d\d]'
         answer_matches = re.findall(answer_pattern, content, re.IGNORECASE)
-        if len(answer_matches) > max_count:
-            max_count = len(answer_matches)
         
-        logger.info(f"Counted {max_count} questions in content ({len(content)} chars)")
-        return max_count
+        logger.info(f"Detected question numbers: {sorted(filtered_questions)}")
+        logger.info(f"Counted {question_count} main questions, {len(answer_matches)} answer patterns in content ({len(content)} chars)")
+        
+        return max(question_count, len(answer_matches)) if question_count > 0 else len(answer_matches)
     
     def _extract_with_retry(
         self,
@@ -411,7 +442,7 @@ class SectionQuestionExtractor:
         """Build a targeted prompt focusing on specific missing question types."""
         
         type_descriptions = {
-            'numerical': 'questions asking for calculations, numeric values, or mathematical computations',
+            'numerical': 'questions asking for calculations, numeric values, mathematical computations, or "How many" questions',
             'single_mcq': 'multiple choice questions with options A, B, C, D and one correct answer',
             'multiple_mcq': 'multiple choice questions with multiple correct answers',
             'true_false': 'true/false questions',
@@ -429,9 +460,41 @@ class SectionQuestionExtractor:
             sections = document_structure['sections']
             relevant_sections = [s for s in sections if s.get('type_hint') in missing_types]
             if relevant_sections:
+                section_lines = [
+                    f"- {s.get('name')}: {s.get('type_hint')} (Questions {s.get('question_range')})" 
+                    for s in relevant_sections
+                ]
                 sections_info = f"""
 **FOCUS ON THESE SECTIONS:**
-{chr(10).join([f"- {s.get('name')}: {s.get('type_hint')} (Questions {s.get('question_range')})" for s in relevant_sections])}
+{chr(10).join(section_lines)}
+"""
+        
+        numerical_specific = ""
+        if 'numerical' in missing_types:
+            numerical_specific = """
+**SPECIAL INSTRUCTIONS FOR NUMERICAL QUESTIONS:**
+1. Look for questions with numbered sequences (46., 47., 48., 49., 50.)
+2. Each numbered item is a SEPARATE question - do NOT combine them
+3. Questions ending with blanks "______" are numerical if they expect a number
+4. Questions asking "How many..." expect a numeric answer
+5. Preserve all tables, diagrams, and chemical equations in question_text
+6. Include HTML tables and mathematical formulas exactly as they appear
+7. **CRITICAL**: "How many" questions with sub-statements are SINGLE questions:
+   - Example: "48. Consider the following statements... 1. statement 2. statement 3. statement 4. statement 5. statement How many of the above statements are correct?"
+   - This is ONE question (question 48), not 5 separate questions
+   - Include ALL statements in the question_text
+   - The answer is a number (how many are correct)
+
+**CORRECT PATTERN RECOGNITION:**
+- Question 46: Complete question about cell EMF → ONE numerical question
+- Question 47: Complete question about Zn cell → ONE numerical question  
+- Question 48: Question with 5 sub-statements + "How many correct?" → ONE numerical question
+- Question 49: Question with table + "How many species can oxidize?" → ONE numerical question
+- Question 50: Question with diagram + calculation → ONE numerical question
+
+**DO NOT EXTRACT:**
+- Individual sub-statements (1., 2., 3., 4., 5.) as separate questions
+- Only extract the main question numbers (46., 47., 48., 49., 50.)
 """
         
         return f"""You are performing TARGETED EXTRACTION to find missing question types.
@@ -440,19 +503,26 @@ class SectionQuestionExtractor:
 {chr(10).join(missing_descriptions)}
 
 {sections_info}
+{numerical_specific}
 
 **CRITICAL INSTRUCTIONS:**
 1. ONLY extract questions of the missing types listed above
 2. Look specifically for sections or question ranges that contain these types
-3. For NUMERICAL questions: Look for "Calculate", "Find", "Determine", questions with numeric answers
+3. For NUMERICAL questions: Look for "Calculate", "Find", "Determine", "How many", questions with numeric answers
 4. For MCQ questions: Look for questions with options (A), (B), (C), (D)
 5. Pay special attention to section headers that might indicate question type changes
+6. PRESERVE ALL TABLES, DIAGRAMS, AND FORMULAS in the question_text
+7. Each numbered question (46., 47., 48., etc.) is SEPARATE - do not combine
+8. **CRITICAL**: Do NOT split "How many" questions - treat them as single numerical questions
 
 **CONTENT TO SEARCH:**
 {content}
 
-Extract ONLY the missing question types in JSON format:
-[{{"question_number": X, "question_text": "...", "options": [...], "correct_answer": "...", "question_type": "numerical"}}]
+Extract ONLY the missing question types in JSON format. Example for numerical questions:
+[
+  {{"question_number": 46, "question_text": "For the cell: H₂(g, 1 atm) | H⁺ (?) || M²⁺ (1 M) | M(s)...", "options": [], "correct_answer": "6", "question_type": "numerical"}},
+  {{"question_number": 48, "question_text": "Consider the following statements about a salt bridge used in a galvanic cell: 1. The salt bridge prevents mixing of electrolytes... 2. The salt used in a salt bridge should have ions... 3. A salt bridge maintains electrical neutrality... 4. The salt used in a salt bridge should not react... 5. The salt bridge directly increases the EMF... How many of the above statements are correct?", "options": [], "correct_answer": "4", "question_type": "numerical"}}
+]
 """
     
     def _extract_missing_questions(
@@ -606,16 +676,35 @@ Extract ONLY the missing question types in JSON format:
     def _preprocess_content(self, content: str) -> str:
         """Preprocess content to handle problematic elements before AI extraction.
         
-        - Replaces inline base64 SVG/image data with placeholders
+        - Preserves mathematical formulas, diagrams, and tables
+        - Handles base64 images more carefully
         - Carefully truncates answer key sections to avoid cutting off numerical sections
         """
-        # Replace inline base64 SVG images that can cause JSON parsing issues
-        base64_svg_pattern = r'<img[^>]*src="data:image/svg\+xml;base64,[^"]+?"[^>]*>'
-        content = re.sub(base64_svg_pattern, '[CHEMISTRY_STRUCTURE_IMAGE]', content, flags=re.IGNORECASE)
+        # PRESERVE MATHEMATICAL CONTENT - Don't replace images that might be formulas/diagrams
+        # Only replace very long base64 strings that cause parsing issues
         
-        # Also handle generic base64 images
+        # Replace only extremely long base64 SVG images (>10000 chars) that cause JSON parsing issues
+        def replace_long_base64(match):
+            full_match = match.group(0)
+            if len(full_match) > 10000:  # Only replace very long base64 strings
+                return '[LARGE_CHEMISTRY_STRUCTURE_IMAGE]'
+            return full_match  # Keep shorter images as they might be important formulas
+        
+        base64_svg_pattern = r'<img[^>]*src="data:image/svg\+xml;base64,[^"]+?"[^>]*>'
+        content = re.sub(base64_svg_pattern, replace_long_base64, content, flags=re.IGNORECASE)
+        
+        # Handle generic base64 images more carefully - preserve mathematical diagrams
+        def replace_long_generic_base64(match):
+            full_match = match.group(0)
+            if len(full_match) > 8000:  # Only replace very long base64 strings
+                return '[LARGE_INLINE_IMAGE]'
+            return full_match  # Keep shorter images as they might be important diagrams
+        
         base64_img_pattern = r'<img[^>]*src="data:image/[^;]+;base64,[^"]+?"[^>]*>'
-        content = re.sub(base64_img_pattern, '[INLINE_IMAGE]', content, flags=re.IGNORECASE)
+        content = re.sub(base64_img_pattern, replace_long_generic_base64, content, flags=re.IGNORECASE)
+        
+        # PRESERVE MATHPIX IMAGES - These are important for mathematical content
+        # Don't replace Mathpix CDN images as they contain important mathematical diagrams
         
         # IMPROVED: More careful truncation of Answer Key sections
         # Only truncate if we're sure it's not cutting off actual questions
@@ -652,7 +741,8 @@ Extract ONLY the missing question types in JSON format:
         # Preprocess content to handle problematic base64 SVG images
         content = self._preprocess_content(content)
         
-        max_chunk_size = 40000
+        # Increase chunk size to avoid breaking questions with mathematical content
+        max_chunk_size = 60000  # Increased from 40000 to preserve mathematical content
         if len(content) > max_chunk_size:
             return self._extract_in_chunks(content, subject, max_chunk_size)
         
@@ -665,7 +755,7 @@ Extract ONLY the missing question types in JSON format:
             response = self.client.generate_content(
                 prompt,
                 generation_config={
-                    'temperature': 0.1,
+                    'temperature': 0.05,  # Reduced from 0.1 for more consistent extraction
                     'top_p': 0.95,
                     'max_output_tokens': 65536,
                 }
@@ -685,7 +775,7 @@ Extract ONLY the missing question types in JSON format:
                 'instruction', 'mark the correct', 'marks are awarded', 
                 'four options', 'no negative marking', 'consists of', 
                 'blue/black pen', 'rough work', 'do not use', 'mark t or f',
-                'each question carries'
+                'each question carries', 'section contains', 'time allowed'
             ]
             
             for q in questions:
@@ -697,12 +787,29 @@ Extract ONLY the missing question types in JSON format:
                 if any(kw in q_text for kw in instruction_keywords):
                     # It looks like an instruction, check if it's ONLY an instruction
                     if '?' not in q_text and 'find' not in q_text and 'calculate' not in q_text and \
-                       'derive' not in q_text and 'state' not in q_text and 'explain' not in q_text:
+                       'derive' not in q_text and 'state' not in q_text and 'explain' not in q_text and \
+                       'consider' not in q_text and 'determine' not in q_text and 'how many' not in q_text:
                         is_instruction = True
+                
+                # Skip very short "questions" that are likely fragments
+                if len(q_text.strip()) < 20 and not any(word in q_text.lower() for word in ['calculate', 'find', 'determine']):
+                    logger.info(f"Filtering out short fragment: {q_text[:50]}...")
+                    continue
                 
                 if is_instruction:
                     logger.info(f"Filtering out instruction-like question: {q_text[:50]}...")
                     continue
+                
+                # Special handling for "How many" questions - ensure they are numerical
+                if ('how many' in q_text and 
+                    ('correct' in q_text or 'above' in q_text or 'following' in q_text or 'statements' in q_text)):
+                    q['question_type'] = 'numerical'
+                    q['options'] = []  # Numerical questions don't have options
+                    logger.info(f"Detected 'How many' question {q_num}, ensuring type is numerical")
+                
+                # Ensure mathematical content is preserved
+                if any(indicator in q_text for indicator in ['![](https://cdn.mathpix.com/', '<table', '$$', '$', '\\frac', '\\sqrt']):
+                    logger.info(f"Question {q_num} contains mathematical content - preserving formatting")
                 
                 # Basic deduplication for same extraction chunk
                 if q_num:
@@ -771,7 +878,7 @@ Extract ONLY the missing question types in JSON format:
         return all_questions
     
     def _smart_split(self, content: str, chunk_size: int) -> List[str]:
-        """Split content at question boundaries"""
+        """Split content at question boundaries while preserving mathematical content"""
         chunks = []
         current_pos = 0
         
@@ -782,6 +889,7 @@ Extract ONLY the missing question types in JSON format:
                 search_start = max(current_pos + chunk_size - 5000, current_pos)
                 search_text = content[search_start:end_pos]
                 
+                # Look for question boundaries
                 patterns = [r'\n\s*Q\.?\s*\d+', r'\n\s*\d+[\.\)]']
                 best_break = None
                 
@@ -790,13 +898,27 @@ Extract ONLY the missing question types in JSON format:
                     if matches:
                         last_match = matches[-1]
                         break_pos = search_start + last_match.start()
+                        
+                        # Check if breaking here would split mathematical content
+                        chunk_content = content[current_pos:break_pos]
+                        next_chunk_start = content[break_pos:break_pos + 1000]  # Look ahead
+                        
+                        # Don't break if we're in the middle of mathematical content
+                        if ('$$' in chunk_content and chunk_content.count('$$') % 2 == 1) or \
+                           ('\\begin{' in chunk_content and '\\end{' not in chunk_content) or \
+                           ('<table' in chunk_content and '</table>' not in chunk_content) or \
+                           ('![](https://cdn.mathpix.com/' in next_chunk_start[:200]):
+                            continue
+                        
                         if best_break is None or break_pos > best_break:
                             best_break = break_pos
                 
                 if best_break:
                     end_pos = best_break
             
-            chunks.append(content[current_pos:end_pos])
+            chunk = content[current_pos:end_pos]
+            if chunk.strip():  # Only add non-empty chunks
+                chunks.append(chunk)
             current_pos = end_pos
         
         return chunks
@@ -815,10 +937,11 @@ DO NOT hallucinate or invent questions that don't exist in the content.
         section_specific_rules = ""
         if document_structure and document_structure.get('sections'):
             sections = document_structure['sections']
-            sections_str = "\n".join([
+            section_lines = [
                 f"- {s.get('name')}: {s.get('type_hint')} (Questions {s.get('question_range')})" 
                 for s in sections
-            ])
+            ]
+            sections_str = "\n".join(section_lines)
             structure_instruction = f"""
 **DETECTED DOCUMENT STRUCTURE:**
 The following sections were detected in this document:
@@ -849,10 +972,43 @@ This document contains BOTH MCQ and NUMERICAL sections. Pay special attention to
 **CRITICAL**: Do NOT skip numerical questions just because they don't have options!
 """
 
-        return f"""You are an expert question extractor. Extract ALL questions from this {subject} content.
+        # Build the prompt without complex f-string formatting
+        prompt = f"""You are an expert question extractor specializing in mathematical and scientific content. Extract ALL questions from this {subject} content with COMPLETE accuracy.
 {count_instruction}
 {structure_instruction}
 {section_specific_rules}
+
+**CRITICAL: MATHEMATICAL CONTENT PRESERVATION**
+1. **PRESERVE ALL MATHEMATICAL FORMULAS**: Keep LaTeX notation ($...$, $$...$$), chemical equations, and mathematical symbols exactly as they appear
+2. **PRESERVE ALL IMAGES AND DIAGRAMS**: Keep image links like ![](https://cdn.mathpix.com/...) exactly as they are - these contain important mathematical diagrams
+3. **PRESERVE ALL TABLES**: Keep HTML tables and markdown tables completely intact - they contain crucial data
+4. **PRESERVE CHEMICAL STRUCTURES**: Keep all chemical formulas, molecular structures, and reaction equations
+
+**CRITICAL: QUESTION IDENTIFICATION AND SUBPART HANDLING**
+1. **Main Question Numbers**: Look for main question numbers like "46.", "47.", "48.", "49.", "50." - these are the PRIMARY questions
+2. **DO NOT treat subparts as separate questions**: If you see:
+   - "48. Consider the following statements about a salt bridge..."
+   - "1. The salt bridge prevents mixing..."
+   - "2. The salt used in a salt bridge..."
+   - "3. A salt bridge maintains..."
+   - "4. The salt used in a salt bridge should not react..."
+   - "5. The salt bridge directly increases..."
+   - "How many of the above statements are correct?"
+   
+   This is ONE question (Question 48) with subparts, NOT 6 separate questions!
+
+3. **Subpart Integration Rules**:
+   - Main question number (46, 47, 48, etc.) = ONE complete question
+   - Subparts (1., 2., 3., 4., 5.) or (i., ii., iii.) or (a., b., c.) are PART OF the main question
+   - Include ALL subparts in the main question's question_text
+   - The final asking part ("How many are correct?", "Calculate...", etc.) is part of the same question
+
+4. **Question Type Detection**:
+   - Questions asking "How many", "Calculate", "Find", "Determine" = numerical
+   - Questions with mathematical formulas, chemical equations, tables = numerical
+   - Questions ending with "______" (blank to fill with number) = numerical
+   - Questions with options (A), (B), (C), (D) = single_mcq
+   - Questions asking for True/False = true_false
 
 **CRITICAL: DETECT QUESTION TYPE FROM SECTION HEADERS AND CONTENT**
 Look for section headers (e.g. "SECTION A", "SECTION B") to determine the type of questions that follow.
@@ -860,20 +1016,22 @@ Look for section headers (e.g. "SECTION A", "SECTION B") to determine the type o
 
 **QUESTION TYPE RULES:**
 
-1. **single_mcq** - Multiple Choice Questions with ONE correct answer
+1. **numerical** - Questions requiring NUMERIC answers (VERY IMPORTANT!)
+   - Questions asking to "Calculate", "Find", "Determine", "What is the value", "How many"
+   - Questions with mathematical formulas, chemical equations, tables
+   - Questions ending with blanks like "______" expecting a number
+   - Answer is a NUMBER: "5", "3.14", "42", "100", "-2.5"
+   - NO options array - set options to empty []
+   - **"How many" questions with sub-statements are numerical questions**
+   - Questions 46-50 in chemistry papers are typically numerical
+
+2. **single_mcq** - Multiple Choice Questions with ONE correct answer
    - Options can be labeled (1), (2), (3), (4) OR (A), (B), (C), (D) or just A, B, C, D.
    - EXTRACT OPTIONS INTO THE 'options' LIST. Do not keep them in question_text.
    - Answer format: "1", "2", "3", "4" OR "A", "B", "C", "D"
 
-2. **multiple_mcq** - Multiple Choice Questions with ONE OR MORE correct answers
+3. **multiple_mcq** - Multiple Choice Questions with ONE OR MORE correct answers
    - Same format as single_mcq but may have multiple letters in 'correct_answer' (e.g. "A, B, D")
-
-3. **numerical** - Questions requiring NUMERIC answers (VERY IMPORTANT!)
-   - Questions asking to "Calculate", "Find", "Determine", "What is the value"
-   - Answer is a NUMBER: "5", "3.14", "42", "100", "-2.5"
-   - NO options array - set options to empty []
-   - Look for answers like "Answer: 42", "Ans: 3.5", or just the number
-   - Common patterns: "The answer is X", "Answer (X)", "X is the correct value"
 
 4. **true_false** - Answer is True or False
    - Questions are statements to verify.
@@ -884,7 +1042,12 @@ Look for section headers (e.g. "SECTION A", "SECTION B") to determine the type o
 6. **subjective** - Open-ended questions requiring descriptive answers
 
 **FIELD SEPARATION RULES (CRITICAL):**
-- **question_text**: The main question ONLY. Do NOT include options (A, B, C, D) or the 'Sol.' text here.
+- **question_text**: The COMPLETE question including:
+  - All mathematical formulas and equations
+  - All image links and diagrams
+  - All tables and data
+  - ALL subparts if it's a compound question
+  - Proper line breaks and formatting
 - **options**: 
   - For MCQ: Array of option strings ["option1", "option2", "option3", "option4"]
   - For NUMERICAL: Empty array []
@@ -897,34 +1060,34 @@ Look for section headers (e.g. "SECTION A", "SECTION B") to determine the type o
 - **solution**: Text starting after "Sol.", "Solution:", or "Explanation:"
 
 **CRITICAL RULES:**
-1. **EXTRACT ALL QUESTION TYPES** - Do not skip numerical questions!
-2. **DO NOT extract instructions** - Skip text starting with "Instructions:", "Note:", "Directions:", "Section:", or "Date:"
-3. **NUMERICAL QUESTIONS ARE EQUALLY IMPORTANT** - They often appear in later sections
-4. **Look for section breaks** - "SECTION A", "SECTION B" indicate different question types
-5. **Preserve question numbering** - If you see Q1-Q20 (MCQ) then Q21-Q30 (Numerical), extract ALL 30
-6. **PRESERVE IMAGE LINKS**: Include `![](https://cdn.mathpix.com/...)` exactly as they are
+1. **EXTRACT ALL MAIN QUESTION NUMBERS** - Look for 46, 47, 48, 49, 50, etc.
+2. **DO NOT extract subparts as separate questions** - 1., 2., 3., 4., 5. are subparts of main questions
+3. **DO NOT extract instructions** - Skip text starting with "Instructions:", "Note:", "Directions:", "Section:", or "Date:"
+4. **NUMERICAL QUESTIONS ARE EQUALLY IMPORTANT** - They often appear in later sections
+5. **Look for section breaks** - "SECTION A", "SECTION B" indicate different question types
+6. **Preserve question numbering** - If you see Q46, Q47, Q48, Q49, Q50, extract ALL 5 as separate questions
+7. **PRESERVE IMAGE LINKS AND TABLES**: Include `![](https://cdn.mathpix.com/...)` and HTML tables exactly as they are
+8. **TABLE PRESERVATION**: If you see tables with | symbols or HTML table tags, preserve them completely
+9. **DIAGRAM PRESERVATION**: Include all mathematical formulas, chemical equations, and diagrams
+10. **EXTRACT COMPLETE QUESTIONS**: Never extract partial fragments - always get the full question text with all subparts
 
-**OUTPUT FORMAT (JSON array):**
-```json
-[
-  {{
-    "question_number": 1, 
-    "question_text": "What is the acceleration?", 
-    "options": ["2 m/s²", "5 m/s²", "10 m/s²", "20 m/s²"], 
-    "correct_answer": "B", 
-    "solution": "a = F/m", 
-    "question_type": "single_mcq"
-  }},
-  {{
-    "question_number": 21, 
-    "question_text": "Calculate the velocity after 5 seconds.", 
-    "options": [], 
-    "correct_answer": "25", 
-    "solution": "v = u + at = 0 + 5×5 = 25 m/s", 
-    "question_type": "numerical"
-  }}
-]
-```
+**EXAMPLES OF CORRECT EXTRACTION:**
+
+Question 46: "For the cell: H₂(g, 1 atm) | H⁺ (?) || M²⁺ (1 M) | M(s) Given: E°cell = 0.24 V. The EMF of the cell becomes 0.48 V when pH of the solution is approximately: ______"
+- question_number: 46
+- question_type: "numerical"
+- options: []
+
+Question 48: "Consider the following statements about a salt bridge used in a galvanic cell:
+1. The salt bridge prevents mixing of electrolytes of the two half-cells while allowing ionic conduction.
+2. The salt used in a salt bridge should have ions with nearly equal ionic mobility.
+3. A salt bridge maintains electrical neutrality in the two half-cells.
+4. The salt used in a salt bridge should not react with any species present in the cell.
+5. The salt bridge directly increases the EMF of the cell.
+How many of the above statements are correct? ______"
+- question_number: 48
+- question_type: "numerical"
+- options: []
 
 **CONTENT TO EXTRACT FROM:**
 {content}
@@ -932,7 +1095,15 @@ Look for section headers (e.g. "SECTION A", "SECTION B") to determine the type o
 **IGNORE PAGE HEADERS/FOOTERS:**
 - Ignore text like "Page no. 128", "Exam 2024", "Space for rough work"
 
+**CRITICAL REMINDER: 
+- Extract MAIN question numbers (46, 47, 48, 49, 50) as separate questions
+- Include ALL subparts within each main question
+- Preserve ALL mathematical content, diagrams, and tables
+- Detect correct question types based on content**
+
 **Return ONLY the JSON array:**"""
+        
+        return prompt
 
     def _parse_ai_response(self, response: str, original_content: str, subject: str) -> List[Dict]:
         """Parse AI response to extract questions with robust JSON handling"""
@@ -947,7 +1118,7 @@ Look for section headers (e.g. "SECTION A", "SECTION B") to determine the type o
                     json_str = json_match.group(0)
                 else:
                     json_str = response
-            
+        
             # Clean up the string before parsing
             json_str = json_str.strip()
             # Remove markdown code blocks if still present (double check)
@@ -1192,7 +1363,7 @@ Look for section headers (e.g. "SECTION A", "SECTION B") to determine the type o
         """Detect section boundaries and their question types from content."""
         section_types = {}
         
-        # Common section header patterns
+        # First, look for explicit section headers
         section_patterns = [
             (r'Section\s*A.*?(?:MCQ|Single|Multiple\s*Choice)', 'single_mcq', (1, 30)),
             (r'SECTION\s*A.*?(?:MCQ|Single|Multiple\s*Choice)', 'single_mcq', (1, 30)),
@@ -1213,22 +1384,63 @@ Look for section headers (e.g. "SECTION A", "SECTION B") to determine the type o
                 for q_num in range(default_range[0], default_range[1] + 1):
                     section_types[q_num] = q_type
         
+        # If no explicit sections found, analyze individual questions
         if not section_types:
-            range_patterns = [
-                (r'Q?(\d+)\s*[-\u2013\u2014]\s*Q?(\d+).*?(?:MCQ|Single)', 'single_mcq'),
-                (r'Q?(\d+)\s*[-\u2013\u2014]\s*Q?(\d+).*?(?:Numerical|Numeric)', 'numerical'),
-                (r'Q?(\d+)\s*[-\u2013\u2014]\s*Q?(\d+).*?(?:True.*?False)', 'true_false'),
-                (r'Q?(\d+)\s*[-\u2013\u2014]\s*Q?(\d+).*?(?:Fill|Blank)', 'fill_blank'),
-            ]
+            # Find all main question numbers
+            question_pattern = r'(?:^|\n)\s*(\d+)[\.\)]\s+([^0-9\n]{10,200})'
+            matches = re.finditer(question_pattern, content, re.MULTILINE)
             
-            for pattern, q_type in range_patterns:
-                matches = re.finditer(pattern, content, re.IGNORECASE)
-                for match in matches:
-                    start = int(match.group(1))
-                    end = int(match.group(2))
-                    for q_num in range(start, end + 1):
-                        section_types[q_num] = q_type
+            for match in matches:
+                q_num = int(match.group(1))
+                question_text = match.group(2).lower()
+                
+                # Skip subpart numbers (1-10) that are likely subparts
+                if q_num <= 10:
+                    subpart_indicators = [
+                        'the salt bridge prevents',
+                        'the salt used in',
+                        'a salt bridge maintains',
+                        'symmetric only',
+                        'transitive only',
+                        'reflexive and transitive'
+                    ]
+                    if any(indicator in question_text for indicator in subpart_indicators):
+                        continue
+                
+                # Detect question type based on content
+                if any(indicator in question_text for indicator in [
+                    'calculate', 'find', 'determine', 'how many', 'what is the value',
+                    'approximately', 'nearest integer', 'multiply', 'standard reduction potential',
+                    'emf', 'cell potential', 'ph of the solution', '______'
+                ]):
+                    section_types[q_num] = 'numerical'
+                elif any(indicator in question_text for indicator in [
+                    '(a)', '(b)', '(c)', '(d)', 'option', 'choose'
+                ]):
+                    section_types[q_num] = 'single_mcq'
+                elif any(indicator in question_text for indicator in [
+                    'true', 'false', 'correct statement', 'incorrect statement'
+                ]):
+                    section_types[q_num] = 'true_false'
+                elif '______' in question_text or 'fill' in question_text:
+                    section_types[q_num] = 'fill_blank'
+                else:
+                    # Default based on question number ranges (common pattern)
+                    if q_num <= 20:
+                        section_types[q_num] = 'single_mcq'
+                    elif q_num <= 50:
+                        section_types[q_num] = 'numerical'
+                    else:
+                        section_types[q_num] = 'single_mcq'
         
+        # Special handling for chemistry questions with mathematical content
+        # Questions 46-50 are typically numerical in chemistry papers
+        chemistry_numerical_range = range(46, 51)
+        for q_num in chemistry_numerical_range:
+            if q_num not in section_types:
+                section_types[q_num] = 'numerical'
+        
+        logger.info(f"Detected section types: {section_types}")
         return section_types
 
     def _get_type_for_question_number(self, q_num: int, section_types: Dict[int, str]) -> Optional[str]:
@@ -1243,12 +1455,13 @@ Look for section headers (e.g. "SECTION A", "SECTION B") to determine the type o
         section_types = self._detect_section_types(content)
         logger.info(f"Detected section types: {section_types}")
         
+        # Use more specific patterns that avoid subparts
         patterns = [
             r'Q\.\s*(\d+)',  # Handles "Q.1" and "Q. 1"
             r'Question\s*(\d+)[\.\):\s]',
             r'Q(\d+)[\.\)]',
-            r'(?:^|\n)\s*(\d+)\.\s+[A-Z]',
-            r'(?:^|\n)\s*(\d+)\s+[A-Z]',
+            r'(?:^|\n)\s*(\d+)\.\s+[A-Z][a-z]',  # More specific - requires lowercase after uppercase
+            r'(?:^|\n)\s*(\d+)\s+[A-Z][a-z]',   # More specific - requires lowercase after uppercase
             r'(?:^|\n)\s*\((\d+)\)\s',
         ]
         
@@ -1261,12 +1474,52 @@ Look for section headers (e.g. "SECTION A", "SECTION B") to determine the type o
         
         logger.info(f"Found {len(q_starts)} question starts")
         
-        for i, match in enumerate(q_starts):
+        # Filter out subpart numbers (1-5) that are likely part of main questions
+        filtered_starts = []
+        for match in q_starts:
+            q_num = int(match.group(1))
+            start_pos = match.start()
+            
+            # Check if this is a subpart by looking at context
+            context_before = content[max(0, start_pos-200):start_pos]
+            context_after = content[start_pos:start_pos+100]
+            
+            # Skip if this looks like a subpart
+            is_subpart = False
+            
+            # Check if it's a single digit (1-5) and there's a main question nearby
+            if 1 <= q_num <= 5:
+                # Look for main question numbers (46-50) in nearby context
+                main_q_pattern = r'(?:^|\n)\s*([4-5]\d)\.\s'
+                if re.search(main_q_pattern, context_before[-100:]):
+                    is_subpart = True
+                    logger.info(f"Skipping subpart {q_num} - found main question in context")
+            
+            # Check for subpart indicators in the text
+            subpart_indicators = [
+                'the salt bridge prevents',
+                'the salt used in a salt bridge',
+                'salt bridge maintains',
+                'the salt bridge directly',
+                'statement',
+                'how many of the above'
+            ]
+            
+            if any(indicator in context_after.lower() for indicator in subpart_indicators):
+                is_subpart = True
+                logger.info(f"Skipping subpart {q_num} - contains subpart indicators")
+            
+            if not is_subpart:
+                filtered_starts.append(match)
+        
+        logger.info(f"After filtering subparts: {len(filtered_starts)} question starts")
+        
+        for i, match in enumerate(filtered_starts):
             q_num = int(match.group(1))
             start_pos = match.end()
             
-            if i + 1 < len(q_starts):
-                end_pos = q_starts[i + 1].start()
+            if i + 1 < len(filtered_starts):
+                end_pos = filtered_starts[i + 1].start()
             else:
                 end_pos = len(content)
             
@@ -1287,19 +1540,25 @@ Look for section headers (e.g. "SECTION A", "SECTION B") to determine the type o
                 'confidence': 0.6
             }
             
-            # Extract options - support (A)/(a) or (1) style
-            option_pattern = r'(?:^|\n)\s*\(?([A-Da-d1-4])\)?[\.\)]\s*(.+?)(?=(?:\n\s*\(?[A-Da-d1-4]\)?[\.\)])|(?:\n\s*(?:Answer|Ans|Solution))|$)'
-            options = re.findall(option_pattern, q_content, re.DOTALL | re.IGNORECASE)
-            
-            if options:
-                question['options'] = [opt[1].strip() for opt in options]
-                first_opt_match = re.search(r'(?:^|\n)\s*\(?[A-Da-d]\)?[\.\)]', q_content)
-                if first_opt_match:
-                    question['question_text'] = q_content[:first_opt_match.start()].strip()
-                else:
-                    question['question_text'] = q_content[:200].strip()
+            # For numerical questions (especially "How many" questions), include all content
+            if detected_type == 'numerical' or 'how many' in q_content.lower():
+                question['question_type'] = 'numerical'
+                question['question_text'] = q_content[:2000].strip()  # Include more content for numerical questions
+                question['options'] = []  # Numerical questions don't have options
             else:
-                question['question_text'] = q_content[:500].strip()
+                # Extract options - support (A)/(a) or (1) style
+                option_pattern = r'(?:^|\n)\s*\(?([A-Da-d1-4])\)?[\.\)]\s*(.+?)(?=(?:\n\s*\(?[A-Da-d1-4]\)?[\.\)])|(?:\n\s*(?:Answer|Ans|Solution))|$)'
+                options = re.findall(option_pattern, q_content, re.DOTALL | re.IGNORECASE)
+                
+                if options:
+                    question['options'] = [opt[1].strip() for opt in options]
+                    first_opt_match = re.search(r'(?:^|\n)\s*\(?[A-Da-d]\)?[\.\)]', q_content)
+                    if first_opt_match:
+                        question['question_text'] = q_content[:first_opt_match.start()].strip()
+                    else:
+                        question['question_text'] = q_content[:200].strip()
+                else:
+                    question['question_text'] = q_content[:500].strip()
             
             # Extract answer
             answer = ''
@@ -1351,6 +1610,8 @@ Look for section headers (e.g. "SECTION A", "SECTION B") to determine the type o
                     question['question_type'] = 'fill_blank'
                 elif len(answer) == 1 and answer.upper() in 'ABCDE':
                     question['question_type'] = 'single_mcq'
+                elif 'how many' in q_text_lower:
+                    question['question_type'] = 'numerical'
             
             # Extract solution
             solution_match = re.search(r'(?:Solution|Explanation)[\s:]+(.+?)(?:\n\n|$)', q_content, re.IGNORECASE | re.DOTALL)

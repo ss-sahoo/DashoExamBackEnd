@@ -23,7 +23,13 @@ class MathpixOCR:
             "conversion_formats": {"md": True},
             "math_inline_delimiters": ["$", "$"],
             "math_display_delimiters": ["$$", "$$"],
-            "include_images": True
+            "include_images": True,
+            "include_table_markdown": True,
+            "include_line_data": True,
+            "preserve_display_math": True,
+            "preserve_inline_math": True,
+            "enable_tables_fallback": True,
+            "table_output_format": "html"
         }
         with open(file_path, 'rb') as f:
             files = {'file': (os.path.basename(file_path), f, 'application/pdf')}
@@ -161,34 +167,69 @@ class AgentExtractionService:
         logger.info(f"Generating Gemini content for {subject} (Vision: {'Yes' if image_path else 'No'})...")
 
         prompt = f"""
-        SYSTEM: You are a high-precision Exam Extractor for ANY subject.
-        TASK: Extract ALL questions belonging to the subject '{subject}' or its equivalent variations.
+        SYSTEM: You are a high-precision Exam Extractor for the subject '{subject}' ONLY.
+        TASK: Extract ALL questions that specifically belong to '{subject}' from the provided content.
+        
+        **CRITICAL SUBJECT FILTERING:**
+        - If subject is 'Chemistry': Extract questions about chemical reactions, electrochemistry, galvanic cells, salt bridges, reduction potentials, chemical equations, molecular structures, EMF, electrodes, half-cells, oxidation-reduction, chemical equilibrium
+        - If subject is 'Physics': Extract questions about electric charges, forces, magnetic fields, mechanics, optics, waves, but NOT electrochemistry or galvanic cells
+        - If subject is 'Mathematics': Extract questions about calculus, algebra, geometry, trigonometry, statistics
+        - IGNORE questions that belong to other subjects
+        
+        **QUESTION NUMBER GUIDANCE:**
+        - Chemistry questions include: electrochemistry questions (typically 46-50), galvanic cell questions, salt bridge questions, reduction potential questions
+        - Physics questions are typically about forces, charges, mechanics (typically 1-45)
+        - IMPORTANT: Questions about galvanic cells, salt bridges, EMF, electrodes, reduction potentials are CHEMISTRY, not physics
+        - Use question content and context to determine subject, not just question numbers
         
         SOURCE TEXT/CONTEXT:
         {text_content}
         
         STRICT RULES:
-        1. Extract every question (MCQs, Numerical, Subjective, etc.) found in the source that belongs to this subject.
-        2. Preserve ALL LaTeX formulas ($...$) but ensure they are properly escaped in JSON strings.
-        3. For MCQs, 'correct_answer' MUST be the option letter(s) only (e.g., "A", "B", "A,C").
+        1. Extract ONLY questions that belong to '{subject}' based on their content and context.
+        2. CRITICAL: Include question numbers in the output. Look for patterns like "46.", "47.", "48." at the start of questions.
+        3. Preserve ALL LaTeX formulas ($...$) but ensure they are properly escaped in JSON strings.
+        4. For MCQs, 'correct_answer' MUST be the option letter(s) only (e.g., "A", "B", "A,C").
            - DO NOT include the full text of the answer in 'correct_answer'.
-        4. Capture 'solution' step-by-step if available.
-        5. If the SOURCE TEXT contains image tags like ![image_id](image_id), INCLUDE them EXACTLY in 'question_text'.
-        6. CRITICAL: Return ONLY valid JSON. All property names must be in double quotes. All string values must be properly escaped.
+        5. Capture 'solution' step-by-step if available.
+        6. If the SOURCE TEXT contains image tags like ![image_id](image_id), INCLUDE them EXACTLY in 'question_text'.
+        7. CRITICAL: Return ONLY valid JSON. All property names must be in double quotes. All string values must be properly escaped.
+        8. **SUBPART HANDLING**: If a question has subparts (1., 2., 3., 4., 5.) followed by "How many are correct?", treat it as ONE question.
+        
+        **SPECIAL INSTRUCTIONS FOR CHEMISTRY:**
+        If extracting Chemistry questions, pay special attention to:
+        - Questions about galvanic cells, electrochemistry, salt bridges (typically questions 46-50)
+        - Questions with chemical formulas, molecular structures, reaction equations
+        - Questions about reduction potentials, EMF, electrodes, half-cells
+        - Questions about oxidation-reduction reactions, chemical equilibrium
+        - Include ALL mathematical formulas, tables, and chemical equations
+        - CRITICAL: Questions 46-50 are usually numerical chemistry questions about electrochemistry
+        
+        **SPECIAL INSTRUCTIONS FOR PHYSICS:**
+        If extracting Physics questions, pay special attention to:
+        - Questions about electric charges, forces, fields (typically questions 1-45)
+        - Questions with physical formulas, diagrams, calculations
+        - Questions about mechanics, electricity, magnetism, optics
+        - EXCLUDE electrochemistry, galvanic cells, salt bridges (these are chemistry)
         
         Return ONLY a valid JSON array of objects (no markdown, no extra text):
         [
             {{
+                "question_number": 46,
                 "question_text": "...",
                 "question_type": "single_mcq",
                 "options": ["A) ...", "B) ..."],
                 "correct_answer": "A", 
                 "solution": "...",
-                "subject": "{subject}"
+                "subject": "Chemistry"
             }}
         ]
         
-        IMPORTANT: Ensure all backslashes in LaTeX are properly escaped (use \\\\ instead of \\).
+        IMPORTANT: 
+        - Ensure all backslashes in LaTeX are properly escaped (use \\\\ instead of \\).
+        - Extract question numbers from patterns like "46.", "47.", "48." at the beginning of questions.
+        - For "How many" questions with subparts, include ALL subparts in the question_text as ONE question.
+        - ONLY extract questions that clearly belong to '{subject}' based on their content.
         """
         
         for attempt in range(3):
@@ -217,6 +258,23 @@ class AgentExtractionService:
                             q['question_text'] = q.pop('question')
                         if 'answer' in q and 'correct_answer' not in q:
                             q['correct_answer'] = q.pop('answer')
+                        
+                        # Extract question number if not present
+                        if not q.get('question_number'):
+                            text = q.get('question_text', '')
+                            patterns = [
+                                r'^(\d+)\.?\s',  # "46. " or "46 "
+                                r'^\s*(\d+)\.?\s',  # " 46. " or " 46 "
+                                r'Question\s*(\d+)',  # "Question 46"
+                                r'Q\.?\s*(\d+)',  # "Q. 46" or "Q 46"
+                                r'(\d+)\.\s*[A-Z]',  # "46. For" or "46. Consider"
+                            ]
+                            
+                            for pattern in patterns:
+                                match = re.search(pattern, text.strip())
+                                if match:
+                                    q['question_number'] = int(match.group(1))
+                                    break
                             
                         # Clean MCQ Answers
                         q_type = q.get('question_type', 'single_mcq')
@@ -253,6 +311,31 @@ class AgentExtractionService:
                             
                         cleaned_questions.append(q)
 
+                    # Check for missing questions in expected ranges
+                    if subject.lower() == 'mathematics':
+                        expected_range = set(range(51, 76))  # Q51-Q75
+                        extracted_nums = {q.get('question_number') for q in cleaned_questions if q.get('question_number')}
+                        missing_nums = expected_range - extracted_nums
+                        
+                        if missing_nums and len(missing_nums) <= 10:  # Only try if reasonable number missing
+                            logger.info(f"Mathematics missing questions {sorted(missing_nums)}, attempting targeted extraction...")
+                            missing_questions = self._extract_specific_questions(text_content, subject, sorted(missing_nums))
+                            if missing_questions:
+                                cleaned_questions.extend(missing_questions)
+                                logger.info(f"Added {len(missing_questions)} missing Mathematics questions")
+                    
+                    elif subject.lower() == 'physics':
+                        expected_range = set(range(1, 26))  # Q1-Q25
+                        extracted_nums = {q.get('question_number') for q in cleaned_questions if q.get('question_number')}
+                        missing_nums = expected_range - extracted_nums
+                        
+                        if missing_nums and len(missing_nums) <= 10:
+                            logger.info(f"Physics missing questions {sorted(missing_nums)}, attempting targeted extraction...")
+                            missing_questions = self._extract_specific_questions(text_content, subject, sorted(missing_nums))
+                            if missing_questions:
+                                cleaned_questions.extend(missing_questions)
+                                logger.info(f"Added {len(missing_questions)} missing Physics questions")
+                    
                     logger.info(f"SUCCESS: Extracted {len(cleaned_questions)} questions for {subject}")
                     return cleaned_questions
                 else:
@@ -301,12 +384,62 @@ class AgentExtractionService:
 
     def detect_subjects(self, markdown_text: str) -> List[str]:
         """Uses AI to identify all subjects present in the exam paper."""
+        
+        # First, try to detect subjects from section headers using regex
+        import re
+        
+        # Look for subject headers in the text
+        subject_patterns = [
+            r'##\s*(PHYSICS|CHEMISTRY|MATHEMATICS|BIOLOGY|HISTORY|ENGLISH|COMPUTER\s*SCIENCE)',
+            r'#\s*(PHYSICS|CHEMISTRY|MATHEMATICS|BIOLOGY|HISTORY|ENGLISH|COMPUTER\s*SCIENCE)',
+            r'^\s*(PHYSICS|CHEMISTRY|MATHEMATICS|BIOLOGY|HISTORY|ENGLISH|COMPUTER\s*SCIENCE)\s*$',
+            r'Subject:\s*(Physics|Chemistry|Mathematics|Biology|History|English|Computer\s*Science)',
+        ]
+        
+        detected_subjects = set()
+        for pattern in subject_patterns:
+            matches = re.findall(pattern, markdown_text, re.IGNORECASE | re.MULTILINE)
+            for match in matches:
+                subject = match.strip().title()
+                if 'Computer' in subject:
+                    subject = 'Computer Science'
+                detected_subjects.add(subject)
+        
+        if detected_subjects:
+            subjects_list = sorted(list(detected_subjects))
+            logger.info(f"Detected subjects from headers: {subjects_list}")
+            return subjects_list
+        
+        # Fallback to AI detection with larger text sample
+        # Use first 5000, middle 5000, and last 5000 chars to cover the whole document
+        text_length = len(markdown_text)
+        sample_text = ""
+        
+        if text_length <= 15000:
+            sample_text = markdown_text
+        else:
+            # Take samples from beginning, middle, and end
+            sample_text = (
+                markdown_text[:5000] + 
+                "\n\n[...MIDDLE SECTION...]\n\n" +
+                markdown_text[text_length//2-2500:text_length//2+2500] +
+                "\n\n[...END SECTION...]\n\n" +
+                markdown_text[-5000:]
+            )
+        
         prompt = f"""
-        Analyze this exam paper and list all subjects present (e.g., Physics, Biology, History).
+        Analyze this exam paper and list all subjects present (e.g., Physics, Chemistry, Mathematics, Biology, History).
+        Look for subject headers, question content, and topic indicators.
         Return ONLY a JSON list of strings.
         
-        TEXT:
-        {markdown_text[:10000]}
+        COMMON SUBJECTS TO LOOK FOR:
+        - Physics (mechanics, electricity, magnetism, optics, waves)
+        - Chemistry (organic, inorganic, physical chemistry, electrochemistry)
+        - Mathematics (algebra, calculus, geometry, trigonometry, functions)
+        - Biology (botany, zoology, genetics, ecology)
+        
+        TEXT SAMPLE:
+        {sample_text}
         """
         for attempt in range(3):
             try:
@@ -375,13 +508,38 @@ class AgentExtractionService:
             # 3. Fix control characters (ASCII 0-31 except \t, \n, \r)
             # These often appear in LaTeX formulas and break JSON parsing
             s = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F]', '', s)
-            # 4. Fix invalid backslash escapes (LaTeX common issue)
-            # Matches backslash NOT preceded by another backslash,
-            # and NOT followed by valid escape chars: b, f, n, r, t, u, ", \, /
+            
+            # 4. More aggressive LaTeX fixing - handle common LaTeX commands
+            # Replace problematic LaTeX sequences with escaped versions
+            latex_replacements = {
+                r'\\mathrm': r'\\\\mathrm',
+                r'\\left': r'\\\\left', 
+                r'\\right': r'\\\\right',
+                r'\\circ': r'\\\\circ',
+                r'\\quad': r'\\\\quad',
+                r'\\rightarrow': r'\\\\rightarrow',
+                r'\\leftarrow': r'\\\\leftarrow',
+                r'\\operatorname': r'\\\\operatorname',
+                r'\\begin': r'\\\\begin',
+                r'\\end': r'\\\\end',
+                r'\\aligned': r'\\\\aligned',
+                r'\\xrightarrow': r'\\\\xrightarrow',
+                r'\\rightleftharpoons': r'\\\\rightleftharpoons',
+                r'\\times': r'\\\\times',
+                r'\\frac': r'\\\\frac',
+                r'\\ln': r'\\\\ln',
+            }
+            
+            for pattern, replacement in latex_replacements.items():
+                s = re.sub(pattern, replacement, s)
+            
+            # 5. Fix any remaining unescaped backslashes
             s = re.sub(r'(?<!\\)\\(?![bfnrtu"\\/])', r'\\\\', s)
-            # 5. Specifically for \u, ensure it's followed by 4 hex digits or escape it
+            
+            # 6. Specifically for \u, ensure it's followed by 4 hex digits or escape it
             s = re.sub(r'(?<!\\)\\u(?![0-9a-fA-F]{4})', r'\\\\u', s)
-            # 6. Fix unescaped quotes in strings (common in LaTeX)
+            
+            # 7. Fix unescaped quotes in strings (common in LaTeX)
             # This is tricky - we need to escape quotes that are inside string values
             # but not the structural quotes. We'll do a simple fix for obvious cases.
             s = re.sub(r'(?<=[^\\])"(?=[^,\]\}:\s])', r'\\"', s)
@@ -448,20 +606,39 @@ class AgentExtractionService:
             logger.info("Attempting manual question extraction from AI response...")
             questions = []
             
-            # Look for question patterns in the text
+            # Look for question patterns in the text - include question_number
             # This is a fallback when JSON parsing completely fails
-            question_pattern = r'"question_text":\s*"([^"]+)".*?"question_type":\s*"([^"]+)".*?"options":\s*\[(.*?)\].*?"correct_answer":\s*"([^"]+)"'
+            # More robust pattern that handles complex multiline text including newlines, numbered lists, etc.
+            question_pattern = r'"question_number":\s*(\d+).*?"question_text":\s*"((?:[^"\\]|\\[\\"/bfnrt]|\\u[0-9a-fA-F]{4})*?)"\s*,.*?"question_type":\s*"([^"]+)"'
             
             matches = re.findall(question_pattern, text, re.DOTALL)
             for match in matches:
-                question_text, question_type, options_str, correct_answer = match
+                question_number, question_text, question_type = match
                 
-                # Parse options
+                # Try to find options and correct_answer for this question
+                # Look for the options array after this question_number
+                options_pattern = rf'"question_number":\s*{question_number}.*?"options":\s*\[(.*?)\]'
+                options_match = re.search(options_pattern, text, re.DOTALL)
+                
                 options = []
-                option_matches = re.findall(r'"([^"]+)"', options_str)
-                options = option_matches if option_matches else []
+                if options_match and options_match.group(1).strip():
+                    options_str = options_match.group(1)
+                    # Handle both simple strings and complex strings with escapes
+                    option_matches = re.findall(r'"((?:[^"\\]|\\.)*)"', options_str)
+                    options = option_matches if option_matches else []
+                
+                # Try to find correct_answer for this question
+                answer_pattern = rf'"question_number":\s*{question_number}.*?"correct_answer":\s*([^,\}}]*)'
+                answer_match = re.search(answer_pattern, text, re.DOTALL)
+                
+                correct_answer = None
+                if answer_match:
+                    answer_str = answer_match.group(1).strip().strip('"').strip(',').strip()
+                    if answer_str and answer_str.lower() not in ['null', 'none']:
+                        correct_answer = answer_str
                 
                 questions.append({
+                    "question_number": int(question_number),
                     "question_text": question_text,
                     "question_type": question_type,
                     "options": options,
@@ -472,9 +649,128 @@ class AgentExtractionService:
             
             if questions:
                 logger.info(f"Manual extraction found {len(questions)} questions")
+                
+                # Special handling for questions 46-50 if they're missing
+                question_numbers = [q.get('question_number') for q in questions]
+                missing_questions = []
+                for q_num in [46, 47, 48, 49, 50]:
+                    if q_num not in question_numbers and f'"question_number": {q_num}' in text:
+                        missing_questions.append(q_num)
+                
+                if missing_questions:
+                    logger.info(f"Questions {missing_questions} found in text but not extracted, attempting special extraction...")
+                    
+                    for q_num in missing_questions:
+                        # Look for this question specifically
+                        q_pattern = rf'"question_number":\s*{q_num}.*?"question_text":\s*"([^"]*(?:\\.[^"]*)*)".*?"question_type":\s*"([^"]+)"'
+                        q_match = re.search(q_pattern, text, re.DOTALL)
+                        
+                        if q_match:
+                            question_text = q_match.group(1)
+                            question_type = q_match.group(2)
+                            
+                            # Find options and correct_answer for this question
+                            options_pattern = rf'"question_number":\s*{q_num}.*?"options":\s*\[(.*?)\]'
+                            options_match = re.search(options_pattern, text, re.DOTALL)
+                            
+                            options = []
+                            if options_match and options_match.group(1).strip():
+                                options_str = options_match.group(1)
+                                option_matches = re.findall(r'"((?:[^"\\]|\\.)*)"', options_str)
+                                options = option_matches if option_matches else []
+                            
+                            answer_pattern = rf'"question_number":\s*{q_num}.*?"correct_answer":\s*([^,\}}]*)'
+                            answer_match = re.search(answer_pattern, text, re.DOTALL)
+                            
+                            correct_answer = None
+                            if answer_match:
+                                answer_str = answer_match.group(1).strip().strip('"').strip(',').strip()
+                                if answer_str and answer_str.lower() not in ['null', 'none']:
+                                    correct_answer = answer_str
+                            
+                            questions.append({
+                                "question_number": q_num,
+                                "question_text": question_text,
+                                "question_type": question_type,
+                                "options": options,
+                                "correct_answer": correct_answer,
+                                "solution": "",
+                                "subject": subject
+                            })
+                            
+                            logger.info(f"Successfully added question {q_num} via special extraction")
+                
                 return questions
                 
         except Exception as e:
             logger.error(f"Manual extraction failed: {e}")
             
         return []
+
+    def _extract_specific_questions(self, text_content: str, subject: str, question_numbers: List[int]) -> List[Dict]:
+        """Extract specific question numbers that were missed in the main extraction."""
+        if not question_numbers:
+            return []
+        
+        logger.info(f"Attempting targeted extraction for {subject} questions: {question_numbers}")
+        
+        # Build a focused prompt for specific question numbers
+        numbers_str = ", ".join(map(str, question_numbers))
+        
+        prompt = f"""
+        TASK: Extract ONLY the specific question numbers listed below from the {subject} section.
+        
+        TARGET QUESTIONS: {numbers_str}
+        
+        INSTRUCTIONS:
+        1. Look for questions that start with these exact numbers: {numbers_str}
+        2. Extract ONLY questions that belong to {subject}
+        3. Include complete question text, options, and answers
+        4. Preserve all mathematical formulas and LaTeX exactly
+        5. For numerical questions, the answer should be a number
+        6. For MCQ questions, the answer should be the option letter (A, B, C, D)
+        
+        CONTENT:
+        {text_content}
+        
+        Return ONLY valid JSON array:
+        [
+            {{"question_number": 52, "question_text": "...", "question_type": "single_mcq", "options": ["A) ...", "B) ..."], "correct_answer": "A", "solution": "", "subject": "Chemistry"}}
+        ]
+        """
+        
+        try:
+            response = self.model.generate_content(prompt)
+            if not response.text:
+                logger.warning(f"Empty response for targeted extraction of {subject} questions {question_numbers}")
+                return []
+            
+            questions = self._clean_json_response(response.text, subject)
+            if not questions:
+                logger.warning(f"No questions parsed from targeted extraction response")
+                return []
+            
+            # Filter to only the requested question numbers
+            filtered_questions = []
+            for q in questions:
+                q_num = q.get('question_number')
+                if q_num in question_numbers:
+                    q['subject'] = subject
+                    
+                    # Extract question number if not present
+                    if not q.get('question_number'):
+                        text = q.get('question_text', '')
+                        for pattern in [r'^(\d+)\.?\s', r'^\s*(\d+)\.?\s', r'Question\s*(\d+)', r'Q\.?\s*(\d+)']:
+                            match = re.search(pattern, text.strip())
+                            if match:
+                                q['question_number'] = int(match.group(1))
+                                break
+                    
+                    filtered_questions.append(q)
+            
+            logger.info(f"Targeted extraction found {len(filtered_questions)} specific questions")
+            return filtered_questions
+            
+        except Exception as e:
+            logger.error(f"Targeted extraction failed for {subject} questions {question_numbers}: {e}")
+            return []

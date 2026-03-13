@@ -983,7 +983,7 @@ For **subjective** questions, you MUST separate the question from the answer.
                 question_range = section.get('question_range', '')
                 section_hints += f"- {section.get('name', 'Section')}: {section_type} ({question_range})\n"
         
-        prompt = f"""URGENT: Previous extraction missed questions. You MUST extract ALL questions from this document.
+        prompt = """URGENT: Previous extraction missed questions. You MUST extract ALL questions from this document.
 
 ## TASK
 Extract EVERY question from this document. There are approximately {expected_count} questions.
@@ -1020,7 +1020,11 @@ Return JSON array with all questions:
 ## DOCUMENT:
 {text}
 
-## JSON OUTPUT (all questions):"""
+## JSON OUTPUT (all questions):""".format(
+            expected_count=expected_count,
+            section_hints=section_hints,
+            text=text
+        )
         
         return prompt
     def _call_gemini_text(self, prompt: str) -> str:
