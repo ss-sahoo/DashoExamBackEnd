@@ -2708,8 +2708,16 @@ def exam_results_dashboard(request, exam_id):
         return Response({'error': 'Exam not found'}, status=status.HTTP_404_NOT_FOUND)
     
     user = request.user
-    if not user.can_manage_exams() or exam.institute != user.institute:
+    
+    # Check basic permissions first
+    if not user.can_manage_exams():
         return Response({'error': 'Access denied'}, status=status.HTTP_403_FORBIDDEN)
+    
+    # Super admins can access exams from any institute
+    if user.role not in ['super_admin', 'SUPER_ADMIN']:
+        # Non-super admins are restricted to their own institute
+        if exam.institute != user.institute:
+            return Response({'error': 'Access denied'}, status=status.HTTP_403_FORBIDDEN)
     
     # Get query parameters
     search = request.GET.get('search', '')
