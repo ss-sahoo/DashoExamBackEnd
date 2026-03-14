@@ -72,12 +72,14 @@ class AgentExtractionService:
         self.mathpix = MathpixOCR(mathpix_id, mathpix_key) if mathpix_id else None
         self.gemini_key = gemini_key
 
-    def run_full_pipeline(self, pdf_path: str, subjects_to_process: Optional[List[str]] = None, separated_content: Optional[Dict[str, str]] = None) -> List[Dict]:
+    def run_full_pipeline(self, pdf_path: str, subjects_to_process: Optional[List[str]] = None, separated_content: Optional[Dict[str, str]] = None, exam_mode: Optional[str] = None) -> List[Dict]:
         """
-        The 'Subject-Agnostic' Strategy. 
+        The 'Subject-Agnostic' Strategy.
         If subjects are not provided, it will first detect them automatically.
         If separated_content is provided, it uses that instead of full markdown for each subject.
+        exam_mode: 'online', 'offline_omr', 'offline_subjective' — controls post-processing.
         """
+        self._exam_mode = exam_mode
         full_markdown = ""
         is_image = os.path.splitext(pdf_path)[1].lower() in ['.jpg', '.jpeg', '.png']
         
@@ -304,11 +306,14 @@ class AgentExtractionService:
                             
                             if found_opt:
                                 q['correct_answer'] = found_opt
-                        
+                
                         # Process images for this question
                         if self.mathpix:
                             q['images_data'] = self._process_images(q.get('question_text', ''), q.get('solution', ''))
-                            
+
+                        # Fix LaTeX double backslashes in math delimiters
+                        q = self._fix_latex_in_question(q)
+                        
                         cleaned_questions.append(q)
 
                     # Check for missing questions in expected ranges
@@ -493,6 +498,99 @@ class AgentExtractionService:
             'geo': 'geography',
         }
         return aliases.get(s, s)
+
+
+    def _fix_latex_in_question(self, question: Dict) -> Dict:
+        """
+        Apply all formatting fixes to a question dictionary.
+
+        Fixes applied:
+        1. Fix double backslashes in LaTeX commands inside math delimiters
+           (e.g. $ \\\\mu $ → $ \\mu $)
+        2. Convert Markdown images to HTML <img> tags (only for online mode)
+        3. Replace newlines outside math with <br> tags
+           (\\n\\n → ' <br> <br> ', \\n → ' <br> ')
+        4. Replace stray \\\\ outside math with <br>
+        """
+        if not question:
+            return question
+
+        exam_mode = getattr(self, '_exam_mode', None)
+
+        # ---------- helpers ----------
+
+        math_pattern = re.compile(
+            r'(\$\$.+?\$\$)'      # $$...$$
+            r'|(\\\[.+?\\\])'     # \[...\]
+            r'|(\$[^$]+?\$)',     # $...$
+            re.DOTALL
+        )
+
+        img_pattern = re.compile(r'!\[([^\]]*)\]\(([^)\n]+)\)')
+
+        def fix_latex_commands(text: str) -> str:
+            """Reduce \\\\cmd to \\cmd inside math regions"""
+            return re.sub(r'\\\\(?=\S)', r'\\', text)
+
+        def convert_images(text: str) -> str:
+            """Markdown image → HTML <img>"""
+            return img_pattern.sub(r'<img src=\2 alt=\1>', text)
+
+        def process_non_math(text: str) -> str:
+            """Replace newlines and stray \\\\ with <br> outside math"""
+            # Replace newlines first (longer pattern first)
+            text = text.replace('\n\n', ' <br> <br> ')
+            text = text.replace('\n', ' <br> ')
+            # Replace stray \\ (not part of a LaTeX command) with <br>
+            # \\  followed by space/end → <br>, but \alpha etc. are preserved
+            text = re.sub(r'\\\\(?![A-Za-z])', ' <br> ', text)
+            return text
+
+        def process_text(text: str) -> str:
+            """Main processing pipeline"""
+            if not text:
+                return text
+
+            # Step 1: Convert markdown images to HTML (before newline processing,
+            # so \\n around images also gets converted to <br>)
+            if exam_mode == 'online':
+                text = convert_images(text)
+
+            # Step 2: Split into math / non-math regions
+            parts = []
+            last = 0
+
+            for m in math_pattern.finditer(text):
+                # Non-math segment: replace newlines and stray \\ with <br>
+                non_math = text[last:m.start()]
+                parts.append(process_non_math(non_math))
+
+                # Math segment: fix double backslashes in commands
+                math_region = m.group(0)
+                math_region = fix_latex_commands(math_region)
+                parts.append(math_region)
+
+                last = m.end()
+
+            # Trailing non-math segment
+            trailing = text[last:]
+            parts.append(process_non_math(trailing))
+
+            return ''.join(parts)
+
+        # ---------- apply to question fields ----------
+
+        for key in ('question_text', 'solution'):
+            if key in question and isinstance(question[key], str):
+                question[key] = process_text(question[key])
+
+        if 'options' in question and isinstance(question['options'], list):
+            question['options'] = [
+                process_text(opt) if isinstance(opt, str) else opt
+                for opt in question['options']
+            ]
+
+        return question
 
     def _clean_json_response(self, text: str, subject: str = "Unknown") -> Any:
         """Extracts and parses JSON from a string that might contain other text."""

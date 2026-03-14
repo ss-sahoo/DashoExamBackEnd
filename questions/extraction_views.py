@@ -1300,39 +1300,7 @@ def confirm_pre_analysis(request, job_id):
             'extraction_job_id': str(extraction_job.id),
             'pre_analysis_job_id': str(job.id)
         }, status=status.HTTP_201_CREATED)
-        
-        # Also set the reverse link for backwards compatibility
-        job.extraction_job = extraction_job
-        job.save(update_fields=['extraction_job'])
-        
-        logger.info(
-            f"ExtractionJob {extraction_job.id} linked to PreAnalysisJob {job.id} "
-            f"with {len(job.subject_separated_content)} subjects"
-        )
-        
-        # Trigger extraction task
-        try:
-            if getattr(settings, 'CELERY_TASK_ALWAYS_EAGER', False):
-                extract_questions_task(str(extraction_job.id), use_v2=True)
-            else:
-                extract_questions_task.delay(str(extraction_job.id), use_v2=True)
-        except Exception as task_error:
-            logger.warning(f"Celery task failed, running synchronously: {task_error}")
-            from questions.services.extraction_pipeline_v2 import ExtractionPipelineV2
-            pipeline = ExtractionPipelineV2()
-            pipeline.process_file(extraction_job.id)
-        
-        logger.info(
-            f"Created extraction job {extraction_job.id} from pre-analysis {job.id}"
-        )
-        
-        return Response({
-            'success': True,
-            'message': 'Subject separation confirmed. Starting extraction...',
-            'extraction_job_id': str(extraction_job.id),
-            'pre_analysis_job_id': str(job.id)
-        }, status=status.HTTP_201_CREATED)
-        
+
     except Exception as e:
         logger.error(f"Failed to confirm pre-analysis: {str(e)}", exc_info=True)
         return Response(
@@ -1761,7 +1729,26 @@ def extract_questions_by_section(request):
                     }
                     all_questions.append(question_dict)
         
-        # Save Questions to DB
+        # 1. Initialize Agent Service
+        from questions.services.agent_extraction_service import AgentExtractionService
+        service = AgentExtractionService(
+            gemini_key=getattr(settings, 'GEMINI_API_KEY', ''),
+            mathpix_id=getattr(settings, 'MATHPIX_APP_ID', ''),
+            mathpix_key=getattr(settings, 'MATHPIX_APP_KEY', '')
+        )
+        
+        # 2. Run Extraction for the Subject
+        # Pass separated_content so it doesn't re-OCR
+        # Pass exam_mode so post-processing (e.g. image conversion) is mode-aware
+        exam_mode = getattr(job.pattern, 'exam_mode', None) if job.pattern else None
+        all_questions = service.run_full_pipeline(
+            job.file_path,
+            subjects_to_process=[subject],
+            separated_content=separated_content,
+            exam_mode=exam_mode
+        )
+        
+        # 3. Save Questions to DB
         saved_questions = []
         for q_data in all_questions:
             eq = ExtractedQuestion.objects.create(
