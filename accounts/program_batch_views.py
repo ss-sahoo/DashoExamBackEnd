@@ -489,10 +489,13 @@ def list_programs(request):
     """
     user = request.user
     center_name = request.query_params.get("center_name", "")
-    
+
+    from accounts.utils import get_current_db
+    current_db = get_current_db() or 'default'
+
     # Support both role formats
     if user.role in ['super_admin', 'SUPER_ADMIN']:
-        programs = Program.objects.all()
+        programs = Program.objects.using(current_db).all()
         if center_name:
             programs = programs.filter(center__name__icontains=center_name)
     elif user.role in ['admin', 'ADMIN', 'institute_admin']:
@@ -501,25 +504,33 @@ def list_programs(request):
                 {"detail": "Admin user is not linked to any center."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        # Programs are at Institute level; filter by user's center's institute
-        programs = Program.objects.filter(institute=user.center.institute)
+        programs = Program.objects.using(current_db).filter(institute_id=user.center.institute_id)
     else:
         return Response(
             {"detail": "Only Super Admin and Admin can view programs."},
             status=status.HTTP_403_FORBIDDEN,
         )
-    
-    programs = programs.select_related("institute").prefetch_related("batches").order_by("institute__name", "name")
-    
+
+    programs = programs.prefetch_related("batches").order_by("name")
+
+    # Pre-fetch institutes from default DB to avoid cross-DB FK lookups
+    from accounts.models import Institute, Center as CenterModel
+    inst_ids = list(programs.values_list('institute_id', flat=True).distinct())
+    center_ids = list(programs.values_list('center_id', flat=True).distinct())
+    institutes_map = {i.id: i for i in Institute.objects.using('default').filter(id__in=inst_ids)}
+    centers_map = {str(c.id): c for c in CenterModel.objects.using(current_db).filter(id__in=[c for c in center_ids if c])}
+
     programs_data = []
     for program in programs:
+        inst = institutes_map.get(program.institute_id)
+        ctr = centers_map.get(str(program.center_id)) if program.center_id else None
         programs_data.append({
             "id": str(program.id),
             "name": program.name,
-            "institute": program.institute.name,
-            "institute_id": str(program.institute.id),
-            "center": program.center.name if program.center else None,
-            "center_id": str(program.center.id) if program.center else None,
+            "institute": inst.name if inst else "",
+            "institute_id": str(program.institute_id),
+            "center": ctr.name if ctr else None,
+            "center_id": str(program.center_id) if program.center_id else None,
             "description": program.description,
             "category": program.category,
             "is_active": program.is_active,
