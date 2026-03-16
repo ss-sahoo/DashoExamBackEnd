@@ -135,18 +135,22 @@ def extract_questions_v3_task(self, job_id: str, subjects: list = None):
              subjects = service.detect_subjects(markdown_text)
         
         total_subjects = len(subjects) if subjects else 1
-        
+
+        # Get exam_mode from pattern for post-processing (e.g. image conversion)
+        exam_mode = getattr(job.pattern, 'exam_mode', None) if job.pattern else None
+
         raw_questions = []
         for idx, subj in enumerate(subjects):
             # Update progress per subject
             job.progress_percent = int((idx / total_subjects) * 90) + 10
             job.save()
-            
-            # Pass separated_content if available
+
+            # Pass separated_content and exam_mode
             subject_qs = service.run_full_pipeline(
-                job.file_path, 
+                job.file_path,
                 subjects_to_process=[subj],
-                separated_content=separated_content
+                separated_content=separated_content,
+                exam_mode=exam_mode
             )
             raw_questions.extend(subject_qs)
         
