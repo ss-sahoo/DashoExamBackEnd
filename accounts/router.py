@@ -44,20 +44,11 @@ class InstituteRouter:
 
     def allow_relation(self, obj1, obj2, **hints):
         """
-        Allow relations if both objects are in the same database.
-        Note: Django doesn't support cross-db foreign keys well.
+        Allow all relations including cross-db ones.
+        This system uses db_constraint=False for cross-db FKs so Django
+        handles them in application code rather than at DB level.
         """
-        db1 = self.db_for_read(obj1.__class__)
-        db2 = self.db_for_read(obj2.__class__)
-        
-        # If both are in the same DB, allow the relation
-        if db1 == db2:
-            return True
-        
-        # Cross-db relations are tricky. For 'Institute' and 'User' in 'default',
-        # we often need to allow relations from tenant DB models to them.
-        # But databases themselves usually don't support foreign keys across DBs.
-        return None
+        return True
 
     def allow_migrate(self, db, app_label, model_name=None, **hints):
         """
