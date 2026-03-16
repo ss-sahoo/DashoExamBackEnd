@@ -46,17 +46,18 @@ def assign_center_to_admin(request):
             # Try by email
             admin_user = User.objects.get(email=user_id)
         
-        # Get the center
+        # Get the center - use tenant DB
+        from accounts.utils import get_current_db
+        current_db = get_current_db() or 'default'
         try:
-            center = Center.objects.get(id=center_id)
+            center = Center.objects.using(current_db).get(id=center_id)
         except (Center.DoesNotExist, ValueError):
-            # Try by name
-            center = Center.objects.get(name=center_id)
+            center = Center.objects.using(current_db).get(name=center_id)
         
         # Check if the user role is valid for center assignment
-        # Allow admins, teachers, and students to be assigned to centers
-        valid_roles = ['admin', 'institute_admin', 'center_admin', 'teacher', 'student']
-        if admin_user.role.lower() not in valid_roles:
+        # Allow all roles except system-level ones
+        invalid_roles = []  # Allow all roles to be assigned to centers
+        if admin_user.role.lower() in invalid_roles:
             return Response(
                 {'error': f'User {admin_user.email} cannot be assigned to a center (current role: {admin_user.role})'},
                 status=status.HTTP_400_BAD_REQUEST
