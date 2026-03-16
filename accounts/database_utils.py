@@ -13,14 +13,21 @@ def register_institute_database(institute):
     db_key = institute.db_name
     
     if db_key not in settings.DATABASES:
-        # Create the configuration
+        default_db = settings.DATABASES['default']
+        # Create the configuration, inheriting all options from default DB
         db_config = {
             'ENGINE': 'django.db.backends.postgresql',
             'NAME': institute.db_name,
-            'USER': institute.db_user or settings.DATABASES['default'].get('USER'),
-            'PASSWORD': institute.db_password or settings.DATABASES['default'].get('PASSWORD'),
-            'HOST': institute.db_host or settings.DATABASES['default'].get('HOST'),
-            'PORT': institute.db_port or settings.DATABASES['default'].get('PORT'),
+            'USER': institute.db_user or default_db.get('USER'),
+            'PASSWORD': institute.db_password or default_db.get('PASSWORD'),
+            'HOST': institute.db_host or default_db.get('HOST'),
+            'PORT': institute.db_port or default_db.get('PORT'),
+            'TIME_ZONE': default_db.get('TIME_ZONE', None),
+            'CONN_MAX_AGE': default_db.get('CONN_MAX_AGE', 0),
+            'OPTIONS': default_db.get('OPTIONS', {}),
+            'ATOMIC_REQUESTS': default_db.get('ATOMIC_REQUESTS', False),
+            'AUTOCOMMIT': default_db.get('AUTOCOMMIT', True),
+            'TEST': default_db.get('TEST', {}),
         }
         
         # Inject into settings (this is not standard but works for dynamic routing)
