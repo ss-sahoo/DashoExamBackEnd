@@ -399,3 +399,27 @@ EXTRACTION_FILE_EXTENSIONS = ['.txt', '.docx', '.doc', '.pdf', '.jpg', '.jpeg', 
 # Typically running on port 8020
 EXTRACTION_SERVICE_URL = os.getenv('EXTRACTION_SERVICE_URL', 'http://localhost:8020')
 EXTRACTION_SERVICE_API_KEY = os.getenv('EXTRACTION_SERVICE_API_KEY', '')
+
+# ===========================
+# Pre-load all institute tenant databases at startup
+# ===========================
+try:
+    from django.db import connection
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT db_name, db_user, db_password, db_host, db_port FROM accounts_institute WHERE db_name IS NOT NULL AND db_name != ''")
+        rows = cursor.fetchall()
+        for db_name, db_user, db_password, db_host, db_port in rows:
+            if db_name and db_name not in DATABASES:
+                tenant_cfg = dict(DATABASES['default'])
+                tenant_cfg['NAME'] = db_name
+                if db_user:
+                    tenant_cfg['USER'] = db_user
+                if db_password:
+                    tenant_cfg['PASSWORD'] = db_password
+                if db_host:
+                    tenant_cfg['HOST'] = db_host
+                if db_port:
+                    tenant_cfg['PORT'] = db_port
+                DATABASES[db_name] = tenant_cfg
+except Exception:
+    pass  # DB may not be ready yet (first migration)
