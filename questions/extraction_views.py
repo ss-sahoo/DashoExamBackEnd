@@ -358,11 +358,13 @@ class ExtractionJobViewSet(viewsets.ModelViewSet):
     def get_status(self, request, pk=None):
         """
         Get extraction job status
-        
+
         GET /api/questions/extraction-jobs/{job_id}/status/
         """
         try:
-            job = self.get_object()
+            from accounts.utils import get_current_db
+            current_db = get_current_db() or 'default'
+            job = ExtractionJob.objects.using(current_db).get(id=pk)
             
             # Calculate estimated time remaining
             estimated_time = None
