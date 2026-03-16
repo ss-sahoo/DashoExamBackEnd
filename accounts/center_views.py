@@ -148,8 +148,12 @@ def list_centers(request):
     """
     user = request.user
     
-    # Base queryset
-    centers = Center.objects.select_related('institute').all()
+    # Get the correct DB for this user's institute
+    from accounts.utils import get_current_db
+    current_db = get_current_db() or 'default'
+
+    # Base queryset - use explicit DB and avoid cross-DB select_related
+    centers = Center.objects.using(current_db).all()
     
     # Filter by role - Admins see only their center, Super Admins see all
     if user.role in ['admin', 'ADMIN', 'institute_admin'] and user.center:
@@ -174,24 +178,30 @@ def list_centers(request):
         centers = centers.filter(name__icontains=search)
     
     # Serialize
+    # Pre-fetch institutes from default DB to avoid cross-DB FK lookups
+    institute_ids = list(centers.values_list('institute_id', flat=True).distinct())
+    from accounts.models import Institute
+    institutes_map = {i.id: i for i in Institute.objects.using('default').filter(id__in=institute_ids)}
+
     centers_data = []
     for center in centers:
         # Count admins for this center (exclude super admins)
-        admin_count = User.objects.filter(
-            center=center,
+        admin_count = User.objects.using('default').filter(
+            center_id=center.id,
             role__in=['admin', 'ADMIN', 'institute_admin']
         ).exclude(
             role__in=['super_admin', 'SUPER_ADMIN']
         ).count()
-        
+
+        inst = institutes_map.get(center.institute_id)
         centers_data.append({
             "id": str(center.id),
             "name": center.name,
             "city": center.city,
             "address": center.address,
             "institute": {
-                "id": center.institute.id,
-                "name": center.institute.name,
+                "id": inst.id if inst else center.institute_id,
+                "name": inst.name if inst else "",
             },
             "admin_count": admin_count,
             "created_at": center.created_at.isoformat() if hasattr(center, 'created_at') else None,
