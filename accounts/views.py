@@ -29,10 +29,10 @@ def user_registration_view(request):
     """User registration - no institute required"""
     serializer = UserRegistrationSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
-    
+
     with transaction.atomic():
         user = serializer.save()
-        
+
         # Log activity
         from .utils import log_activity
         log_activity(
@@ -45,14 +45,23 @@ def user_registration_view(request):
             request=request
         ) if user.institute else None
 
-        tokens = get_tokens_for_user(user)
-        
-        return Response({
-            'user': UserSerializer(user).data,
-            'access': tokens['access'],
-            'refresh': tokens['refresh'],
-            'message': 'User registered successfully'
-        }, status=status.HTTP_201_CREATED)
+    # Send credentials email outside transaction so email failure doesn't rollback user creation
+    try:
+        plain_password = request.data.get('password')
+        if plain_password and user.email and '@temp.com' not in user.email:
+            from .utils import send_credentials_email
+            send_credentials_email(user, plain_password)
+    except Exception:
+        pass  # Never fail registration due to email issues
+
+    tokens = get_tokens_for_user(user)
+
+    return Response({
+        'user': UserSerializer(user).data,
+        'access': tokens['access'],
+        'refresh': tokens['refresh'],
+        'message': 'User registered successfully'
+    }, status=status.HTTP_201_CREATED)
 
 
 @api_view(['POST'])
