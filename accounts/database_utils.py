@@ -14,15 +14,18 @@ def register_institute_database(institute):
     
     if db_key not in settings.DATABASES:
         default_db = settings.DATABASES['default']
-        # Only include keys that are universally supported across Django versions
-        db_config = {
-            'ENGINE': 'django.db.backends.postgresql',
-            'NAME': institute.db_name,
-            'USER': institute.db_user or default_db.get('USER'),
-            'PASSWORD': institute.db_password or default_db.get('PASSWORD'),
-            'HOST': institute.db_host or default_db.get('HOST'),
-            'PORT': institute.db_port or default_db.get('PORT'),
-        }
+        # Start with all keys from default (Django 4.2 requires specific keys like CONN_HEALTH_CHECKS)
+        db_config = dict(default_db)
+        # Override with tenant-specific values
+        db_config['NAME'] = institute.db_name
+        if institute.db_user:
+            db_config['USER'] = institute.db_user
+        if institute.db_password:
+            db_config['PASSWORD'] = institute.db_password
+        if institute.db_host:
+            db_config['HOST'] = institute.db_host
+        if institute.db_port:
+            db_config['PORT'] = institute.db_port
         
         # Inject into settings (this is not standard but works for dynamic routing)
         settings.DATABASES[db_key] = db_config
