@@ -116,17 +116,30 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
         institute_id = validated_data.pop('institute_id', None)
         center_id = validated_data.pop('center_id', None)
         role = validated_data.pop('role', 'student')  # Default to student (lowercase) if not provided
-        
+
         # ALWAYS normalize role to lowercase to prevent uppercase roles
         role = role.lower() if role else 'student'
-        
+
+        # Resolve center object from tenant DB to avoid cross-DB FK issues
+        center = None
+        if center_id:
+            try:
+                from accounts.utils import get_current_db
+                from accounts.models import Center
+                current_db = get_current_db() or 'default'
+                center = Center.objects.using(current_db).get(id=center_id)
+            except Exception:
+                center = None
+
         # Create user with institute, center and role
         user = User.objects.create_user(
             **validated_data,
             institute_id=institute_id,
-            center_id=center_id,
             role=role
         )
+        if center:
+            user.center = center
+            user.save()
         return user
 
 
