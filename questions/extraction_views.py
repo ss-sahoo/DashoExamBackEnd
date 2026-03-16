@@ -44,9 +44,11 @@ class ExtractionJobViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         """Get extraction jobs for current user"""
         user = self.request.user
-        
+        from accounts.utils import get_current_db
+        current_db = get_current_db() or 'default'
+
         # Filter by user's institute
-        queryset = ExtractionJob.objects.filter(
+        queryset = ExtractionJob.objects.using(current_db).filter(
             exam__institute=user.institute
         ).select_related('exam', 'pattern', 'created_by')
         
