@@ -1693,10 +1693,12 @@ def extract_questions_by_section(request):
                 mathpix_id=getattr(settings, 'MATHPIX_APP_ID', ''),
                 mathpix_key=getattr(settings, 'MATHPIX_APP_KEY', '')
             )
+            exam_mode = getattr(job.pattern, 'exam_mode', None) if job.pattern else None
             all_questions = service.run_full_pipeline(
                 job.file_path, 
                 subjects_to_process=[subject],
-                separated_content=separated_content
+                separated_content=separated_content,
+                exam_mode=exam_mode
             )
         else:
             # Use SectionQuestionExtractor for better section-based extraction

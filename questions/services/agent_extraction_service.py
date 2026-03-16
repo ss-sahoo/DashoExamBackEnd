@@ -515,8 +515,7 @@ class AgentExtractionService:
         if not question:
             return question
 
-        exam_mode = getattr(self, '_exam_mode', None)
-
+        exam_mode = self._exam_mode
         # ---------- helpers ----------
 
         math_pattern = re.compile(
@@ -525,8 +524,7 @@ class AgentExtractionService:
             r'|(\$[^$]+?\$)',     # $...$
             re.DOTALL
         )
-
-        img_pattern = re.compile(r'!\[([^\]]*)\]\(([^)\n]+)\)')
+        img_pattern = re.compile('!\[([^\]]*)\]\(([^)\n]+)\)')
 
         def fix_latex_commands(text: str) -> str:
             """Reduce \\\\cmd to \\cmd inside math regions"""
@@ -539,8 +537,11 @@ class AgentExtractionService:
         def process_non_math(text: str) -> str:
             """Replace newlines and stray \\\\ with <br> outside math"""
             # Replace newlines first (longer pattern first)
-            text = text.replace('\n\n', ' <br> <br> ')
-            text = text.replace('\n', ' <br> ')
+            text = text.replace('\\n\\n', ' <br> <br> ')
+            text = text.replace('\\n\$', ' <br> ')
+            text = re.sub(r'\$\s*\\n', '$<br> ', text)
+            text = re.sub(r'\s*\\n\s*\(', '<br> (', text)
+            #text = text.replace('\n(', '<br>(')
             # Replace stray \\ (not part of a LaTeX command) with <br>
             # \\  followed by space/end → <br>, but \alpha etc. are preserved
             text = re.sub(r'\\\\(?![A-Za-z])', ' <br> ', text)
