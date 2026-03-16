@@ -1618,6 +1618,19 @@ def list_people(request):
         count = count_base.filter(role__in=[role_val, role_val.lower(), role_val.upper()]).count()
         role_counts[role_val] = count
     
+    # Pre-fetch centers from the correct DB to avoid cross-DB FK lookup errors
+    from accounts.utils import get_current_db
+    current_db = get_current_db() or 'default'
+    center_ids = [u.center_id for u in page_obj if u.center_id]
+    from accounts.models import Center
+    centers_map = {}
+    if center_ids:
+        try:
+            for c in Center.objects.using(current_db).filter(id__in=center_ids):
+                centers_map[c.id] = c.name
+        except Exception:
+            pass
+
     # Serialize users
     users_data = []
     for u in page_obj:
@@ -1635,9 +1648,9 @@ def list_people(request):
             'phone': u.phone or u.phone_number,
             'teacher_code': u.teacher_code,
             'institute_id': u.institute_id,
-            'institute_name': u.institute.name if u.institute else None,
+            'institute_name': u.institute.name if u.institute_id and u.institute else None,
             'center_id': str(u.center_id) if u.center_id else None,
-            'center_name': u.center.name if u.center else None,
+            'center_name': centers_map.get(u.center_id) if u.center_id else None,
             'created_at': u.created_at.isoformat() if u.created_at else None,
         })
     
