@@ -3,6 +3,7 @@ from . import views
 from .analytics_views import dashboard_analytics
 from .admin_center_views import assign_center_to_admin, remove_center_from_admin, get_available_centers
 from .timetable_views import list_people
+from .password_reset_views import forgot_password, reset_password, validate_reset_token
 from .timetable_auth_views import (
     SuperAdminLoginView,
     AdminLoginView,
@@ -24,6 +25,9 @@ urlpatterns = [
     path('register/', views.user_registration_view, name='user-register'),
     path('login/', views.user_login_view, name='user-login'),
     path('logout/', views.user_logout_view, name='user-logout'),
+    path('forgot-password/', forgot_password, name='forgot-password'),
+    path('reset-password/', reset_password, name='reset-password'),
+    path('validate-reset-token/', validate_reset_token, name='validate-reset-token'),
 
     # Role-based auth endpoints (same style as timetable, but under /api/auth/)
     path('superadmin/login/', SuperAdminLoginView.as_view(), name='exam-superadmin-login'),

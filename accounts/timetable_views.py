@@ -924,42 +924,47 @@ def bulk_create_teachers(request):
             continue
         
         try:
-            # Generate code and password
-            username = generate_user_code('TEACHER', center_code)
-            password = generate_password('TEACHER', center_code)
-            teacher_code = username
-            
-            # Split name
-            name_parts = name.strip().split()
-            first_name = name_parts[0] if name_parts else name
-            last_name = " ".join(name_parts[1:]) if len(name_parts) > 1 else ""
-            
-            with transaction.atomic():
-                new_user = User.objects.create_user(
-                    username=username,
-                    email=email or f"{username}@temp.com",
-                    password=password,
-                    first_name=first_name,
-                    last_name=last_name,
-                    phone=phone_number or "",
-                    phone_number=phone_number or "",
-                    role='teacher',
-                    center=center,
-                    institute=center.institute,
-                    teacher_code=teacher_code,
-                    teacher_employee_id=employee_id,
-                    teacher_subjects=subjects,
-                )
+                # Generate code and password
+                username = generate_user_code('TEACHER', center_code)
+                password = generate_password('TEACHER', center_code)
+                teacher_code = username
                 
-                created_teachers.append({
-                    'row': row_num,
-                    'name': name,
-                    'username': username,
-                    'password': password,
-                    'teacher_code': teacher_code,
-                    'email': new_user.email,
-                    'user_id': str(new_user.id),
-                })
+                # Split name
+                name_parts = name.strip().split()
+                first_name = name_parts[0] if name_parts else name
+                last_name = " ".join(name_parts[1:]) if len(name_parts) > 1 else ""
+                
+                with transaction.atomic():
+                    new_user = User.objects.create_user(
+                        username=username,
+                        email=email or f"{username}@temp.com",
+                        password=password,
+                        first_name=first_name,
+                        last_name=last_name,
+                        phone=phone_number or "",
+                        phone_number=phone_number or "",
+                        role='teacher',
+                        center=center,
+                        institute=center.institute,
+                        teacher_code=teacher_code,
+                        teacher_employee_id=employee_id,
+                        teacher_subjects=subjects,
+                    )
+                    
+                    # Send individual email to this specific user
+                    if new_user.email and new_user.email != f"{username}@temp.com":
+                        send_credentials_email(new_user, password)
+                    
+                    created_teachers.append({
+                        'row': row_num,
+                        'name': name,
+                        'username': username,
+                        'password': password,
+                        'teacher_code': teacher_code,
+                        'email': new_user.email,
+                        'user_id': str(new_user.id),
+                        'email_sent': new_user.email != f"{username}@temp.com"
+                    })
         except Exception as e:
             errors.append({
                 'row': row_num,
@@ -1179,9 +1184,9 @@ def bulk_create_students(request):
             continue
         
         try:
-            # Generate code and password
-            username = generate_user_code('STUDENT', center_code)
-            password = generate_password('STUDENT', center_code)
+            # Generate code and password - unique for each student
+            username = generate_user_code('STUDENT', None, batch_code)
+            password = generate_password('STUDENT', None, batch_code, date_of_birth)
             
             # Split name
             name_parts = name.strip().split()
@@ -1214,6 +1219,10 @@ def bulk_create_students(request):
                     except Batch.DoesNotExist:
                         pass  # Batch not found, skip enrollment
                 
+                # Send individual email to this specific user
+                if new_user.email and new_user.email != f"{username}@temp.com":
+                    send_credentials_email(new_user, password)
+                
                 created_students.append({
                     'row': row_num,
                     'name': name,
@@ -1222,6 +1231,7 @@ def bulk_create_students(request):
                     'batch_code': batch_code,
                     'email': new_user.email,
                     'user_id': str(new_user.id),
+                    'email_sent': new_user.email != f"{username}@temp.com"
                 })
         except Exception as e:
             errors.append({
@@ -1428,7 +1438,7 @@ def bulk_create_staff(request):
             continue
         
         try:
-            # Generate code and password
+            # Generate code and password - unique for each staff member
             username = generate_user_code('STAFF', center_code)
             password = generate_password('STAFF', center_code)
             
@@ -1446,10 +1456,14 @@ def bulk_create_staff(request):
                     last_name=last_name,
                     phone=phone_number or "",
                     phone_number=phone_number or "",
-                    role=User.ROLE_STAFF,  # Use proper role constant
+                    role='staff',  # Use lowercase staff role
                     center=center,
                     institute=center.institute,
                 )
+                
+                # Send individual email to this specific user
+                if new_user.email and new_user.email != f"{username}@temp.com":
+                    send_credentials_email(new_user, password)
                 
                 created_staff.append({
                     'row': row_num,
@@ -1458,6 +1472,7 @@ def bulk_create_staff(request):
                     'password': password,
                     'email': new_user.email,
                     'user_id': str(new_user.id),
+                    'email_sent': new_user.email != f"{username}@temp.com"
                 })
         except Exception as e:
             errors.append({

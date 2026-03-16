@@ -165,10 +165,11 @@ class UserCreationSerializer(serializers.ModelSerializer):
         # Always use lowercase role
         role = role.lower() if role else 'student'
         
-        # Handle password
+        # Handle password - generate unique password for each user
         password = validated_data.pop('password', None)
         if not password:
-            password = User.objects.make_random_password()
+            # Generate unique password using utility function
+            password = generate_password(role, center_code=None, batch_code=None)
         
         # Create user with institute, center and role
         user = User.objects.create_user(
@@ -183,8 +184,9 @@ class UserCreationSerializer(serializers.ModelSerializer):
             role=role
         )
         
-        # Send credential email
-        send_credentials_email(user, password)
+        # Send credential email only to the created user
+        if user.email:
+            send_credentials_email(user, password)
         
         # Store raw password on instance for the response
         user._raw_password = password
