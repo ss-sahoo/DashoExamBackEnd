@@ -32,5 +32,9 @@ tenant_db['NAME'] = 'exam_flow_inst_31'
 settings.DATABASES['exam_flow_inst_31'] = tenant_db
 
 print("Running migrations on exam_flow_inst_31...")
-call_command('migrate', database='exam_flow_inst_31', interactive=False)
+# Migrate only tenant-specific apps, skip shared apps (accounts, auth, contenttypes, sessions, admin)
+tenant_apps = ['exams', 'questions', 'omr', 'patterns', 'timetable']
+for app in tenant_apps:
+    print(f"  Migrating {app}...")
+    call_command('migrate', app, database='exam_flow_inst_31', interactive=False)
 print("Done!")
