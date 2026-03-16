@@ -14,20 +14,22 @@ inst = Institute.objects.get(id=31)
 default_db = settings.DATABASES['default']
 
 # Register tenant DB before calling migrate
-settings.DATABASES['exam_flow_inst_31'] = {
+# Django 4.2 requires all these keys to be present
+tenant_db = {
     'ENGINE': 'django.db.backends.postgresql',
     'NAME': 'exam_flow_inst_31',
     'USER': default_db['USER'],
     'PASSWORD': default_db['PASSWORD'],
     'HOST': default_db['HOST'],
     'PORT': default_db['PORT'],
-    'TIME_ZONE': None,
-    'CONN_MAX_AGE': 0,
-    'AUTOCOMMIT': True,
-    'ATOMIC_REQUESTS': False,
-    'OPTIONS': {},
-    'TEST': {},
 }
+# Copy ALL keys from default so Django 4.2 doesn't complain about missing ones
+for key, val in default_db.items():
+    if key not in tenant_db:
+        tenant_db[key] = val
+# Override the name back since copying default would overwrite it
+tenant_db['NAME'] = 'exam_flow_inst_31'
+settings.DATABASES['exam_flow_inst_31'] = tenant_db
 
 print("Running migrations on exam_flow_inst_31...")
 call_command('migrate', database='exam_flow_inst_31', interactive=False)
