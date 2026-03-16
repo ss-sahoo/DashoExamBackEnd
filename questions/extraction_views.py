@@ -398,14 +398,16 @@ class ExtractionJobViewSet(viewsets.ModelViewSet):
     def get_extracted_questions(self, request, pk=None):
         """
         Get extracted questions for a job
-        
+
         GET /api/questions/extraction-jobs/{job_id}/questions/
         """
         try:
-            job = self.get_object()
-            
+            from accounts.utils import get_current_db
+            current_db = get_current_db() or 'default'
+            job = ExtractionJob.objects.using(current_db).get(id=pk)
+
             # Get extracted questions
-            questions = ExtractedQuestion.objects.filter(job=job).order_by('id')
+            questions = ExtractedQuestion.objects.using(current_db).filter(job=job).order_by('id')
             
             # Filter by review status if requested
             requires_review = request.query_params.get('requires_review')
@@ -445,8 +447,10 @@ class ExtractedQuestionViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         """Get extracted questions for current user's institute"""
         user = self.request.user
-        
-        queryset = ExtractedQuestion.objects.filter(
+        from accounts.utils import get_current_db
+        current_db = get_current_db() or 'default'
+
+        queryset = ExtractedQuestion.objects.using(current_db).filter(
             job__exam__institute=user.institute
         ).select_related('job', 'imported_question')
         
