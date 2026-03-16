@@ -7,7 +7,6 @@ import string
 import threading
 from datetime import datetime
 from django.conf import settings
-from django.core.mail import EmailMultiAlternatives
 from django.template.loader import render_to_string
 from .models import User
 
@@ -121,25 +120,28 @@ def generate_user_code(role: str, center_code: str = None, batch_code: str = Non
     return code
 
 
-def generate_password(role: str, center_code: str = None, batch_code: str = None, 
-                      date_of_birth: str = None, year: int = None, phone_number: str = None,
-                      username: str = None) -> str:
+def generate_password(role: str, center_code: str = None, batch_code: str = None,
+                      date_of_birth: str = None, year: int = None,
+                      name: str = None, phone_number: str = None) -> str:
     """
-    Generate a unique password based on role and context.
-    
+    Generate a password based on role and context.
+
     Password format:
     - ADMIN: Admin@<center_code><current_year>
     - TEACHER: Teacher@<center_code><current_year>
-    - STUDENT: Student@<unique_combination> (using DOB + phone for uniqueness)
-    
+    - STUDENT: <Name>@<last_3_digits_of_phone> (first and last letters capitalized)
+      Falls back to Student@<batch_code><year> if name or phone not available
+    - STAFF: Staff@<center_code><current_year>
+
     Args:
         role: User role
         center_code: Optional center code
         batch_code: Optional batch code (for students)
         date_of_birth: Optional DOB in YYYY-MM-DD format
         year: Optional year (for students, could be batch year or DOB year)
-        phone_number: Optional phone number (for additional uniqueness)
-    
+        name: Optional student name (for student password generation)
+        phone_number: Optional phone number (for student password generation)
+
     Returns:
         Generated password string
     """
@@ -158,17 +160,17 @@ def generate_password(role: str, center_code: str = None, batch_code: str = None
         'staff': 'STAFF',
         'STAFF': 'STAFF',
     }
-    
+
     mapped_role = role_mapping.get(role, role)
     current_year = datetime.now().year
-    
+
     if mapped_role == 'ADMIN':
         if center_code:
             center_part = center_code[:4].upper().replace("-", "").replace(" ", "")
             password = f"Admin@{center_part}{current_year}"
         else:
             password = f"Admin@{current_year}"
-    
+
     elif mapped_role == 'TEACHER':
         # Create unique password using multiple factors
         password_parts = []
@@ -176,77 +178,48 @@ def generate_password(role: str, center_code: str = None, batch_code: str = None
         
         # Add center code if available
         if center_code:
-            center_part = center_code[:3].upper().replace("-", "").replace(" ", "")
-            password_parts.append(center_part)
-        
-        # Add phone number last 4 digits for uniqueness
-        if phone_number:
-            phone_digits = ''.join(filter(str.isdigit, phone_number))
-            if len(phone_digits) >= 4:
-                phone_part = phone_digits[-4:]
-                password_parts.append(phone_part)
-        
-        # Add current year last 2 digits
-        password_parts.append(str(current_year)[-2:])
-        
-        # If we don't have enough unique components, add timestamp
-        if len(''.join(password_parts[1:])) < 6:  # Excluding "Teacher@"
-            import time
-            timestamp = str(int(time.time()))[-4:]  # Last 4 digits of timestamp
-            password_parts.append(timestamp)
-        
-        password = ''.join(password_parts)
-    
+            center_part = center_code[:4].upper().replace("-", "").replace(" ", "")
+            password = f"Teacher@{center_part}{current_year}"
+        else:
+            password = f"Teacher@{current_year}"
+
     elif mapped_role == 'STUDENT':
-        # Create unique password using multiple factors
-        password_parts = []
-        password_parts.append("Student@")
-
-        # Add date of birth component (DDMM format for uniqueness)
-        if date_of_birth:
-            try:
-                dob_date = datetime.strptime(date_of_birth, "%Y-%m-%d")
-                dob_part = f"{dob_date.day:02d}{dob_date.month:02d}"
-                password_parts.append(dob_part)
-                year = dob_date.year
-            except Exception:
-                year = current_year
-
-        # Add phone number last 4 digits for additional uniqueness
-        if phone_number:
-            phone_digits = ''.join(filter(str.isdigit, phone_number))
-            if len(phone_digits) >= 4:
-                password_parts.append(phone_digits[-4:])
-
-        # Add batch code prefix if available
-        if batch_code:
-            import re
-            year_match = re.search(r'\d{4}', batch_code)
-            if year_match:
-                year = int(year_match.group())
+        # New format: Name (first & last letter capitalized) + @ + last 3 digits of phone
+        if name and phone_number and len(phone_number) >= 3:
+            # Use first name only (first word), capitalize first and last letters
+            first_name = name.strip().split()[0] if name.strip() else name.strip()
+            if len(first_name) >= 2:
+                formatted_name = first_name[0].upper() + first_name[1:-1].lower() + first_name[-1].upper()
+            elif len(first_name) == 1:
+                formatted_name = first_name.upper()
             else:
+                formatted_name = first_name
+            last_3_digits = phone_number.strip()[-3:]
+            password = f"{formatted_name}@{last_3_digits}"
+        else:
+            # Fallback to old format if name or phone not available
+            if batch_code:
+                import re
+                year_match = re.search(r'\d{4}', batch_code)
+                if year_match:
+                    year = int(year_match.group())
+                else:
+                    year = current_year
+            elif date_of_birth:
+                try:
+                    dob_date = datetime.strptime(date_of_birth, "%Y-%m-%d")
+                    year = dob_date.year
+                except:
+                    year = current_year
+            elif not year:
                 year = current_year
-            batch_part = batch_code[:3].upper().replace("-", "").replace(" ", "")
-            password_parts.append(batch_part)
 
-        # Add year component
-        if not year:
-            year = current_year
-        password_parts.append(str(year)[-2:])
+            if batch_code:
+                batch_part = batch_code[:6].upper().replace("-", "").replace(" ", "")
+                password = f"Student@{batch_part}{year}"
+            else:
+                password = f"Student@{year}"
 
-        # Use the unique username suffix to guarantee no two students share a password
-        # username format is e.g. STU-BATCH-1234, so the numeric suffix is always unique
-        if username:
-            digits = ''.join(filter(str.isdigit, username))
-            if digits:
-                password_parts.append(digits[-4:])
-
-        # Final fallback if still too short (no username, no DOB, no phone)
-        if len(''.join(password_parts[1:])) < 6:
-            password_parts.append(str(random.randint(1000, 9999)))
-
-        password = ''.join(password_parts)
-    
     elif mapped_role == 'STAFF':
         # Create unique password using multiple factors
         password_parts = []
@@ -254,30 +227,14 @@ def generate_password(role: str, center_code: str = None, batch_code: str = None
         
         # Add center code if available
         if center_code:
-            center_part = center_code[:3].upper().replace("-", "").replace(" ", "")
-            password_parts.append(center_part)
-        
-        # Add phone number last 4 digits for uniqueness
-        if phone_number:
-            phone_digits = ''.join(filter(str.isdigit, phone_number))
-            if len(phone_digits) >= 4:
-                phone_part = phone_digits[-4:]
-                password_parts.append(phone_part)
-        
-        # Add current year last 2 digits
-        password_parts.append(str(current_year)[-2:])
-        
-        # If we don't have enough unique components, add timestamp
-        if len(''.join(password_parts[1:])) < 6:  # Excluding "Staff@"
-            import time
-            timestamp = str(int(time.time()))[-4:]  # Last 4 digits of timestamp
-            password_parts.append(timestamp)
-        
-        password = ''.join(password_parts)
-    
+            center_part = center_code[:4].upper().replace("-", "").replace(" ", "")
+            password = f"Staff@{center_part}{current_year}"
+        else:
+            password = f"Staff@{current_year}"
+
     else:
         password = f"User@{current_year}"
-    
+
     return password
 
 
@@ -309,14 +266,20 @@ def log_activity(institute, log_type, title, description, user=None, status='inf
 
 def send_credentials_email(user, password):
     """
-    Send an email to the user with their account credentials.
+    Send an email to the user with their account credentials using Mailgun.
+    Only sends when DEBUG is False (production).
     """
     try:
+        if settings.DEBUG:
+            print(f"DEBUG mode: Skipping credential email for {user.username}.")
+            return False
+
         if not user.email:
             print(f"User {user.username} has no email address. Skipping credential email.")
             return False
 
-        # Prepare context
+        import requests
+
         context = {
             'name': user.get_full_name() or user.username,
             'role': user.role,
@@ -324,23 +287,30 @@ def send_credentials_email(user, password):
             'password': password,
             'institute_name': user.institute.name if user.institute else "Exam Flow System",
             'center_name': user.center.name if user.center else None,
-            'login_url': f"{settings.FRONTEND_URL}/login", 
+            'login_url': f"{settings.FRONTEND_URL}/login",
         }
 
-        # Render templates
-        subject = "Your Account Credentials - Exam Flow System"
-        text_content = render_to_string('emails/credential_notification.txt', context)
+        subject = "Your Account Credentials - Exam Dasho App"
         html_content = render_to_string('emails/credential_notification.html', context)
 
-        # Send email
-        msg = EmailMultiAlternatives(subject, text_content, settings.DEFAULT_FROM_EMAIL, [user.email])
-        msg.attach_alternative(html_content, "text/html")
-        msg.send()
-        
-        print(f"Credential email sent to {user.email}")
-        return True
+        response = requests.post(
+            f"https://api.mailgun.net/v3/{settings.MAILGUN_DOMAIN}/messages",
+            auth=("api", settings.MAILGUN_API_KEY),
+            data={
+                "from": settings.DEFAULT_FROM_EMAIL,
+                "to": user.email,
+                "subject": subject,
+                "html": html_content,
+            },
+        )
+
+        if response.status_code == 200:
+            print(f"Credential email sent to {user.email} via Mailgun (id: {response.json().get('id', 'N/A')})")
+            return True
+        else:
+            print(f"Mailgun error for {user.email}: {response.status_code} - {response.text}")
+            return False
 
     except Exception as e:
         print(f"Failed to send credential email to {user.email}: {str(e)}")
-        # We don't want to fail the user creation if email fails, so we just log it
         return False

@@ -69,5 +69,9 @@ EMAIL_HOST_USER = get_config('EMAIL_HOST_USER', default='diracai.info@gmail.com'
 EMAIL_HOST_PASSWORD = get_config('EMAIL_HOST_PASSWORD', default='fibmduvwoxsjtjvh')
 DEFAULT_FROM_EMAIL = get_config('DEFAULT_FROM_EMAIL', default='Exam Flow System <diracai.info@gmail.com>')
 
+# Mailgun Email Configuration
+MAILGUN_API_KEY = get_config('MAILGUN_API_KEY', default='')
+MAILGUN_DOMAIN = get_config('MAILGUN_DOMAIN', default='sandbox5cb8f0e439cc4e82a4021d2dd56925d8.mailgun.org')
+
 # Redis Configuration
 REDIS_PASSWORD = get_config('REDIS_PASSWORD', default='')

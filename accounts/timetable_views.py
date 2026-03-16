@@ -543,7 +543,7 @@ def create_student(request):
     
     # Generate code and password
     username = generate_user_code('STUDENT', None, batch_code)
-    password = generate_password('STUDENT', None, batch_code, date_of_birth, phone_number=phone_number)
+    password = generate_password('STUDENT', None, batch_code, date_of_birth, name=name, phone_number=phone_number)
     
     # Split name
     name_parts = name.strip().split()
@@ -990,8 +990,10 @@ def bulk_create_students(request):
     Bulk create students from Excel/CSV file or JSON array.
     
     Accepts either:
-    1. File upload (Excel .xlsx or CSV) with columns: name, email, phone_number, batch_code, date_of_birth
+    1. File upload (Excel .xlsx or CSV) with columns: name, email, phone_number, batch_code, date_of_birth, username (optional)
     2. JSON array in request body with key "students"
+
+    If 'username' is provided in the data, it is used as-is. Otherwise, a username is auto-generated.
     
     File Upload:
     - Content-Type: multipart/form-data
@@ -1060,7 +1062,9 @@ def bulk_create_students(request):
                 # Map headers to expected fields
                 header_map = {}
                 for i, h in enumerate(headers):
-                    if 'name' in h and 'batch' not in h:
+                    if h == 'username' or h == 'user_name':
+                        header_map['username'] = i
+                    elif 'name' in h and 'batch' not in h and 'user' not in h:
                         header_map['name'] = i
                     elif 'email' in h:
                         header_map['email'] = i
@@ -1088,6 +1092,7 @@ def bulk_create_students(request):
                         'phone_number': str(row[header_map.get('phone_number', 2)] or '').strip() if header_map.get('phone_number') is not None and len(row) > header_map.get('phone_number', 2) else '',
                         'batch_code': str(row[header_map.get('batch_code', 3)] or '').strip() if header_map.get('batch_code') is not None and len(row) > header_map.get('batch_code', 3) else '',
                         'date_of_birth': str(row[header_map.get('date_of_birth', 4)] or '').strip() if header_map.get('date_of_birth') is not None and len(row) > header_map.get('date_of_birth', 4) else '',
+                        'username': str(row[header_map['username']] or '').strip() if header_map.get('username') is not None and len(row) > header_map['username'] else '',
                         'row': row_idx,
                     }
                     
@@ -1106,7 +1111,9 @@ def bulk_create_students(request):
                     normalized = {}
                     for k, v in row.items():
                         key = k.lower().strip()
-                        if 'name' in key and 'batch' not in key:
+                        if key in ('username', 'user_name'):
+                            normalized['username'] = v
+                        elif 'name' in key and 'batch' not in key and 'user' not in key:
                             normalized['name'] = v
                         elif 'email' in key:
                             normalized['email'] = v
@@ -1123,6 +1130,7 @@ def bulk_create_students(request):
                         'phone_number': str(normalized.get('phone_number', '') or '').strip(),
                         'batch_code': str(normalized.get('batch_code', '') or '').strip(),
                         'date_of_birth': str(normalized.get('date_of_birth', '') or '').strip(),
+                        'username': str(normalized.get('username', '') or '').strip(),
                         'row': row_idx,
                     }
                     
@@ -1164,8 +1172,9 @@ def bulk_create_students(request):
         phone_number = student_data.get('phone_number', '').strip()
         batch_code = student_data.get('batch_code', '').strip()
         date_of_birth = student_data.get('date_of_birth', '').strip()
+        provided_username = student_data.get('username', '').strip()
         row_num = student_data.get('row', idx + 1)
-        
+
         if not name:
             errors.append({
                 'row': row_num,
@@ -1173,7 +1182,7 @@ def bulk_create_students(request):
                 'data': student_data
             })
             continue
-        
+
         # Check for duplicate email
         if email and User.objects.filter(email=email).exists():
             errors.append({
@@ -1182,11 +1191,20 @@ def bulk_create_students(request):
                 'data': student_data
             })
             continue
-        
+
+        # Check for duplicate username if provided
+        if provided_username and User.objects.filter(username=provided_username).exists():
+            errors.append({
+                'row': row_num,
+                'error': f'Username {provided_username} already exists',
+                'data': student_data
+            })
+            continue
+
         try:
-            # Generate code and password - unique for each student
-            username = generate_user_code('STUDENT', None, batch_code)
-            password = generate_password('STUDENT', None, batch_code, date_of_birth, phone_number=phone_number, username=username)
+            # Use provided username or auto-generate
+            username = provided_username if provided_username else generate_user_code('STUDENT', center_code)
+            password = generate_password('STUDENT', center_code, name=name, phone_number=phone_number)
             
             # Split name
             name_parts = name.strip().split()
@@ -1249,6 +1267,26 @@ def bulk_create_students(request):
         'errors': errors,
         'center': center.name,
     }, status=status.HTTP_201_CREATED if created_students else status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def download_student_template(request):
+    """
+    Download a CSV template for bulk student upload.
+    """
+    import csv
+    from django.http import HttpResponse
+
+    response = HttpResponse(content_type='text/csv')
+    response['Content-Disposition'] = 'attachment; filename="student_bulk_upload_template.csv"'
+
+    writer = csv.writer(response)
+    writer.writerow(['name', 'email', 'phone_number', 'batch_code', 'date_of_birth', 'username'])
+    writer.writerow(['John Doe', 'john@example.com', '9876543210', 'BATCH-01', '2005-05-15', ''])
+    writer.writerow(['Jane Smith', 'jane@example.com', '9876543211', 'BATCH-01', '2005-08-20', 'jane_custom_id'])
+
+    return response
 
 
 @api_view(["POST"])

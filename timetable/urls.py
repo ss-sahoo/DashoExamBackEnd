@@ -65,6 +65,7 @@ from accounts.timetable_views import (
     bulk_create_teachers,
     bulk_create_students,
     bulk_create_staff,
+    download_student_template,
     list_people,
 )
 from accounts.center_views import (
@@ -127,6 +128,7 @@ urlpatterns = [
     path("superadmin/staff/create/", create_staff, name="create-staff"),
     path("superadmin/teachers/bulk_create/", bulk_create_teachers, name="bulk-create-teachers"),
     path("superadmin/students/bulk_create/", bulk_create_students, name="bulk-create-students"),
+    path("superadmin/students/template/", download_student_template, name="download-student-template"),
     path("superadmin/staff/bulk_create/", bulk_create_staff, name="bulk-create-staff"),
     
     # ===========
