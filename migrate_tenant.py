@@ -21,6 +21,12 @@ settings.DATABASES['exam_flow_inst_31'] = {
     'PASSWORD': default_db['PASSWORD'],
     'HOST': default_db['HOST'],
     'PORT': default_db['PORT'],
+    'TIME_ZONE': None,
+    'CONN_MAX_AGE': 0,
+    'AUTOCOMMIT': True,
+    'ATOMIC_REQUESTS': False,
+    'OPTIONS': {},
+    'TEST': {},
 }
 
 print("Running migrations on exam_flow_inst_31...")
