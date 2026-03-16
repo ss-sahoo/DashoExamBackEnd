@@ -229,7 +229,7 @@ def create_admin(request):
     # Generate code and password - use 'ADMIN' role for timetable system
     center_code = center.name[:4].replace(" ", "").replace("-", "")
     username = generate_user_code('ADMIN', center_code)
-    password = generate_password('ADMIN', center_code)
+    password = generate_password('ADMIN', center_code, phone_number=phone_number)
     
     # Split name
     name_parts = name.strip().split()
@@ -419,7 +419,7 @@ def create_teacher(request):
     # Generate code and password
     center_code = center.name[:4].replace(" ", "").replace("-", "")
     username = generate_user_code('TEACHER', center_code)
-    password = generate_password('TEACHER', center_code)
+    password = generate_password('TEACHER', center_code, phone_number=phone_number)
     teacher_code = username  # Use same code
     
     # Split name
@@ -543,7 +543,7 @@ def create_student(request):
     
     # Generate code and password
     username = generate_user_code('STUDENT', None, batch_code)
-    password = generate_password('STUDENT', None, batch_code, date_of_birth)
+    password = generate_password('STUDENT', None, batch_code, date_of_birth, phone_number=phone_number)
     
     # Split name
     name_parts = name.strip().split()
@@ -663,7 +663,7 @@ def create_staff(request):
     # Generate code and password
     center_code = center.name[:4].replace(" ", "").replace("-", "")
     username = generate_user_code('STAFF', center_code)
-    password = generate_password('STAFF', center_code)
+    password = generate_password('STAFF', center_code, phone_number=phone_number)
     
     # Split name
     name_parts = name.strip().split()
@@ -926,7 +926,7 @@ def bulk_create_teachers(request):
         try:
                 # Generate code and password
                 username = generate_user_code('TEACHER', center_code)
-                password = generate_password('TEACHER', center_code)
+                password = generate_password('TEACHER', center_code, phone_number=phone_number)
                 teacher_code = username
                 
                 # Split name
@@ -1186,7 +1186,7 @@ def bulk_create_students(request):
         try:
             # Generate code and password - unique for each student
             username = generate_user_code('STUDENT', None, batch_code)
-            password = generate_password('STUDENT', None, batch_code, date_of_birth)
+            password = generate_password('STUDENT', None, batch_code, date_of_birth, phone_number=phone_number, username=username)
             
             # Split name
             name_parts = name.strip().split()
@@ -1440,7 +1440,7 @@ def bulk_create_staff(request):
         try:
             # Generate code and password - unique for each staff member
             username = generate_user_code('STAFF', center_code)
-            password = generate_password('STAFF', center_code)
+            password = generate_password('STAFF', center_code, phone_number=phone_number)
             
             # Split name
             name_parts = name.strip().split()

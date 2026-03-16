@@ -415,7 +415,7 @@ def add_student_to_batch(request):
     
     # Generate code and password
     username = generate_user_code('STUDENT', None, batch_code)
-    password = generate_password('STUDENT', None, batch_code, date_of_birth)
+    password = generate_password('STUDENT', None, batch_code, date_of_birth, phone_number=phone_number)
     
     # Split name
     name_parts = name.strip().split()
