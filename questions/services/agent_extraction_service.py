@@ -532,15 +532,15 @@ class AgentExtractionService:
 
         def convert_images(text: str) -> str:
             """Markdown image → HTML <img>"""
-            return img_pattern.sub(r'<img src=\2 alt=\1>', text)
+            return img_pattern.sub(r' \2 ', text)
 
         def process_non_math(text: str) -> str:
             """Replace newlines and stray \\\\ with <br> outside math"""
             # Replace newlines first (longer pattern first)
-            text = text.replace('\\n\\n', ' <br> <br> ')
-            text = text.replace('\\n\$', ' <br> ')
-            text = re.sub(r'\$\s*\\n', '$<br> ', text)
-            text = re.sub(r'\s*\\n\s*\(', '<br> (', text)
+            text = text.replace('\\n\\n', ' \n \n ')
+            text = text.replace('\\n\$', ' \n ')
+            text = re.sub(r'\$\s*\\n', '$ \n ', text)
+            text = re.sub(r'\s*\\n\s*\(', ' \n (', text)
             #text = text.replace('\n(', '<br>(')
             # Replace stray \\ (not part of a LaTeX command) with <br>
             # \\  followed by space/end → <br>, but \alpha etc. are preserved

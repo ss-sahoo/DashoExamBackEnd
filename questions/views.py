@@ -176,29 +176,38 @@ class ExamQuestionListView(generics.ListCreateAPIView):
 
     def list(self, request, *args, **kwargs):
         """
-        Override list to return questions from either ExamQuestion model 
+        Override list to return questions from either ExamQuestion model
         or directly from Question model (fallback).
+        Uses Question table as source of truth when ExamQuestion is incomplete.
         """
         exam_id = self.kwargs.get('exam_id')
-        
-        # First, try to get questions from ExamQuestion table
-        exam_questions = ExamQuestion.objects.filter(exam_id=exam_id).order_by('question_number')
-        
-        if exam_questions.exists():
-            # Use ExamQuestion data
+
+        # Count questions in both tables to determine the best source
+        exam_questions = ExamQuestion.objects.filter(exam_id=exam_id).order_by('section_name', 'question_number')
+        all_questions = Question.objects.filter(exam_id=exam_id, is_active=True)
+
+        exam_question_count = exam_questions.count()
+        question_count = all_questions.count()
+
+        # Use ExamQuestion only if it has ALL questions; otherwise fall back
+        # to the Question table (source of truth) to avoid missing questions
+        # due to partial population or unique_together conflicts with
+        # subject-wise numbering.
+        if exam_question_count > 0 and exam_question_count >= question_count:
+            # Use ExamQuestion data (fully populated)
             serializer = ExamQuestionSerializer(exam_questions, many=True)
             result = serializer.data
         else:
-            # Fallback: Get questions directly from Question model
-            questions = Question.objects.filter(exam_id=exam_id, is_active=True).order_by('question_number', 'question_number_in_pattern')
-            
+            # Use Question model directly (source of truth)
+            questions = all_questions.order_by('pattern_section_id', 'question_number', 'question_number_in_pattern')
+
             if questions.exists():
                 # Return questions in a format similar to ExamQuestion serializer
                 result = []
                 for q in questions:
                     # Get pattern section info for section_name
                     section_name = q.pattern_section_name or q.subject or 'General'
-                    
+
                     result.append({
                         'id': q.id,
                         'exam': int(exam_id),

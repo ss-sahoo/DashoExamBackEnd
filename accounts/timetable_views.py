@@ -495,13 +495,14 @@ def create_student(request):
         "user_id": "uuid"
     }
     """
+    print("Debuging working")
     can_proceed, role_info, error_response = _check_admin_or_super(request)
     if not can_proceed:
         return error_response
     
     is_super, is_admin = role_info
     user = request.user
-    
+
     batch_code = request.data.get("batch_code")
     name = request.data.get("name")
     email = request.data.get("email", "")
@@ -545,6 +546,7 @@ def create_student(request):
     username = generate_user_code('STUDENT', None, batch_code)
     password = generate_password('STUDENT', None, batch_code, date_of_birth, name=name, phone_number=phone_number)
     
+    print("Debuging working")
     # Split name
     name_parts = name.strip().split()
     first_name = name_parts[0] if name_parts else name
@@ -572,6 +574,7 @@ def create_student(request):
                 defaults={'status': Enrollment.STATUS_ACTIVE}
             )
             
+            print("Debuging working")
             # Send credential email
             send_credentials_email(user, password)
             

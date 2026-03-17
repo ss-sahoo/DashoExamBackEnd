@@ -78,6 +78,7 @@ from accounts.center_views import (
 )
 from accounts.program_batch_views import (
     create_program,
+    delete_program,
     create_batch,
     add_student_to_batch,
     list_programs,
@@ -142,6 +143,7 @@ urlpatterns = [
     # Program and Batch Management APIs
     # ===========
     path("superadmin/programs/create/", create_program, name="create-program"),
+    path("superadmin/programs/<uuid:program_id>/delete/", delete_program, name="delete-program"),
     path("programs/", list_programs, name="list-programs"),
     path("programs/<uuid:program_id>/", get_program, name="get-program"),
     path("admin/batches/create/", create_batch, name="create-batch"),

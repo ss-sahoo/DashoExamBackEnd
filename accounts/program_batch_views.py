@@ -470,6 +470,46 @@ def add_student_to_batch(request):
         )
 
 
+@api_view(["DELETE"])
+@permission_classes([IsAuthenticated])
+def delete_program(request, program_id):
+    """
+    Delete a program.
+    - Super Admin or Institute Admin only.
+    - Batches linked to this program will have their program_id set to NULL
+      (handled automatically by the Batch FK on_delete=SET_NULL).
+    """
+    user = request.user
+
+    if user.role not in ['super_admin', 'SUPER_ADMIN', 'institute_admin']:
+        return Response(
+            {"detail": "Only Super Admin and Institute Admin can delete programs."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    try:
+        program = Program.objects.get(id=program_id)
+    except Program.DoesNotExist:
+        return Response(
+            {"detail": "Program not found"},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    # Ensure the user belongs to the same institute as the program
+    if user.institute_id != program.institute_id:
+        return Response(
+            {"detail": "You don't have permission to delete this program."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    program.delete()
+
+    return Response(
+        {"detail": "Program deleted successfully"},
+        status=status.HTTP_200_OK,
+    )
+
+
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def list_programs(request):

@@ -29,6 +29,17 @@ LOGO_COLOR_HEX = "#094fb5"
 LOGO_COLOR = colors.HexColor(LOGO_COLOR_HEX)
 
 
+def _sanitize_for_reportlab(text):
+    """Escape text so it is safe inside a ReportLab Paragraph (XML-based)."""
+    if text is None:
+        return ""
+    text = str(text).replace('\x00', '').strip()
+    if not text:
+        return " "
+    from xml.sax.saxutils import escape as xml_escape
+    return xml_escape(text)
+
+
 # ============================================================
 # LaTeX Rendering Functions
 # ============================================================
@@ -470,7 +481,7 @@ def render_answer_sheet_pdf(attempt, context: Dict[str, Any]) -> None:
         q_block.append(Paragraph(f"<b>{str(q.get('question_type','')).upper()}</b>", question_type_style))
         # Question text as wide card
         q_block.append(
-            Table([[Paragraph(q["question_text"], q_text_style)]], colWidths=[full_width-20],
+            Table([[Paragraph(_sanitize_for_reportlab(q["question_text"]), q_text_style)]], colWidths=[full_width-20],
                   style=TableStyle([
                       ("BACKGROUND", (0,0), (-1,-1), Q_BOX_BG),
                       ("BOX", (0,0), (-1,-1), 1.2, BORDER_COLOR),
@@ -496,8 +507,8 @@ def render_answer_sheet_pdf(attempt, context: Dict[str, Any]) -> None:
                     ans_badge
                 ],
                 [
-                    Paragraph(q["student_answer"], ans_style if student_correct else wrong_style),
-                    Paragraph(q["correct_answer"], ans_style),
+                    Paragraph(_sanitize_for_reportlab(q["student_answer"]), ans_style if student_correct else wrong_style),
+                    Paragraph(_sanitize_for_reportlab(q["correct_answer"]), ans_style),
                     '',
                     ''
                 ]
@@ -525,7 +536,7 @@ def render_answer_sheet_pdf(attempt, context: Dict[str, Any]) -> None:
         if q.get("evaluation_notes"):
             q_block.append(
                 Table(
-                    [[Paragraph("EXPLANATION", expl_label), Paragraph(q["evaluation_notes"], expl_body)]],
+                    [[Paragraph("EXPLANATION", expl_label), Paragraph(_sanitize_for_reportlab(q["evaluation_notes"]), expl_body)]],
                     colWidths=[1.2*inch, full_width-36-1.2*inch],
                     style=TableStyle([
                         ("BACKGROUND", (0,0), (-1,-1), EXPL_BG),

@@ -177,8 +177,8 @@ class ExamQuestion(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        unique_together = ['exam', 'question_number']
-        ordering = ['question_number']
+        unique_together = ['exam', 'question_number', 'section_name']
+        ordering = ['section_name', 'question_number']
 
     def __str__(self):
         return f"{self.exam.title} - Q{self.question_number}"

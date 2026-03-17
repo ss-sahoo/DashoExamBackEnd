@@ -1335,129 +1335,140 @@ def get_exam_result(request, attempt_id):
                     'available_at': exam.end_date
                 }, status=status.HTTP_200_OK)
 
-    pattern = exam.pattern
-    
-    # Try to get result data, but don't fail if it doesn't exist
-    result = None
     try:
-        result = attempt.result
-    except ExamResult.DoesNotExist:
-        # For disqualified exams or exams without ExamResult, we'll build from evaluations
-        pass
-    
-    # Get section-wise results and valid evaluations for detailed view
-    section_results = {}
-    valid_evaluation_ids = set()
-    
-    if pattern:
-        for section in pattern.sections.all():
-            # Filter specifically by pattern_section_id to avoid subject overlap issues
-            section_evaluations = QuestionEvaluation.objects.filter(
-                attempt=attempt,
-                question__pattern_section_id=section.id
-            )
-            
-            # Fallback if pattern_section_id is not set (e.g. for some older questions or manual additions)
-            if not section_evaluations.exists():
+        pattern = exam.pattern
+
+        # Try to get result data, but don't fail if it doesn't exist
+        result = None
+        try:
+            result = attempt.result
+        except ExamResult.DoesNotExist:
+            # For disqualified exams or exams without ExamResult, we'll build from evaluations
+            pass
+
+        # Get section-wise results and valid evaluations for detailed view
+        section_results = {}
+        valid_evaluation_ids = set()
+
+        if pattern:
+            for section in pattern.sections.all():
+                # Filter specifically by pattern_section_id to avoid subject overlap issues
                 section_evaluations = QuestionEvaluation.objects.filter(
                     attempt=attempt,
-                    question__subject__iexact=section.subject,
-                    question_number__gte=section.start_question,
-                    question_number__lte=section.end_question
+                    question__pattern_section_id=section.id
                 )
-            
-            # Record these as valid for the detailed list
-            for ev in section_evaluations:
-                valid_evaluation_ids.add(ev.id)
-                
-            section_score = sum(eval.marks_obtained for eval in section_evaluations)
-            max_marks = section.marks_per_question * (section.end_question - section.start_question + 1)
-            
-            section_results[str(section.id)] = {
-                'section_name': section.name,
-                'subject': section.subject,
-                'question_type': section.question_type,
-                'score': float(section_score),
-                'max_marks': max_marks,
-                'status': 'available' if section_evaluations.exists() else 'pending_review',
-                'feedback': 'Graded' if section_evaluations.exists() else 'Under review'
+
+                # Fallback if pattern_section_id is not set (e.g. for some older questions or manual additions)
+                if not section_evaluations.exists():
+                    section_evaluations = QuestionEvaluation.objects.filter(
+                        attempt=attempt,
+                        question__subject__iexact=section.subject,
+                        question_number__gte=section.start_question,
+                        question_number__lte=section.end_question
+                    )
+
+                # Record these as valid for the detailed list
+                for ev in section_evaluations:
+                    valid_evaluation_ids.add(ev.id)
+
+                section_score = sum(eval.marks_obtained for eval in section_evaluations)
+                max_marks = section.marks_per_question * (section.end_question - section.start_question + 1)
+
+                section_results[str(section.id)] = {
+                    'section_name': section.name,
+                    'subject': section.subject,
+                    'question_type': section.question_type,
+                    'score': float(section_score),
+                    'max_marks': max_marks,
+                    'status': 'available' if section_evaluations.exists() else 'pending_review',
+                    'feedback': 'Graded' if section_evaluations.exists() else 'Under review'
+                }
+
+        # Get detailed answers with evaluation data, filtered to only valid ones
+        detailed_answers = {}
+        # If we have sections, only show evaluations that belong to a section
+        eval_filter = {'attempt': attempt}
+        if valid_evaluation_ids:
+            eval_filter['id__in'] = valid_evaluation_ids
+
+        evaluations = QuestionEvaluation.objects.filter(**eval_filter).select_related('question').order_by('question_number', 'id')
+
+        # Second-pass fallback: if no sections matched any evaluations, show all for this attempt
+        if not evaluations.exists():
+            evaluations = QuestionEvaluation.objects.filter(attempt=attempt).select_related('question').order_by('question_number', 'id')
+
+        for evaluation in evaluations:
+            question = evaluation.question
+            # Use a unique key (evaluation ID) to prevent overwriting when question numbers repeat (across sections)
+            detailed_answers[str(evaluation.id)] = {
+                'question_id': question.id,
+                'question_number': evaluation.question_number,
+                'question_text': question.question_text,
+                'question_type': question.question_type,
+                'subject': question.subject,
+                'user_answer': evaluation.student_answer,
+                'correct_answer': question.correct_answer if hasattr(question, 'correct_answer') else 'N/A',
+                'is_correct': evaluation.is_correct,
+                'marks_obtained': float(evaluation.marks_obtained),
+                'max_marks': float(evaluation.max_marks),
+                'explanation': evaluation.evaluation_notes or evaluation.ai_feedback or evaluation.manual_feedback or 'No explanation available',
+                'evaluation_status': evaluation.evaluation_status,
+                'evaluation_type': evaluation.evaluation_type
             }
-    
-    # Get detailed answers with evaluation data, filtered to only valid ones
-    detailed_answers = {}
-    # If we have sections, only show evaluations that belong to a section
-    eval_filter = {'attempt': attempt}
-    if valid_evaluation_ids:
-        eval_filter['id__in'] = valid_evaluation_ids
-        
-    evaluations = QuestionEvaluation.objects.filter(**eval_filter).select_related('question').order_by('question_number', 'id')
-    
-    # Second-pass fallback: if no sections matched any evaluations, show all for this attempt
-    if not evaluations.exists():
-        evaluations = QuestionEvaluation.objects.filter(attempt=attempt).select_related('question').order_by('question_number', 'id')
-    
-    for evaluation in evaluations:
-        question = evaluation.question
-        # Use a unique key (evaluation ID) to prevent overwriting when question numbers repeat (across sections)
-        detailed_answers[str(evaluation.id)] = {
-            'question_id': question.id,
-            'question_number': evaluation.question_number,
-            'question_text': question.question_text,
-            'question_type': question.question_type,
-            'subject': question.subject,
-            'user_answer': evaluation.student_answer,
-            'correct_answer': question.correct_answer if hasattr(question, 'correct_answer') else 'N/A',
-            'is_correct': evaluation.is_correct,
-            'marks_obtained': float(evaluation.marks_obtained),
-            'max_marks': float(evaluation.max_marks),
-            'explanation': evaluation.evaluation_notes or evaluation.ai_feedback or evaluation.manual_feedback or 'No explanation available',
-            'evaluation_status': evaluation.evaluation_status,
-            'evaluation_type': evaluation.evaluation_type
-        }
-    
-    # Calculate aggregates from filtered evaluations
-    evaluations_list = list(evaluations)
-    correct_answers_count = sum(1 for e in evaluations_list if e.is_correct)
-    attempted_questions = sum(1 for e in evaluations_list if e.is_answered)
-    marks_obtained = sum(e.marks_obtained for e in evaluations_list)
-    total_marks_available = sum(e.max_marks for e in evaluations_list) or exam.total_marks
-    
-    # Use actual question count from sections if available
-    total_questions = exam.total_questions or len(evaluations_list)
-    
-    answer_sheet_payload = ensure_answer_sheet_pdf(attempt)
-    answer_sheet_data = None
-    if answer_sheet_payload and getattr(attempt, 'answer_sheet_pdf', None):
-        pdf_url = attempt.answer_sheet_pdf.url if attempt.answer_sheet_pdf else None
-        if pdf_url:
-            pdf_url = request.build_absolute_uri(pdf_url)
-        branding_info = answer_sheet_payload.get('branding', {})
-        answer_sheet_data = {
-            'url': pdf_url,
-            'generated_at': attempt.answer_sheet_generated_at,
-            'branding': {
-                'logo_url': branding_info.get('institute_logo_url'),
-                'primary_hex': branding_info.get('primary_hex'),
-            },
-            'grading': answer_sheet_payload.get('grading'),
-            'invigilator_placeholders': answer_sheet_payload.get('invigilator_placeholders'),
-            'question_breakdown': answer_sheet_payload.get('question_breakdown'),
-        }
-    
-    return Response({
-        'attempt': ExamAttemptSerializer(attempt).data,
-        'overall_score': correct_answers_count,
-        'total_questions': total_questions,
-        'attempted_questions': attempted_questions,
-        'total_marks': float(total_marks_available),
-        'marks_obtained': float(marks_obtained),
-        'percentage': float(attempt.percentage) if attempt.percentage is not None else 0,
-        'section_results': section_results,
-        'detailed_answers': detailed_answers,
-        'submitted_at': attempt.submitted_at,
-        'time_spent': attempt.time_spent,
-        'answer_sheet_pdf': answer_sheet_data
-    })
+
+        # Calculate aggregates from filtered evaluations
+        evaluations_list = list(evaluations)
+        correct_answers_count = sum(1 for e in evaluations_list if e.is_correct)
+        attempted_questions = sum(1 for e in evaluations_list if e.is_answered)
+        marks_obtained = sum(e.marks_obtained for e in evaluations_list)
+        total_marks_available = sum(e.max_marks for e in evaluations_list) or exam.total_marks
+
+        # Use actual question count from sections if available
+        total_questions = exam.total_questions or len(evaluations_list)
+
+        # Generate answer sheet PDF — errors here should not break the results response
+        answer_sheet_data = None
+        try:
+            answer_sheet_payload = ensure_answer_sheet_pdf(attempt)
+            if answer_sheet_payload and getattr(attempt, 'answer_sheet_pdf', None):
+                pdf_url = attempt.answer_sheet_pdf.url if attempt.answer_sheet_pdf else None
+                if pdf_url:
+                    pdf_url = request.build_absolute_uri(pdf_url)
+                branding_info = answer_sheet_payload.get('branding', {})
+                answer_sheet_data = {
+                    'url': pdf_url,
+                    'generated_at': attempt.answer_sheet_generated_at,
+                    'branding': {
+                        'logo_url': branding_info.get('institute_logo_url'),
+                        'primary_hex': branding_info.get('primary_hex'),
+                    },
+                    'grading': answer_sheet_payload.get('grading'),
+                    'invigilator_placeholders': answer_sheet_payload.get('invigilator_placeholders'),
+                    'question_breakdown': answer_sheet_payload.get('question_breakdown'),
+                }
+        except Exception as pdf_err:
+            logger.error(f"Failed to generate answer sheet PDF for attempt {attempt_id}: {pdf_err}", exc_info=True)
+
+        return Response({
+            'attempt': ExamAttemptSerializer(attempt).data,
+            'overall_score': correct_answers_count,
+            'total_questions': total_questions,
+            'attempted_questions': attempted_questions,
+            'total_marks': float(total_marks_available),
+            'marks_obtained': float(marks_obtained),
+            'percentage': float(attempt.percentage) if attempt.percentage is not None else 0,
+            'section_results': section_results,
+            'detailed_answers': detailed_answers,
+            'submitted_at': attempt.submitted_at,
+            'time_spent': attempt.time_spent,
+            'answer_sheet_pdf': answer_sheet_data
+        })
+    except Exception as e:
+        logger.error(f"Error generating exam result for attempt {attempt_id}: {e}", exc_info=True)
+        return Response(
+            {'error': 'An error occurred while generating the exam result. Please try again later.'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
 
 
 @api_view(['GET'])
