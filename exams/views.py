@@ -226,6 +226,12 @@ class ExamDetailView(generics.RetrieveUpdateDestroyAPIView):
             from rest_framework.exceptions import NotFound
             raise NotFound("Exam not found or you don't have permission to access it.")
 
+    def perform_update(self, serializer):
+        user = self.request.user
+        if not user.can_manage_exams():
+            raise permissions.PermissionDenied("You don't have permission to edit exams")
+        serializer.save()
+
     def perform_destroy(self, instance):
         """Override destroy to add permission check"""
         user = self.request.user

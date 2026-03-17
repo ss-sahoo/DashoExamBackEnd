@@ -97,19 +97,19 @@ class ExamSerializer(serializers.ModelSerializer):
     def validate_status(self, value):
         if value in ['published', 'active']:
             exam = self.instance
+
+            # Only enforce question count when transitioning TO published/active,
+            # not when the exam is already in that status and being edited.
+            current_status = getattr(exam, 'status', None) if exam else None
+            if current_status == value:
+                return value
+
             if not exam:
                 raise serializers.ValidationError(
                     "Add all required questions before publishing the exam."
                 )
 
             required = exam.questions_required
-            if 'pattern_id' in self.initial_data:
-                from patterns.models import ExamPattern
-                try:
-                    pattern = ExamPattern.objects.get(id=self.initial_data['pattern_id'])
-                    required = pattern.total_questions
-                except ExamPattern.DoesNotExist:
-                    pass
             added = exam.questions_added
 
             if required <= 0:
@@ -117,15 +117,10 @@ class ExamSerializer(serializers.ModelSerializer):
                     "Exam pattern does not define any questions."
                 )
 
-            if added < required:
-                # If it's an offline exam, we might allow publishing even if questions are not fully added in-app
-                # but we'll still warn or prevent it if it's meant to be strict.
-                # For now, let's keep it strict but maybe OMR exams can have different rules?
-                # The user's request suggests they want to generate OMR regardless.
-                if exam.exam_mode == 'online':
-                    raise serializers.ValidationError(
-                        f"Add all {required} questions before publishing (currently {added})."
-                    )
+            if added < required and exam.exam_mode == 'online':
+                raise serializers.ValidationError(
+                    f"Add all {required} questions before publishing (currently {added})."
+                )
 
         return value
 
@@ -186,19 +181,13 @@ class ExamSerializer(serializers.ModelSerializer):
         if center_id is not None:
             instance.center_id = center_id
             
-        # If pattern_id is provided, update the pattern and duration
+        # Pattern cannot be changed after exam creation
         if 'pattern_id' in validated_data:
             pattern_id = validated_data.pop('pattern_id')
-            from patterns.models import ExamPattern
-            pattern = ExamPattern.objects.get(id=pattern_id)
-            validated_data['pattern'] = pattern
-            validated_data['duration_minutes'] = pattern.total_duration
-            
-            # Also update mode if not explicitly changed
-            if 'exam_mode' not in validated_data:
-                validated_data['exam_mode'] = getattr(pattern, 'exam_mode', 'online')
-            if 'omr_config' not in validated_data:
-                validated_data['omr_config'] = getattr(pattern, 'omr_config', {})
+            if str(pattern_id) != str(instance.pattern_id):
+                raise serializers.ValidationError(
+                    {"pattern_id": "Exam pattern cannot be changed after creation."}
+                )
         
         exam = super().update(instance, validated_data)
         
