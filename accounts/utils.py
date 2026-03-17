@@ -270,16 +270,14 @@ def send_credentials_email(user, password):
     Only sends when DEBUG is False (production).
     """
     try:
-        print("Start msg")
-        if DEBUG:
+        if True or settings.DEBUG:
             print(f"DEBUG mode: Skipping credential email for {user.username}.")
             return False
 
         if not user.email:
             print(f"User {user.username} has no email address. Skipping credential email.")
             return False
-        print("Debug off")
-
+        
         import requests
 
         context = {
@@ -314,5 +312,7 @@ def send_credentials_email(user, password):
             return False
 
     except Exception as e:
-        print(f"Failed to send credential email to {user.email}: {str(e)}")
+        import traceback
+        print(f"Failed to send credential email: {str(e)}")
+        traceback.print_exc()
         return False
