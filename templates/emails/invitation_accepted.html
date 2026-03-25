@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Student Accepted Exam Invitation: {{ exam_title }}</title>
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }
+        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+        .header { background: linear-gradient(135deg, #28a745 0%, #20c997 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
+        .content { background: #f8f9fa; padding: 30px; border-radius: 0 0 10px 10px; }
+        .success-card { background: white; padding: 25px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); margin: 20px 0; }
+        .success-icon { font-size: 48px; text-align: center; margin: 20px 0; }
+        .exam-title { font-size: 24px; font-weight: bold; color: #2c3e50; margin-bottom: 15px; }
+        .student-info { background: #d4edda; padding: 15px; border-radius: 5px; margin: 15px 0; border-left: 4px solid #28a745; }
+        .info-row { display: flex; justify-content: space-between; margin: 8px 0; padding: 5px 0; }
+        .info-label { font-weight: bold; color: #155724; }
+        .info-value { color: #333; }
+        .footer { text-align: center; margin-top: 30px; color: #666; font-size: 14px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1> Invitation Accepted</h1>
+            <p>Student has accepted the exam invitation</p>
+        </div>
+        
+        <div class="content">
+            <div class="success-card">
+                <div class="success-icon">🎉</div>
+                
+                <div class="exam-title">{{ exam_title }}</div>
+                
+                <div class="student-info">
+                    <div class="info-row">
+                        <span class="info-label">👤 Student:</span>
+                        <span class="info-value">{{ student_name }}</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">📚 Exam:</span>
+                        <span class="info-value">{{ exam_title }}</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">⏰ Accepted at:</span>
+                        <span class="info-value">{{ accepted_at|date:"F d, Y \a\t g:i A" }}</span>
+                    </div>
+                </div>
+                
+                <p style="color: #155724; font-weight: bold; text-align: center; margin: 20px 0;">
+                    The student is now enrolled in the exam and can access it during the scheduled time.
+                </p>
+            </div>
+            
+            <div class="footer">
+                <p>Best regards,<br>Exam Flow System</p>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

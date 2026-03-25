@@ -1,0 +1,33 @@
+Watching for file changes with StatReloader
+Performing system checks...
+
+/home/tushar/.local/lib/python3.10/site-packages/rest_framework_simplejwt/__init__.py:1: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+  from pkg_resources import DistributionNotFound, get_distribution
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1770805249.842050   13497 gl_context_egl.cc:85] Successfully initialized EGL. Major : 1 Minor: 5
+I0000 00:00:1770805249.844431   13547 gl_context.cc:344] GL version: 3.2 (OpenGL ES 3.2 Mesa 23.2.1-1ubuntu3.1~22.04.3), renderer: Mesa Intel(R) Graphics (ADL GT2)
+INFO: Created TensorFlow Lite XNNPACK delegate for CPU.
+System check identified no issues (0 silenced).
+Error: That port is already in use.
+Watching for file changes with StatReloader
+Performing system checks...
+
+/home/tushar/.local/lib/python3.10/site-packages/rest_framework_simplejwt/__init__.py:1: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+  from pkg_resources import DistributionNotFound, get_distribution
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1770805375.548289   14121 gl_context_egl.cc:85] Successfully initialized EGL. Major : 1 Minor: 5
+I0000 00:00:1770805375.550523   14183 gl_context.cc:344] GL version: 3.2 (OpenGL ES 3.2 Mesa 23.2.1-1ubuntu3.1~22.04.3), renderer: Mesa Intel(R) Graphics (ADL GT2)
+INFO: Created TensorFlow Lite XNNPACK delegate for CPU.
+System check identified no issues (0 silenced).
+Error: That port is already in use.
+Watching for file changes with StatReloader
+Performing system checks...
+
+/home/tushar/.local/lib/python3.10/site-packages/rest_framework_simplejwt/__init__.py:1: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+  from pkg_resources import DistributionNotFound, get_distribution
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1770805450.705476   14871 gl_context_egl.cc:85] Successfully initialized EGL. Major : 1 Minor: 5
+I0000 00:00:1770805450.708000   14921 gl_context.cc:344] GL version: 3.2 (OpenGL ES 3.2 Mesa 23.2.1-1ubuntu3.1~22.04.3), renderer: Mesa Intel(R) Graphics (ADL GT2)
+INFO: Created TensorFlow Lite XNNPACK delegate for CPU.
+System check identified no issues (0 silenced).
+Error: That port is already in use.

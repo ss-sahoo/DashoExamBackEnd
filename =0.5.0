@@ -1,0 +1,31 @@
+Requirement already satisfied: google-generativeai in /home/diracai/anaconda3/lib/python3.11/site-packages (0.3.2)
+Requirement already satisfied: google-ai-generativelanguage==0.4.0 in /home/diracai/anaconda3/lib/python3.11/site-packages (from google-generativeai) (0.4.0)
+Requirement already satisfied: google-auth in /home/diracai/anaconda3/lib/python3.11/site-packages (from google-generativeai) (2.48.0)
+Requirement already satisfied: google-api-core in /home/diracai/anaconda3/lib/python3.11/site-packages (from google-generativeai) (2.29.0)
+Requirement already satisfied: typing-extensions in /home/diracai/anaconda3/lib/python3.11/site-packages (from google-generativeai) (4.14.1)
+Requirement already satisfied: protobuf in /home/diracai/anaconda3/lib/python3.11/site-packages (from google-generativeai) (3.20.3)
+Requirement already satisfied: tqdm in /home/diracai/anaconda3/lib/python3.11/site-packages (from google-generativeai) (4.65.0)
+Requirement already satisfied: proto-plus<2.0.0dev,>=1.22.3 in /home/diracai/anaconda3/lib/python3.11/site-packages (from google-ai-generativelanguage==0.4.0->google-generativeai) (1.27.1)
+Requirement already satisfied: googleapis-common-protos<2.0.0,>=1.56.2 in /home/diracai/anaconda3/lib/python3.11/site-packages (from google-api-core->google-generativeai) (1.72.0)
+Requirement already satisfied: requests<3.0.0,>=2.18.0 in /home/diracai/anaconda3/lib/python3.11/site-packages (from google-api-core->google-generativeai) (2.32.4)
+Requirement already satisfied: pyasn1-modules>=0.2.1 in /home/diracai/anaconda3/lib/python3.11/site-packages (from google-auth->google-generativeai) (0.2.8)
+Requirement already satisfied: cryptography>=38.0.3 in /home/diracai/anaconda3/lib/python3.11/site-packages (from google-auth->google-generativeai) (45.0.5)
+Requirement already satisfied: rsa<5,>=3.1.4 in /home/diracai/anaconda3/lib/python3.11/site-packages (from google-auth->google-generativeai) (4.9.1)
+Requirement already satisfied: cffi>=1.14 in /home/diracai/anaconda3/lib/python3.11/site-packages (from cryptography>=38.0.3->google-auth->google-generativeai) (1.15.1)
+Requirement already satisfied: grpcio<2.0.0,>=1.33.2 in /home/diracai/anaconda3/lib/python3.11/site-packages (from google-api-core[grpc]!=2.0.*,!=2.1.*,!=2.10.*,!=2.2.*,!=2.3.*,!=2.4.*,!=2.5.*,!=2.6.*,!=2.7.*,!=2.8.*,!=2.9.*,<3.0.0dev,>=1.34.0->google-ai-generativelanguage==0.4.0->google-generativeai) (1.76.0)
+Requirement already satisfied: grpcio-status<2.0.0,>=1.33.2 in /home/diracai/anaconda3/lib/python3.11/site-packages (from google-api-core[grpc]!=2.0.*,!=2.1.*,!=2.10.*,!=2.2.*,!=2.3.*,!=2.4.*,!=2.5.*,!=2.6.*,!=2.7.*,!=2.8.*,!=2.9.*,<3.0.0dev,>=1.34.0->google-ai-generativelanguage==0.4.0->google-generativeai) (1.62.3)
+Requirement already satisfied: pyasn1<0.5.0,>=0.4.6 in /home/diracai/anaconda3/lib/python3.11/site-packages (from pyasn1-modules>=0.2.1->google-auth->google-generativeai) (0.4.8)
+Requirement already satisfied: charset_normalizer<4,>=2 in /home/diracai/anaconda3/lib/python3.11/site-packages (from requests<3.0.0,>=2.18.0->google-api-core->google-generativeai) (2.0.9)
+Requirement already satisfied: idna<4,>=2.5 in /home/diracai/anaconda3/lib/python3.11/site-packages (from requests<3.0.0,>=2.18.0->google-api-core->google-generativeai) (3.2)
+Requirement already satisfied: urllib3<3,>=1.21.1 in /home/diracai/anaconda3/lib/python3.11/site-packages (from requests<3.0.0,>=2.18.0->google-api-core->google-generativeai) (1.26.7)
+Requirement already satisfied: certifi>=2017.4.17 in /home/diracai/anaconda3/lib/python3.11/site-packages (from requests<3.0.0,>=2.18.0->google-api-core->google-generativeai) (2021.10.8)
+Requirement already satisfied: pycparser in /home/diracai/anaconda3/lib/python3.11/site-packages (from cffi>=1.14->cryptography>=38.0.3->google-auth->google-generativeai) (2.20)
+Collecting protobuf (from google-generativeai)
+  Using cached protobuf-4.25.8-cp37-abi3-manylinux2014_x86_64.whl.metadata (541 bytes)
+Using cached protobuf-4.25.8-cp37-abi3-manylinux2014_x86_64.whl (294 kB)
+Installing collected packages: protobuf
+  Attempting uninstall: protobuf
+    Found existing installation: protobuf 3.20.3
+    Uninstalling protobuf-3.20.3:
+      Successfully uninstalled protobuf-3.20.3
+Successfully installed protobuf-4.25.8

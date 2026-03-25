@@ -1,0 +1,2094 @@
+{
+  "info": {
+    "name": "Exam & Timetable API Collection",
+    "_postman_id": "exam-timetable-collection",
+    "description": "Complete API collection for Exam + Timetable backend.\n\n\u2705 BOTH EXAM AND TIMETABLE USE SAME AUTHENTICATION:\n- Role-based login: /api/auth/{role}/login/ (Exam) or /api/timetable/auth/{role}/login/ (Timetable)\n- Both support username, email, or teacher_code\n- Both return same JWT token format\n\nUse environment variables: {{base_url}}, {{superadmin_username}}, {{superadmin_password}}",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Auth - Exam (Accounts)",
+      "item": [
+        {
+          "name": "Exam - User Register",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/auth/register/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "register",
+                ""
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"user1@example.com\",\n  \"password\": \"User@1234\",\n  \"first_name\": \"Test\",\n  \"last_name\": \"User\"\n}"
+            },
+            "description": "Registers a generic user in the exam system. Uses accounts.User."
+          }
+        },
+        {
+          "name": "Exam - User Login",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/auth/login/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "login",
+                ""
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"user1@example.com\",\n  \"password\": \"User@1234\"\n}"
+            },
+            "description": "Exam-side login (email + password). Returns JWT tokens."
+          },
+          "description": "Generic Exam login - supports username, email, or teacher_code. Returns JWT tokens in same format as timetable. Use role-based login for better control."
+        },
+        {
+          "name": "Exam - User Logout",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/auth/logout/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "logout",
+                ""
+              ]
+            },
+            "description": "Logs out the current user (uses Django session/JWT blacklisting depending on implementation)."
+          }
+        },
+        {
+          "name": "Exam - User Profile",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{exam_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/auth/profile/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "profile",
+                ""
+              ]
+            },
+            "description": "Get current logged-in exam user profile."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Auth - Exam (Role-based - Same as Timetable)",
+      "item": [
+        {
+          "name": "Exam - Super Admin Login",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/auth/superadmin/login/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "superadmin",
+                "login",
+                ""
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{superadmin_username}}\",\n  \"password\": \"{{superadmin_password}}\"\n}"
+            },
+            "description": "Login as Super Admin for Exam system. Same authentication as Timetable. Supports username, email, or teacher_code."
+          }
+        },
+        {
+          "name": "Exam - Admin Login",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/auth/admin/login/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "admin",
+                "login",
+                ""
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"ADM-XXXX-001\",\n  \"password\": \"Admin@XXXX2025\"\n}"
+            },
+            "description": "Login as Admin for Exam system. Same authentication as Timetable."
+          }
+        },
+        {
+          "name": "Exam - Teacher Login",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/auth/teacher/login/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "teacher",
+                "login",
+                ""
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"TCH-XXXX-001\",\n  \"password\": \"Teacher@XXXX2025\"\n}"
+            },
+            "description": "Login as Teacher for Exam system. username can be username, email, or teacher_code."
+          }
+        },
+        {
+          "name": "Exam - Student Login",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/auth/student/login/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "student",
+                "login",
+                ""
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"STU-XXXX-001\",\n  \"password\": \"Student@XXXX2025\"\n}"
+            },
+            "description": "Login as Student for Exam system."
+          }
+        },
+        {
+          "name": "Exam - Staff Login",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/auth/staff/login/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "staff",
+                "login",
+                ""
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"STF-XXXX-001\",\n  \"password\": \"Staff@XXXX2025\"\n}"
+            },
+            "description": "Login as Staff for Exam system."
+          }
+        },
+        {
+          "name": "Exam - Change Password",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{exam_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/auth/auth/change-password/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "auth",
+                "change-password",
+                ""
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"old_password\": \"Old@1234\",\n  \"new_password\": \"New@1234\",\n  \"confirm_password\": \"New@1234\"\n}"
+            },
+            "description": "Change password for Exam user (any role)."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Auth - Timetable (Role-based)",
+      "item": [
+        {
+          "name": "Timetable - Super Admin Login",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/auth/superadmin/login/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "timetable",
+                "auth",
+                "superadmin",
+                "login",
+                ""
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{superadmin_username}}\",\n  \"password\": \"{{superadmin_password}}\"\n}"
+            },
+            "description": "Login as Super Admin (accounts.User with role SUPER_ADMIN or super_admin). Returns JWT tokens."
+          }
+        },
+        {
+          "name": "Timetable - Admin Login",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/auth/admin/login/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "timetable",
+                "auth",
+                "admin",
+                "login",
+                ""
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"ADM-XXXX-001\",\n  \"password\": \"Admin@XXXX2025\"\n}"
+            },
+            "description": "Login as Center Admin. Use credentials returned from create-admin API."
+          }
+        },
+        {
+          "name": "Timetable - Teacher Login",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/auth/teacher/login/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "timetable",
+                "auth",
+                "teacher",
+                "login",
+                ""
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"TCH-XXXX-001\",\n  \"password\": \"Teacher@XXXX2025\"\n}"
+            },
+            "description": "Login as Teacher. username can be normal username or teacher_code."
+          }
+        },
+        {
+          "name": "Timetable - Student Login",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/auth/student/login/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "timetable",
+                "auth",
+                "student",
+                "login",
+                ""
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"STU-XXXX-001\",\n  \"password\": \"Student@XXXX2025\"\n}"
+            },
+            "description": "Login as Student."
+          }
+        },
+        {
+          "name": "Timetable - Staff Login",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/auth/staff/login/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "timetable",
+                "auth",
+                "staff",
+                "login",
+                ""
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"staff_username\",\n  \"password\": \"staff_password\"\n}"
+            },
+            "description": "Login as Staff (non-teaching)."
+          }
+        },
+        {
+          "name": "Timetable - Change Password",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{timetable_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/auth/change-password/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "timetable",
+                "auth",
+                "change-password",
+                ""
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"old_password\": \"Old@1234\",\n  \"new_password\": \"New@1234\",\n  \"confirm_password\": \"New@1234\"\n}"
+            },
+            "description": "Change password for current timetable user (any role)."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Timetable - Institute Management",
+      "item": [
+        {
+          "name": "Create Institute",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{timetable_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/auth/institutes/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "institutes",
+                ""
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Allen Coaching\",\n  \"domain\": \"allencoaching.edu\",\n  \"description\": \"Leading coaching institute\",\n  \"address\": \"123 Education Street\",\n  \"contact_email\": \"contact@allencoaching.com\",\n  \"contact_phone\": \"+91-1234567890\",\n  \"website\": \"https://www.allencoaching.com\"\n}"
+            },
+            "description": "Create a new Institute. Requires authentication. The creator becomes the institute admin.\n\n**Note:** Institute can also be auto-created when creating a Center (if institute_name doesn't exist)."
+          }
+        },
+        {
+          "name": "List Institutes",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{timetable_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/auth/institutes/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "institutes",
+                ""
+              ]
+            },
+            "description": "List all active institutes (public endpoint, no auth required for GET)."
+          }
+        },
+        {
+          "name": "Get Institute Details",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{timetable_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/auth/institutes/{{institute_id}}/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "institutes",
+                "{{institute_id}}",
+                ""
+              ]
+            },
+            "description": "Get institute details by ID."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Timetable - Super Admin Management",
+      "item": [
+        {
+          "name": "Create Center (Super Admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{timetable_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/superadmin/centers/create/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "timetable",
+                "superadmin",
+                "centers",
+                "create",
+                ""
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"institute_id\": {{institute_id}},\n  \"name\": \"Allen - Jaipur Center\",\n  \"city\": \"Jaipur\",\n  \"address\": \"123 Main Street, Jaipur\"\n}"
+            },
+            "description": "Creates a Center under an Institute.\n\n**Required fields:**\n- `institute_id` (integer): ID of the institute\n- `name` (string): Name of the center\n- `city` (string): City where center is located\n\n**Optional fields:**\n- `address` (string): Full address of the center\n\n**Note:** You must first create the institute using the Create Institute endpoint, then use its ID here."
+          }
+        },
+        {
+          "name": "Create Admin (Super Admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{timetable_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/superadmin/admins/create/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "timetable",
+                "superadmin",
+                "admins",
+                "create",
+                ""
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"center_id\": \"{{center_id}}\",\n  \"name\": \"Admin Name\",\n  \"email\": \"admin@example.com\",\n  \"phone_number\": \"9876543211\"\n}"
+            },
+            "description": "Creates a Center Admin. Response includes auto-generated username and password.\n\n**Payload accepts either `center_name` OR `center_id`:**\n- Use `center_id` (recommended when duplicates exist): `{\"center_id\": \"uuid\", ...}`\n- Use `center_name`: `{\"center_name\": \"Allen - Jaipur Center\", ...}`\n\nIf multiple centers match the name, API returns list of matching centers with their IDs."
+          }
+        },
+        {
+          "name": "Create Teacher (Super Admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{timetable_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/superadmin/teachers/create/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "timetable",
+                "superadmin",
+                "teachers",
+                "create",
+                ""
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"center_id\": \"{{center_id}}\",\n  \"name\": \"Teacher Name\",\n  \"email\": \"teacher@example.com\",\n  \"phone_number\": \"9876543212\",\n  \"employee_id\": \"EMP-001\",\n  \"subjects\": \"Physics, Chemistry\"\n}"
+            },
+            "description": "Creates a Teacher with auto-generated username/password and teacher_code.\n\n**Payload accepts either `center_name` OR `center_id`:**\n- Use `center_id` (recommended when duplicates exist): `{\"center_id\": \"uuid\", ...}`\n- Use `center_name`: `{\"center_name\": \"Allen - Jaipur Center\", ...}`\n\nIf multiple centers match the name, API returns list of matching centers with their IDs."
+          }
+        },
+        {
+          "name": "Create Student (Super Admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{timetable_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/superadmin/students/create/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "timetable",
+                "superadmin",
+                "students",
+                "create",
+                ""
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"center_id\": \"{{center_id}}\",\n  \"name\": \"Student Name\",\n  \"email\": \"student@example.com\",\n  \"phone_number\": \"9876543213\"\n}"
+            },
+            "description": "Creates a Student with auto-generated username/password and enrollment.\n\n**Note:** This endpoint actually requires `batch_code` instead of `center_id`. The payload should be:\n```json\n{\n  \"batch_code\": \"BATCH-001\",\n  \"name\": \"Student Name\",\n  \"email\": \"student@example.com\",\n  \"phone_number\": \"9876543213\",\n  \"date_of_birth\": \"2010-05-15\"\n}\n```\n\nIf you need to create a student by center, you'll need to first get/create a batch for that center."
+          }
+        },
+        {
+          "name": "Create Staff (Super Admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{timetable_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/superadmin/staff/create/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "timetable",
+                "superadmin",
+                "staff",
+                "create",
+                ""
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"center_id\": \"{{center_id}}\",\n  \"name\": \"Staff Name\",\n  \"email\": \"staff@example.com\",\n  \"phone_number\": \"9876543214\"\n}"
+            },
+            "description": "Creates a Staff member with auto-generated username/password.\n\n**Payload accepts either `center_name` OR `center_id`:**\n- Use `center_id` (recommended when duplicates exist): `{\"center_id\": \"uuid\", ...}`\n- Use `center_name`: `{\"center_name\": \"Allen - Jaipur Center\", ...}`\n\nIf multiple centers match the name, API returns list of matching centers with their IDs."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Timetable - Admin User Management",
+      "item": [
+        {
+          "name": "Create Teacher (Admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{timetable_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/admin/teachers/create/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "timetable",
+                "admin",
+                "teachers",
+                "create",
+                ""
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Teacher Name\",\n  \"email\": \"teacher@example.com\",\n  \"phone_number\": \"9876543212\",\n  \"employee_id\": \"EMP-001\",\n  \"subjects\": \"Physics, Chemistry\"\n}"
+            },
+            "description": "Admin creates Teacher in their center (center_name not needed)."
+          }
+        },
+        {
+          "name": "Create Student (Admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{timetable_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/admin/students/create/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "timetable",
+                "admin",
+                "students",
+                "create",
+                ""
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"batch_code\": \"BATCH-001\",\n  \"name\": \"Student Name\",\n  \"email\": \"student@example.com\",\n  \"phone_number\": \"9876543213\",\n  \"date_of_birth\": \"2010-05-15\"\n}"
+            },
+            "description": "Admin creates Student in batches from their center only."
+          }
+        },
+        {
+          "name": "Create Staff (Admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{timetable_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/admin/staff/create/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "timetable",
+                "admin",
+                "staff",
+                "create",
+                ""
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Staff Name\",\n  \"email\": \"staff@example.com\",\n  \"phone_number\": \"9876543214\"\n}"
+            },
+            "description": "Admin creates Staff in their center (center_name not needed)."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Timetable - Programs & Batches",
+      "item": [
+        {
+          "name": "Create Program (Super Admin / Admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{timetable_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/superadmin/programs/create/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "timetable",
+                "superadmin",
+                "programs",
+                "create",
+                ""
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"center_id\": \"{{center_id}}\",\n  \"name\": \"JEE Main 2025\",\n  \"description\": \"One-year JEE program\",\n  \"category\": \"Engineering\"\n}"
+            },
+            "description": "Creates an academic Program under a Center.\n\n**Payload accepts either `center_name` OR `center_id`:**\n- Use `center_id` (recommended when duplicates exist): `{\"center_id\": \"uuid\", ...}`\n- Use `center_name`: `{\"center_name\": \"Allen - Jaipur Center\", ...}`\n\nIf multiple centers match the name, API returns list of matching centers with their IDs."
+          }
+        },
+        {
+          "name": "List Programs",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{timetable_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/programs/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "timetable",
+                "programs",
+                ""
+              ]
+            },
+            "description": "Lists all Programs in the current user's Center/Institute context."
+          }
+        },
+        {
+          "name": "List Batches",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{timetable_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/batches/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "timetable",
+                "batches",
+                ""
+              ]
+            },
+            "description": "Lists all Batches."
+          }
+        },
+        {
+          "name": "Get Program Details",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{timetable_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/programs/{{program_id}}/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "timetable",
+                "programs",
+                "{{program_id}}",
+                ""
+              ]
+            },
+            "description": "Get program details by ID."
+          }
+        },
+        {
+          "name": "Get Batch Details",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{timetable_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/batches/{{batch_id}}/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "timetable",
+                "batches",
+                "{{batch_id}}",
+                ""
+              ]
+            },
+            "description": "Get batch details by ID."
+          }
+        },
+        {
+          "name": "Add Student to Batch",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{timetable_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/admin/batches/add-student/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "timetable",
+                "admin",
+                "batches",
+                "add-student",
+                ""
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"batch_code\": \"BATCH-001\",\n  \"student_username\": \"STU-XXXX-001\"\n}"
+            },
+            "description": "Admin adds existing student to a batch."
+          }
+        },
+        {
+          "name": "Create Batch (Admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{timetable_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/admin/batches/create/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "timetable",
+                "admin",
+                "batches",
+                "create",
+                ""
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"program_id\": \"{{program_id}}\",\n  \"code\": \"BATCH-001\",\n  \"name\": \"JEE Batch 1\",\n  \"start_date\": \"2025-01-01\",\n  \"end_date\": \"2025-03-31\"\n}"
+            },
+            "description": "Admin creates a Batch under a Program in their center. Requires a valid program_id."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Timetable - Center GET APIs",
+      "item": [
+        {
+          "name": "List Centers",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{timetable_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/centers/?institute_id={{institute_id}}&city={{city}}&search={{search}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "timetable",
+                "centers",
+                ""
+              ],
+              "query": [
+                {
+                  "key": "institute_id",
+                  "value": "{{institute_id}}",
+                  "disabled": true
+                },
+                {
+                  "key": "city",
+                  "value": "{{city}}",
+                  "disabled": true
+                },
+                {
+                  "key": "search",
+                  "value": "{{search}}",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "List all centers. Query params: institute_id, city, search."
+          }
+        },
+        {
+          "name": "Get Center Details",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{timetable_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/centers/{{center_id}}/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "timetable",
+                "centers",
+                "{{center_id}}",
+                ""
+              ]
+            },
+            "description": "Get center details by ID."
+          }
+        },
+        {
+          "name": "List Center Programs",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{timetable_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/centers/{{center_id}}/programs/?search={{search}}&is_active={{is_active}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "timetable",
+                "centers",
+                "{{center_id}}",
+                "programs",
+                ""
+              ],
+              "query": [
+                {
+                  "key": "search",
+                  "value": "{{search}}",
+                  "description": "Search by program name",
+                  "disabled": true
+                },
+                {
+                  "key": "is_active",
+                  "value": "{{is_active}}",
+                  "description": "Filter by active status: true/false",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "List all programs in a center. Query params: search (search by name), is_active (filter by active status)."
+          }
+        },
+        {
+          "name": "List Center Batches",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{timetable_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/centers/{{center_id}}/batches/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "timetable",
+                "centers",
+                "{{center_id}}",
+                "batches",
+                ""
+              ],
+              "query": [
+                {
+                  "key": "program_id",
+                  "value": "{{program_id}}",
+                  "description": "Filter batches by program ID",
+                  "disabled": true
+                },
+                {
+                  "key": "search",
+                  "value": "{{search}}",
+                  "description": "Search by batch code or name",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "List all batches in a center. Query params: program_id (filter by program), search (search by batch code or name)."
+          }
+        },
+        {
+          "name": "List Center Users",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{timetable_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/centers/{{center_id}}/users/?role={{role}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "timetable",
+                "centers",
+                "{{center_id}}",
+                "users",
+                ""
+              ],
+              "query": [
+                {
+                  "key": "role",
+                  "value": "{{role}}",
+                  "description": "Filter by role: ADMIN, TEACHER, STUDENT, STAFF",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "List all users in a center. Optional role filter."
+          }
+        },
+        {
+          "name": "List Center Timetables",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{timetable_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/centers/{{center_id}}/timetables/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "timetable",
+                "centers",
+                "{{center_id}}",
+                "timetables",
+                ""
+              ]
+            },
+            "description": "List all timetables in a center."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Timetable - Timetable Core",
+      "item": [
+        {
+          "name": "Create Timetable with Slots (Admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{timetable_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/admin/timetables/create/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "timetable",
+                "admin",
+                "timetables",
+                "create",
+                ""
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"from_date\": \"2025-01-01\",\n  \"to_date\": \"2025-01-15\",\n  \"free_classes_count\": 0,\n  \"weekly_slots\": {\n    \"d1\": [\n      {\"code\": \"d1_s1\", \"start\": \"08:00\", \"end\": \"09:00\", \"is_free_class\": false}\n    ],\n    \"d2\": [\n      {\"code\": \"d2_s1\", \"start\": \"08:00\", \"end\": \"09:00\", \"is_free_class\": false}\n    ]\n  },\n  \"holidays\": []\n}"
+            },
+            "description": "Admin creates a timetable with date-based slots (D1..Dn) or weekly slots (mon..sun).\n\n- For date-based: keys d1..dN within from_date/to_date range.\n- For weekly: keys mon, tue, wed, thu, fri, sat, sun."
+          }
+        },
+        {
+          "name": "List Timetables",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{timetable_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/timetables/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "timetable",
+                "timetables",
+                ""
+              ]
+            },
+            "description": "Lists all generated timetables."
+          }
+        },
+        {
+          "name": "Get Timetable Payload for Optimization",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{timetable_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/timetables/{{timetable_id}}/payload/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "timetable",
+                "timetables",
+                "{{timetable_id}}",
+                "payload",
+                ""
+              ]
+            },
+            "description": "Returns JSON payload (teachers, batches, slots, constraints) for optimization code."
+          }
+        },
+        {
+          "name": "Get Timetable Details",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{timetable_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/timetables/{{timetable_id}}/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "timetable",
+                "timetables",
+                "{{timetable_id}}",
+                ""
+              ]
+            },
+            "description": "Get timetable details by ID."
+          }
+        },
+        {
+          "name": "Get Timetable Slots",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{timetable_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/timetables/{{timetable_id}}/slots/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "timetable",
+                "timetables",
+                "{{timetable_id}}",
+                "slots",
+                ""
+              ]
+            },
+            "description": "Get day slots for a timetable."
+          }
+        },
+        {
+          "name": "Run Timetable Optimization",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{timetable_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/timetables/{{timetable_id}}/optimize/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "timetable",
+                "timetables",
+                "{{timetable_id}}",
+                "optimize",
+                ""
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"start_slot\": \"m1\",\n  \"max_retries\": 1000\n}"
+            },
+            "description": "Run genetic algorithm optimization for timetable. Checks feasibility first, then generates optimized timetable."
+          }
+        },
+        {
+          "name": "Set Free Classes Count (Admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{timetable_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/admin/timetables/{{timetable_id}}/free-classes/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "timetable",
+                "admin",
+                "timetables",
+                "{{timetable_id}}",
+                "free-classes",
+                ""
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"free_classes_count\": 3\n}"
+            },
+            "description": "Admin sets the number of free classes for a timetable. Updates all DaySlots to mark first N slots as free classes for each day."
+          }
+        },
+        {
+          "name": "Get Free Classes Count",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{timetable_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/timetables/{{timetable_id}}/free-classes/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "timetable",
+                "timetables",
+                "{{timetable_id}}",
+                "free-classes",
+                ""
+              ]
+            },
+            "description": "Get the number of free classes for a timetable."
+          }
+        },
+        {
+          "name": "Set Teacher Slot Availability",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{timetable_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/admin/timetables/teacher-availability/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "timetable",
+                "admin",
+                "timetables",
+                "teacher-availability",
+                ""
+              ]
+            },
+            "description": "Admin sets weekly teacher slot availability for a timetable.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"timetable_id\": \"{{timetable_id}}\", \"day_slot_id\": \"{{day_slot_id}}\", \"teacher_code\": \"TCH-XXXX-001\", \"is_available\": true}"
+            }
+          }
+        },
+        {
+          "name": "Get Teacher Availability",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{timetable_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/timetables/{{timetable_id}}/teacher-availability/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "timetable",
+                "timetables",
+                "{{timetable_id}}",
+                "teacher-availability",
+                ""
+              ]
+            },
+            "description": "Get weekly teacher availability for a timetable."
+          }
+        },
+        {
+          "name": "Get Teacher-wise Availability",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{timetable_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/timetables/{{timetable_id}}/teacher-wise-availability/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "timetable",
+                "timetables",
+                "{{timetable_id}}",
+                "teacher-wise-availability",
+                ""
+              ]
+            },
+            "description": "Get teacher availability organized by teacher instead of by slot."
+          }
+        },
+        {
+          "name": "Assign Batch to Timetable",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{timetable_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/admin/timetables/assign-batch/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "timetable",
+                "admin",
+                "timetables",
+                "assign-batch",
+                ""
+              ]
+            },
+            "description": "Admin assigns a batch to a timetable.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"timetable_id\": \"{{timetable_id}}\", \"batch_code\": \"BATCH-001\"}"
+            }
+          }
+        },
+        {
+          "name": "Assign Teacher to Batch",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{timetable_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/admin/timetables/assign-teacher/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "timetable",
+                "admin",
+                "timetables",
+                "assign-teacher",
+                ""
+              ]
+            },
+            "description": "Admin assigns teacher to batch with load configuration.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"timetable_id\": \"{{timetable_id}}\", \"batch_code\": \"BATCH-001\", \"teacher_code\": \"TCH-XXXX-001\", \"total_lectures\": 8, \"min_lectures_per_day\": 1, \"max_lectures_per_day\": 2}"
+            }
+          }
+        },
+        {
+          "name": "Get Timetable Batch Assignments",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{timetable_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/timetables/{{timetable_id}}/batch-assignments/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "timetable",
+                "timetables",
+                "{{timetable_id}}",
+                "batch-assignments",
+                ""
+              ]
+            },
+            "description": "Get all batch-teacher assignments for a timetable."
+          }
+        },
+        {
+          "name": "Assign Fixed Slot",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{timetable_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/admin/timetables/fixed-slots/assign/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "timetable",
+                "admin",
+                "timetables",
+                "fixed-slots",
+                "assign",
+                ""
+              ]
+            },
+            "description": "Admin fixes a batch+teacher+subject into a specific day_slot.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"timetable_id\": \"{{timetable_id}}\", \"day_slot_id\": \"{{day_slot_id}}\", \"batch_code\": \"BATCH-001\", \"teacher_code\": \"TCH-XXXX-001\", \"subject\": \"Physics\"}"
+            }
+          }
+        },
+        {
+          "name": "Get Fixed Slots",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{timetable_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/timetables/{{timetable_id}}/fixed-slots/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "timetable",
+                "timetables",
+                "{{timetable_id}}",
+                "fixed-slots",
+                ""
+              ]
+            },
+            "description": "Get all fixed (locked) slots for a timetable."
+          }
+        },
+        {
+          "name": "Get All Batches Timetable",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{timetable_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/timetables/{{timetable_id}}/batches/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "timetable",
+                "timetables",
+                "{{timetable_id}}",
+                "batches",
+                ""
+              ]
+            },
+            "description": "Get timetable for all batches (grouped by batch, day-wise d1..dN or mon..sun)."
+          }
+        },
+        {
+          "name": "Get Batch Timetable",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{timetable_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/timetables/{{timetable_id}}/batches/{{batch_id}}/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "timetable",
+                "timetables",
+                "{{timetable_id}}",
+                "batches",
+                "{{batch_id}}",
+                ""
+              ]
+            },
+            "description": "Get timetable for a single batch."
+          }
+        },
+        {
+          "name": "Get All Teachers Timetable",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{timetable_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/timetables/{{timetable_id}}/teachers/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "timetable",
+                "timetables",
+                "{{timetable_id}}",
+                "teachers",
+                ""
+              ]
+            },
+            "description": "Get timetables for all teachers in a timetable."
+          }
+        },
+        {
+          "name": "Get Teacher Timetable",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{timetable_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/timetable/timetables/{{timetable_id}}/teachers/{{teacher_id}}/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "timetable",
+                "timetables",
+                "{{timetable_id}}",
+                "teachers",
+                "{{teacher_id}}",
+                ""
+              ],
+              "query": [
+                {
+                  "key": "teacher_code",
+                  "value": "{{teacher_code}}",
+                  "description": "Alternative to teacher_id",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Get timetable for a specific teacher. Optional teacher_code query param."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Exam - Core APIs",
+      "item": [
+        {
+          "name": "List Exams",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{exam_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/exams/exams/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "exams",
+                "exams",
+                ""
+              ]
+            },
+            "description": "Get list of exams for the institute."
+          }
+        },
+        {
+          "name": "List Patterns",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{exam_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/patterns/patterns/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "patterns",
+                "patterns",
+                ""
+              ]
+            },
+            "description": "Get all exam patterns."
+          }
+        },
+        {
+          "name": "List Question Banks",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{exam_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/questions/question-banks/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "questions",
+                "question-banks",
+                ""
+              ]
+            },
+            "description": "Get all question banks for the institute."
+          }
+        },
+        {
+          "name": "Get Pattern Questions (Bulk)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{exam_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/questions/pattern-questions-bulk/?pattern_id={{pattern_id}}&exam_id={{exam_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "questions",
+                "pattern-questions-bulk",
+                ""
+              ],
+              "query": [
+                {
+                  "key": "pattern_id",
+                  "value": "{{pattern_id}}"
+                },
+                {
+                  "key": "exam_id",
+                  "value": "{{exam_id}}"
+                }
+              ]
+            },
+            "description": "Fetches all questions for a given pattern/exam in a single optimized call."
+          }
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://127.0.0.1:8000"
+    },
+    {
+      "key": "exam_access_token",
+      "value": ""
+    },
+    {
+      "key": "timetable_access_token",
+      "value": ""
+    },
+    {
+      "key": "timetable_id",
+      "value": ""
+    },
+    {
+      "key": "pattern_id",
+      "value": ""
+    },
+    {
+      "key": "exam_id",
+      "value": ""
+    },
+    {
+      "key": "superadmin_username",
+      "value": "testa"
+    },
+    {
+      "key": "superadmin_password",
+      "value": "SuperAdmin@2025"
+    },
+    {
+      "key": "center_id",
+      "value": ""
+    },
+    {
+      "key": "program_id",
+      "value": ""
+    },
+    {
+      "key": "batch_id",
+      "value": ""
+    },
+    {
+      "key": "institute_id",
+      "value": ""
+    },
+    {
+      "key": "role",
+      "value": "TEACHER"
+    }
+  ]
+}

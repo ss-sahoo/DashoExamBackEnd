@@ -1,0 +1,949 @@
+{
+	"info": {
+		"_postman_id": "exam-flow-api-collection",
+		"name": "Exam Flow API Collection",
+		"description": "Complete API collection for Exam Flow system with authentication, patterns, questions, exams, and AI features",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "Authentication",
+			"item": [
+				{
+					"name": "Register User",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"teacher@demo.edu\",\n  \"username\": \"teacher1\",\n  \"first_name\": \"John\",\n  \"last_name\": \"Doe\",\n  \"password\": \"SecurePass123\",\n  \"password_confirm\": \"SecurePass123\",\n  \"phone\": \"+1234567890\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/auth/register/",
+							"host": ["{{base_url}}"],
+							"path": ["auth", "register", ""]
+						},
+						"description": "Register a new user without institute (institute can be created later)"
+					},
+					"response": []
+				},
+				{
+					"name": "Login",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"var jsonData = pm.response.json();",
+									"if (jsonData.access) {",
+									"    pm.environment.set(\"access_token\", jsonData.access);",
+									"}",
+									"if (jsonData.refresh) {",
+									"    pm.environment.set(\"refresh_token\", jsonData.refresh);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"test2@demo.edu\",\n  \"password\": \"test123\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/auth/login/",
+							"host": ["{{base_url}}"],
+							"path": ["auth", "login", ""]
+						},
+						"description": "Login and get access & refresh tokens (auto-saved to environment)"
+					},
+					"response": []
+				},
+				{
+					"name": "Get User Profile",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{access_token}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/auth/profile/",
+							"host": ["{{base_url}}"],
+							"path": ["auth", "profile", ""]
+						},
+						"description": "Get current user profile information"
+					},
+					"response": []
+				},
+				{
+					"name": "Refresh Token",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"var jsonData = pm.response.json();",
+									"if (jsonData.access) {",
+									"    pm.environment.set(\"access_token\", jsonData.access);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"refresh\": \"{{refresh_token}}\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/auth/token/refresh/",
+							"host": ["{{base_url}}"],
+							"path": ["auth", "token", "refresh", ""]
+						},
+						"description": "Refresh access token using refresh token"
+					},
+					"response": []
+				},
+				{
+					"name": "Logout",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{access_token}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/auth/logout/",
+							"host": ["{{base_url}}"],
+							"path": ["auth", "logout", ""]
+						},
+						"description": "Logout and invalidate tokens"
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Institutes",
+			"item": [
+				{
+					"name": "List Institutes",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/auth/institutes/",
+							"host": ["{{base_url}}"],
+							"path": ["auth", "institutes", ""]
+						},
+						"description": "List all active institutes (public)"
+					},
+					"response": []
+				},
+				{
+					"name": "Create Institute",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{access_token}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"My Test Institute\",\n  \"domain\": \"mytestinstitute.edu\",\n  \"contact_email\": \"admin@mytestinstitute.edu\",\n  \"address\": \"123 Education Street\",\n  \"description\": \"A test institute for demo purposes\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/auth/institutes/",
+							"host": ["{{base_url}}"],
+							"path": ["auth", "institutes", ""]
+						},
+						"description": "Create a new institute (requires authentication, user becomes admin)"
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Patterns",
+			"item": [
+				{
+					"name": "List Patterns",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{access_token}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/patterns/patterns/",
+							"host": ["{{base_url}}"],
+							"path": ["patterns", "patterns", ""]
+						},
+						"description": "List all exam patterns for your institute"
+					},
+					"response": []
+				},
+				{
+					"name": "Create Pattern",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{access_token}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"NEET 2025 Mock Test\",\n  \"description\": \"Mock test for NEET 2025 preparation\",\n  \"total_questions\": 15,\n  \"total_marks\": 25,\n  \"total_duration\": 60,\n  \"is_active\": true,\n  \"sections\": [\n    {\n      \"name\": \"Biology Part A\",\n      \"subject\": \"Biology\",\n      \"question_type\": \"Single Correct MCQ\",\n      \"start_question\": 1,\n      \"end_question\": 5,\n      \"min_questions_to_attempt\": 5,\n      \"is_compulsory\": true,\n      \"order\": 1,\n      \"marking_scheme\": {\n        \"max_marks\": 1,\n        \"negative_marking_percentage\": 25,\n        \"partial_marking\": false,\n        \"marks_per_correct_option\": 0,\n        \"tolerance_range\": 0,\n        \"decimal_precision\": 2,\n        \"manual_grading\": false\n      }\n    },\n    {\n      \"name\": \"Biology Part B\",\n      \"subject\": \"Biology\",\n      \"question_type\": \"Multiple Correct MCQ\",\n      \"start_question\": 6,\n      \"end_question\": 10,\n      \"min_questions_to_attempt\": 5,\n      \"is_compulsory\": true,\n      \"order\": 2,\n      \"marking_scheme\": {\n        \"max_marks\": 2,\n        \"negative_marking_percentage\": 25,\n        \"partial_marking\": true,\n        \"marks_per_correct_option\": 1,\n        \"tolerance_range\": 0,\n        \"decimal_precision\": 2,\n        \"manual_grading\": false\n      }\n    },\n    {\n      \"name\": \"Biology Part C\",\n      \"subject\": \"Biology\",\n      \"question_type\": \"Subjective\",\n      \"start_question\": 11,\n      \"end_question\": 15,\n      \"min_questions_to_attempt\": 5,\n      \"is_compulsory\": true,\n      \"order\": 3,\n      \"marking_scheme\": {\n        \"max_marks\": 2,\n        \"negative_marking_percentage\": 0,\n        \"partial_marking\": false,\n        \"marks_per_correct_option\": 0,\n        \"tolerance_range\": 0,\n        \"decimal_precision\": 2,\n        \"manual_grading\": true\n      }\n    }\n  ]\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/patterns/patterns/",
+							"host": ["{{base_url}}"],
+							"path": ["patterns", "patterns", ""]
+						},
+						"description": "Create a new exam pattern with sections"
+					},
+					"response": []
+				},
+				{
+					"name": "Get Pattern Details",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{access_token}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/patterns/patterns/1/",
+							"host": ["{{base_url}}"],
+							"path": ["patterns", "patterns", "1", ""]
+						},
+						"description": "Get detailed information about a specific pattern"
+					},
+					"response": []
+				},
+				{
+					"name": "Update Pattern",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{access_token}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"NEET 2025 Mock Test - Updated\",\n  \"description\": \"Updated mock test\",\n  \"total_questions\": 15,\n  \"total_marks\": 25,\n  \"total_duration\": 90,\n  \"is_active\": true\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/patterns/patterns/1/",
+							"host": ["{{base_url}}"],
+							"path": ["patterns", "patterns", "1", ""]
+						},
+						"description": "Update an existing pattern"
+					},
+					"response": []
+				},
+				{
+					"name": "Delete Pattern",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{access_token}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/patterns/patterns/1/",
+							"host": ["{{base_url}}"],
+							"path": ["patterns", "patterns", "1", ""]
+						},
+						"description": "Delete a pattern"
+					},
+					"response": []
+				},
+				{
+					"name": "Validate Pattern",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{access_token}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/patterns/patterns/1/validate/",
+							"host": ["{{base_url}}"],
+							"path": ["patterns", "patterns", "1", "validate", ""]
+						},
+						"description": "Validate pattern structure (check for gaps, overlaps)"
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Subjects",
+			"item": [
+				{
+					"name": "List Subjects",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{access_token}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/patterns/subjects/",
+							"host": ["{{base_url}}"],
+							"path": ["patterns", "subjects", ""]
+						},
+						"description": "List all subjects for your institute"
+					},
+					"response": []
+				},
+				{
+					"name": "Create Subject",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{access_token}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Physics\",\n  \"description\": \"Physics subject for science students\",\n  \"is_active\": true\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/patterns/subjects/",
+							"host": ["{{base_url}}"],
+							"path": ["patterns", "subjects", ""]
+						},
+						"description": "Create a new subject"
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Questions",
+			"item": [
+				{
+					"name": "List Questions",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{access_token}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/questions/?subject=Physics&difficulty=medium",
+							"host": ["{{base_url}}"],
+							"path": ["questions", ""],
+							"query": [
+								{
+									"key": "subject",
+									"value": "Physics"
+								},
+								{
+									"key": "difficulty",
+									"value": "medium"
+								}
+							]
+						},
+						"description": "List questions with optional filters"
+					},
+					"response": []
+				},
+				{
+					"name": "Create MCQ Question",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{access_token}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"question_text\": \"What is Newton's Second Law of Motion?\",\n  \"question_type\": \"mcq\",\n  \"subject\": \"Physics\",\n  \"topic\": \"Newton's Laws of Motion\",\n  \"difficulty\": \"easy\",\n  \"options\": [\"F = ma\", \"E = mc²\", \"v = u + at\", \"P = mv\"],\n  \"correct_answer\": \"F = ma\",\n  \"solution\": \"Newton's second law states that Force equals mass times acceleration (F = ma)\",\n  \"marks\": 4,\n  \"negative_marks\": 1,\n  \"pattern_section\": 1\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/questions/",
+							"host": ["{{base_url}}"],
+							"path": ["questions", ""]
+						},
+						"description": "Create a new MCQ question"
+					},
+					"response": []
+				},
+				{
+					"name": "Create Numerical Question",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{access_token}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"question_text\": \"A block of mass 5 kg is accelerated by 4 m/s². Calculate the force applied.\",\n  \"question_type\": \"numerical\",\n  \"subject\": \"Physics\",\n  \"topic\": \"Force and Motion\",\n  \"difficulty\": \"medium\",\n  \"correct_answer\": \"20\",\n  \"solution\": \"F = ma = 5 × 4 = 20 N\",\n  \"marks\": 4,\n  \"negative_marks\": 0,\n  \"pattern_section\": 2\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/questions/",
+							"host": ["{{base_url}}"],
+							"path": ["questions", ""]
+						},
+						"description": "Create a numerical answer question"
+					},
+					"response": []
+				},
+				{
+					"name": "Create Subjective Question",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{access_token}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"question_text\": \"Explain the three laws of thermodynamics with examples.\",\n  \"question_type\": \"subjective\",\n  \"subject\": \"Physics\",\n  \"topic\": \"Thermodynamics\",\n  \"difficulty\": \"hard\",\n  \"correct_answer\": \"See solution for detailed explanation\",\n  \"solution\": \"1st Law: Energy conservation... 2nd Law: Entropy... 3rd Law: Absolute zero...\",\n  \"marks\": 10,\n  \"negative_marks\": 0,\n  \"pattern_section\": 3\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/questions/",
+							"host": ["{{base_url}}"],
+							"path": ["questions", ""]
+						},
+						"description": "Create a subjective/essay type question"
+					},
+					"response": []
+				},
+				{
+					"name": "Get Question Details",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{access_token}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/questions/1/",
+							"host": ["{{base_url}}"],
+							"path": ["questions", "1", ""]
+						},
+						"description": "Get details of a specific question"
+					},
+					"response": []
+				},
+				{
+					"name": "Update Question",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{access_token}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"question_text\": \"Updated question text\",\n  \"difficulty\": \"hard\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/questions/1/",
+							"host": ["{{base_url}}"],
+							"path": ["questions", "1", ""]
+						},
+						"description": "Update an existing question"
+					},
+					"response": []
+				},
+				{
+					"name": "Delete Question",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{access_token}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/questions/1/",
+							"host": ["{{base_url}}"],
+							"path": ["questions", "1", ""]
+						},
+						"description": "Delete a question"
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "AI & RAG",
+			"item": [
+				{
+					"name": "Semantic Search",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{access_token}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"query\": \"Newton's second law\",\n  \"top_k\": 5\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/questions/semantic-search/",
+							"host": ["{{base_url}}"],
+							"path": ["questions", "semantic-search", ""]
+						},
+						"description": "Search questions by semantic meaning (uses vector similarity)"
+					},
+					"response": []
+				},
+				{
+					"name": "Chatbot Query",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{access_token}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"query\": \"Explain Newton's second law with examples\",\n  \"session_id\": \"session_123456\",\n  \"include_history\": true\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/questions/chatbot/",
+							"host": ["{{base_url}}"],
+							"path": ["questions", "chatbot", ""]
+						},
+						"description": "Ask AI chatbot a question (uses RAG with question bank)"
+					},
+					"response": []
+				},
+				{
+					"name": "Get Chat History",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{access_token}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/questions/chat-history/?session_id=session_123456",
+							"host": ["{{base_url}}"],
+							"path": ["questions", "chat-history", ""],
+							"query": [
+								{
+									"key": "session_id",
+									"value": "session_123456"
+								}
+							]
+						},
+						"description": "Get chat conversation history for a session"
+					},
+					"response": []
+				},
+				{
+					"name": "Generate Embedding for Question",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{access_token}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/questions/1/embed/",
+							"host": ["{{base_url}}"],
+							"path": ["questions", "1", "embed", ""]
+						},
+						"description": "Generate vector embedding for a specific question"
+					},
+					"response": []
+				},
+				{
+					"name": "Bulk Generate Embeddings",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{access_token}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"question_ids\": [1, 2, 3, 4, 5]\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/questions/bulk-embed/",
+							"host": ["{{base_url}}"],
+							"path": ["questions", "bulk-embed", ""]
+						},
+						"description": "Generate embeddings for multiple questions at once"
+					},
+					"response": []
+				},
+				{
+					"name": "Get Embedding Statistics",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{access_token}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/questions/embedding-stats/",
+							"host": ["{{base_url}}"],
+							"path": ["questions", "embedding-stats", ""]
+						},
+						"description": "Get statistics about embeddings (total, coverage, etc.)"
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Exams",
+			"item": [
+				{
+					"name": "List Exams",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{access_token}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/exams/exams/",
+							"host": ["{{base_url}}"],
+							"path": ["exams", "exams", ""]
+						},
+						"description": "List all exams"
+					},
+					"response": []
+				},
+				{
+					"name": "Create Exam",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{access_token}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"title\": \"NEET Mock Test 1\",\n  \"description\": \"First mock test for NEET preparation\",\n  \"pattern\": 1,\n  \"start_date\": \"2025-11-01T10:00:00Z\",\n  \"end_date\": \"2025-11-01T12:00:00Z\",\n  \"duration_minutes\": 120,\n  \"max_attempts\": 1,\n  \"passing_marks\": 50,\n  \"is_published\": true,\n  \"shuffle_questions\": true,\n  \"shuffle_options\": true,\n  \"show_results_immediately\": false\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/exams/exams/",
+							"host": ["{{base_url}}"],
+							"path": ["exams", "exams", ""]
+						},
+						"description": "Create a new exam based on a pattern"
+					},
+					"response": []
+				},
+				{
+					"name": "Get Exam Details",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{access_token}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/exams/exams/1/",
+							"host": ["{{base_url}}"],
+							"path": ["exams", "exams", "1", ""]
+						},
+						"description": "Get detailed information about an exam"
+					},
+					"response": []
+				}
+			]
+		}
+	],
+	"variable": [
+		{
+			"key": "base_url",
+			"value": "http://localhost:8000/api",
+			"type": "string"
+		},
+		{
+			"key": "access_token",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "refresh_token",
+			"value": "",
+			"type": "string"
+		}
+	]
+}
+
