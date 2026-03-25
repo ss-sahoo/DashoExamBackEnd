@@ -1,0 +1,18 @@
+Subject: Student Declined Exam Invitation: {{ exam_title }}
+
+Dear {{ teacher_name }},
+
+{{ student_name }} has declined the exam invitation for: {{ exam_title }}
+
+Student: {{ student_name }}
+Exam: {{ exam_title }}
+Declined at: {{ declined_at|date:"F d, Y \a\t g:i A" }}
+
+{% if decline_reason %}
+Reason provided: {{ decline_reason }}
+{% endif %}
+
+You may want to follow up with the student or consider alternative arrangements.
+
+Best regards,
+Exam Flow System

@@ -1,0 +1,192 @@
+PHYSICS SECTION
+
+Q.1 What is Newton's second law of motion?
+A) Every action has an equal and opposite reaction
+B) F = ma (Force equals mass times acceleration)
+C) An object at rest stays at rest
+D) Energy cannot be created or destroyed
+Answer: B
+Solution: Newton's second law states that the force acting on an object is equal to the mass of the object multiplied by its acceleration.
+
+Q.2 Select all that apply: Which of the following are vector quantities?
+A) Force
+B) Mass
+C) Velocity
+D) Temperature
+E) Acceleration
+Answer: A, C, E
+Solution: Vector quantities have both magnitude and direction. Force, velocity, and acceleration are vectors. Mass and temperature are scalar quantities.
+
+Q.3 True or False: The speed of light in vacuum is approximately 3 × 10^8 m/s.
+A) True
+B) False
+Answer: True
+Solution: The speed of light in vacuum is exactly 299,792,458 m/s, which is approximately 3 × 10^8 m/s.
+
+Q.4 Calculate the kinetic energy of a 2 kg object moving at 5 m/s.
+Answer: 25 J
+Tolerance: ±0.5
+Solution: KE = (1/2)mv² = (1/2)(2)(5)² = (1/2)(2)(25) = 25 J
+
+Q.5 Fill in the blank: The SI unit of force is the _____.
+Answer: Newton
+Solution: The Newton (N) is the SI unit of force, defined as kg⋅m/s².
+
+MATHEMATICS SECTION
+
+Q.6 Find the value of $\frac{1}{2} + \frac{1}{3}$.
+A) $\frac{2}{5}$
+B) $\frac{5}{6}$
+C) $\frac{1}{6}$
+D) $\frac{3}{5}$
+Answer: B
+Solution: $\frac{1}{2} + \frac{1}{3} = \frac{3}{6} + \frac{2}{6} = \frac{5}{6}$
+
+Q.7 Solve the quadratic equation: $x^2 - 5x + 6 = 0$
+A) x = 2, 3
+B) x = -2, -3
+C) x = 1, 6
+D) x = -1, -6
+Answer: A
+Solution: Factoring: $(x-2)(x-3) = 0$, so $x = 2$ or $x = 3$
+
+Q.8 Select all correct statements about the function $f(x) = x^2$:
+A) It is an even function
+B) It is an odd function
+C) Its derivative is $2x$
+D) It has a minimum at $x = 0$
+E) It is always negative
+Answer: A, C, D
+Solution: $f(x) = x^2$ is even because $f(-x) = f(x)$. Its derivative is $f'(x) = 2x$. It has a minimum value of 0 at $x = 0$.
+
+Q.9 Evaluate: $$\int_0^1 x^2 \, dx$$
+Answer: 0.333 (or 1/3)
+Tolerance: ±0.01
+Solution: $\int_0^1 x^2 \, dx = \left[\frac{x^3}{3}\right]_0^1 = \frac{1}{3} - 0 = \frac{1}{3}$
+
+Q.10 True or False: The derivative of $\sin(x)$ is $\cos(x)$.
+A) True
+B) False
+Answer: True
+Solution: By the standard differentiation rules, $\frac{d}{dx}[\sin(x)] = \cos(x)$
+
+Q.11 Fill in the blank: The area of a circle with radius $r$ is _____.
+Answer: $\pi r^2$
+Solution: The formula for the area of a circle is $A = \pi r^2$
+
+Q.12 Explain the concept of limits in calculus. (150-200 words)
+Answer: A limit describes the value that a function approaches as the input approaches some value. Limits are essential to calculus and mathematical analysis, and are used to define continuity, derivatives, and integrals. The formal definition uses epsilon-delta notation.
+Solution: Limits form the foundation of calculus. They describe the behavior of functions as inputs approach certain values.
+
+CHEMISTRY SECTION
+
+Q.13 What is the chemical formula for water?
+A) H2O2
+B) H2O
+C) HO2
+D) OH
+Answer: B
+Solution: Water consists of two hydrogen atoms bonded to one oxygen atom, giving the formula H2O.
+
+Q.14 Select all that apply: Which of the following are noble gases?
+A) Helium
+B) Nitrogen
+C) Argon
+D) Oxygen
+E) Neon
+Answer: A, C, E
+Solution: Noble gases are in Group 18 of the periodic table: Helium (He), Neon (Ne), Argon (Ar), Krypton (Kr), Xenon (Xe), and Radon (Rn).
+
+Q.15 True or False: Acids have a pH less than 7.
+A) True
+B) False
+Answer: True
+Solution: The pH scale ranges from 0-14. Acids have pH < 7, neutral solutions have pH = 7, and bases have pH > 7.
+
+Q.16 Calculate the molar mass of NaCl (Na = 23, Cl = 35.5).
+Answer: 58.5 g/mol
+Tolerance: ±0.1
+Solution: Molar mass of NaCl = 23 + 35.5 = 58.5 g/mol
+
+Q.17 Fill in the blank: The process by which plants convert sunlight into chemical energy is called _____.
+Answer: photosynthesis
+Solution: Photosynthesis is the process by which plants use sunlight, water, and carbon dioxide to produce glucose and oxygen.
+
+Q.18 Describe the structure of an atom. (100-150 words)
+Answer: An atom consists of a nucleus containing protons and neutrons, surrounded by electrons in orbitals. Protons are positively charged, electrons are negatively charged, and neutrons have no charge. The number of protons determines the element.
+Solution: Atoms are the basic building blocks of matter, consisting of subatomic particles arranged in a specific structure.
+
+BIOLOGY SECTION
+
+Q.19 What is the powerhouse of the cell?
+A) Nucleus
+B) Ribosome
+C) Mitochondria
+D) Golgi apparatus
+Answer: C
+Solution: Mitochondria are called the powerhouse of the cell because they produce ATP through cellular respiration.
+
+Q.20 Select all that apply: Which are components of DNA?
+A) Adenine
+B) Uracil
+C) Guanine
+D) Cytosine
+E) Thymine
+Answer: A, C, D, E
+Solution: DNA contains four bases: Adenine (A), Guanine (G), Cytosine (C), and Thymine (T). Uracil is found in RNA, not DNA.
+
+Q.21 True or False: Humans have 46 chromosomes.
+A) True
+B) False
+Answer: True
+Solution: Humans have 23 pairs of chromosomes, totaling 46 chromosomes in each somatic cell.
+
+Q.22 How many bones are in the adult human body?
+Answer: 206
+Tolerance: ±0
+Solution: The adult human skeleton consists of 206 bones.
+
+Q.23 Fill in the blank: The process of cell division that produces gametes is called _____.
+Answer: meiosis
+Solution: Meiosis is a type of cell division that reduces the chromosome number by half, producing gametes (sex cells).
+
+Q.24 Explain the process of natural selection. (200 words)
+Answer: Natural selection is the process by which organisms with favorable traits are more likely to survive and reproduce. Over time, this leads to the accumulation of beneficial traits in a population. Darwin proposed this mechanism as the driving force of evolution.
+Solution: Natural selection is a key mechanism of evolution, first described by Charles Darwin.
+
+GENERAL KNOWLEDGE
+
+Q.25 What is the capital of Japan?
+A) Beijing
+B) Seoul
+C) Tokyo
+D) Bangkok
+Answer: C
+Solution: Tokyo is the capital and largest city of Japan.
+
+Q.26 Select all countries that are in Europe:
+A) France
+B) Brazil
+C) Germany
+D) Australia
+E) Italy
+Answer: A, C, E
+Solution: France, Germany, and Italy are European countries. Brazil is in South America, and Australia is in Oceania.
+
+Q.27 True or False: The Great Wall of China is visible from space with the naked eye.
+A) True
+B) False
+Answer: False
+Solution: This is a common misconception. The Great Wall is not visible from space with the naked eye due to its relatively narrow width.
+
+Q.28 In what year did World War II end?
+Answer: 1945
+Solution: World War II ended in 1945 with the surrender of Germany in May and Japan in September.
+
+Q.29 Fill in the blank: The largest ocean on Earth is the _____ Ocean.
+Answer: Pacific
+Solution: The Pacific Ocean is the largest and deepest ocean, covering about 63 million square miles.
+
+Q.30 Discuss the impact of the Industrial Revolution on society. (250 words)
+Answer: The Industrial Revolution transformed society from agrarian to industrial, leading to urbanization, technological advancement, and changes in labor practices. It began in Britain in the late 18th century and spread globally, fundamentally changing economic and social structures.
+Solution: The Industrial Revolution was a period of major industrialization and innovation that began in the late 1700s.

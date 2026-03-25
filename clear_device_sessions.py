@@ -1,0 +1,40 @@
+#!/usr/bin/env python
+"""
+Clear all device sessions for a user
+"""
+
+import os
+import django
+import sys
+
+# Setup Django
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'exam_flow_backend.settings')
+django.setup()
+
+from accounts.models import User, DeviceSession
+
+EMAIL = "mtapas.mohanty95@gmail.com"
+
+try:
+    user = User.objects.get(email=EMAIL)
+except User.DoesNotExist:
+    print(f"User with email {EMAIL} not found")
+    exit()
+
+print(f"User: {user.email}")
+print(f"Role: {user.role}")
+print("=" * 60)
+
+sessions = DeviceSession.objects.filter(user=user)
+
+print(f"\nFound {sessions.count()} device session(s)")
+
+print("\n" + "=" * 60)
+print("Clearing all device sessions...")
+print("=" * 60)
+
+deleted_count, _ = sessions.delete()
+
+print(f"\n✓ Deleted {deleted_count} device session(s)")
+print("\nUser can now login fresh without device conflicts!")
