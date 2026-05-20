@@ -150,7 +150,7 @@ class AIEvaluationService:
         else:
             self.llm_provider = 'gemini'
             self.genai = get_genai_client()
-            self.model_name = getattr(settings, 'GEMINI_MODEL', 'gemini-2.0-flash')
+            self.model_name = settings.GEMINI_MODEL
             
             # Check for File API support (added in v0.4.0)
             self.has_file_api = hasattr(self.genai, 'upload_file')

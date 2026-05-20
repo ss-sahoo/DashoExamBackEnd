@@ -40,7 +40,7 @@ class GeminiExtractionServiceV2:
     def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None):
         """Initialize the enhanced extraction service"""
         self.api_key = api_key or getattr(settings, 'GEMINI_API_KEY', None)
-        self.model = model or getattr(settings, 'GEMINI_MODEL', 'gemini-2.0-flash')
+        self.model = model or settings.GEMINI_MODEL
         
         if not self.api_key:
             raise GeminiExtractionError("Gemini API key not configured")
@@ -803,11 +803,9 @@ class GeminiExtractionServiceV2:
             # Load the image
             img = PIL.Image.open(image_path)
             
-            # Use a vision-capable model (Gemini 1.5/2.0 Flash are excellent for this)
-            # Check if current model is vision capable, if not fall back to 1.5-flash
             vision_model_name = self.model
             if 'gemini' not in vision_model_name.lower() or 'nano' in vision_model_name.lower():
-                vision_model_name = 'gemini-2.0-flash'
+                vision_model_name = settings.GEMINI_MODEL
                 
             model = self.genai.GenerativeModel(vision_model_name)
             

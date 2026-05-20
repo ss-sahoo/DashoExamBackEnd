@@ -3184,7 +3184,7 @@ def gemini_parse_question_from_text(extracted_text):
     try:
         import google.generativeai as genai
         genai.configure(api_key=gemini_key)
-        model = genai.GenerativeModel('gemini-2.0-flash')
+        model = genai.GenerativeModel(settings.GEMINI_MODEL)
     except Exception:
         return None
     

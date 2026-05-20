@@ -13,6 +13,7 @@ os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'exam_flow_backend.settings')
 django.setup()
 
 from questions.services.agent_extraction_service import AgentExtractionService
+from django.conf import settings
 import re
 
 def debug_content():
@@ -22,7 +23,7 @@ def debug_content():
     
     # Initialize the service
     service = AgentExtractionService(
-        gemini_key='AIzaSyDlR87K380gV1uTpenEHufhTOYzjZUr52k'
+        gemini_key=settings.GEMINI_API_KEY
     )
     
     # Get the raw OCR content
