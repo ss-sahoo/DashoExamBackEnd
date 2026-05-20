@@ -620,9 +620,7 @@ class EvaluationService:
         """
 
         try:
-            # Use defined model or default to 1.5 Flash for speed and cost
-            model_name = getattr(settings, 'GEMINI_MODEL', 'gemini-1.5-flash')
-            model = genai.GenerativeModel(model_name)
+            model = genai.GenerativeModel(settings.GEMINI_MODEL)
             
             response = model.generate_content(prompt)
             response_text = response.text.strip()

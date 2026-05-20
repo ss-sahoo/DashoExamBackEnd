@@ -48,7 +48,7 @@ class QuestionExtractor:
     
     def __init__(self):
         self._client = None
-        self._model_name = getattr(settings, 'GEMINI_MODEL', 'gemini-2.0-flash')
+        self._model_name = settings.GEMINI_MODEL
         self._temperature = getattr(settings, 'GEMINI_TEMPERATURE', 0.2)
         self._max_tokens = getattr(settings, 'GEMINI_MAX_TOKENS', 65536)
         

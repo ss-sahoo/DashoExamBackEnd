@@ -868,7 +868,7 @@ def generate_ai_question(request):
                 {"error": "Google AI (Gemini) is not available. Please install google-generativeai package."},
                 status=status.HTTP_503_SERVICE_UNAVAILABLE
             )
-        model = genai.GenerativeModel('gemini-2.5-flash')
+        model = genai.GenerativeModel(settings.GEMINI_MODEL)
         response = model.generate_content(
             prompt,
             generation_config={
@@ -1733,10 +1733,8 @@ Important:
         if not GOOGLE_AI_AVAILABLE or genai is None:
             return Response(_fallback_solve_payload("Google AI (Gemini) package is not available."), status=status.HTTP_200_OK)
 
-        configured_model = getattr(settings, 'GEMINI_MODEL', '') or 'gemini-2.5-flash'
+        configured_model = settings.GEMINI_MODEL
         candidate_models = [configured_model]
-        if configured_model != 'gemini-2.5-flash':
-            candidate_models.append('gemini-2.5-flash')
 
         response = None
         last_error = None

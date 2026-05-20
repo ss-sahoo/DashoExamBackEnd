@@ -79,7 +79,7 @@ class DocumentPreAnalyzer:
     def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None):
         """Initialize the document pre-analyzer"""
         self.api_key = api_key or getattr(settings, 'GEMINI_API_KEY', None)
-        self.model = model or getattr(settings, 'GEMINI_MODEL', 'gemini-2.0-flash')
+        self.model = model or settings.GEMINI_MODEL
         
         if not self.api_key:
             raise DocumentPreAnalysisError("Gemini API key not configured")
@@ -92,13 +92,6 @@ class DocumentPreAnalyzer:
                 key_preview = f"{self.api_key[:10]}...{self.api_key[-4:]}" if len(self.api_key) > 14 else "***"
                 logger.info(f"🔑 Initializing Gemini with model: {self.model}, API key: {key_preview}")
                 # Verify it matches the expected key
-                expected_key = "AIzaSyBRBA_VMMB1B0zzYuL4QJWUmRmTE90TsmI"
-                if self.api_key == expected_key:
-                    logger.info(" API Key verified: Matches expected key (AIzaSyBRBA...TsmI)")
-                else:
-                    logger.warning(f"⚠️ API Key does NOT match expected key!")
-                    logger.warning(f"   Expected: {expected_key[:10]}...{expected_key[-4:]}")
-                    logger.warning(f"   Using:    {self.api_key[:10]}...{self.api_key[-4:]}")
             genai.configure(api_key=self.api_key)
             self.client = genai.GenerativeModel(self.model)
             self.genai = genai

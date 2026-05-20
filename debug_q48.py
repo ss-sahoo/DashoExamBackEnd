@@ -18,25 +18,26 @@ os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'exam_flow_backend.settings')
 django.setup()
 
 from questions.services.agent_extraction_service import AgentExtractionService
+from django.conf import settings
 import google.generativeai as genai
 
 def debug_q48():
     """Debug why question 48 is missing"""
-    
+
     print("Debugging question 48 extraction...")
-    
+
     # Initialize the service
     service = AgentExtractionService(
-        gemini_key='AIzaSyDlR87K380gV1uTpenEHufhTOYzjZUr52k'
+        gemini_key=settings.GEMINI_API_KEY
     )
-    
+
     # Get the OCR content
     pdf_path = '/Users/shradha/Exam_app/Exam_Frontendnextjs/input.pdf'
     text_content = service._fallback_local_parsing(pdf_path)
-    
+
     # Call AI for chemistry
-    genai.configure(api_key='AIzaSyDlR87K380gV1uTpenEHufhTOYzjZUr52k')
-    model = genai.GenerativeModel('gemini-2.0-flash')
+    genai.configure(api_key=settings.GEMINI_API_KEY)
+    model = genai.GenerativeModel(settings.GEMINI_MODEL)
     
     subject = "Chemistry"
     prompt = f"""

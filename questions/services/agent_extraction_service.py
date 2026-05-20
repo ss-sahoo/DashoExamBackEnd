@@ -6,6 +6,7 @@ import time
 import re
 from typing import List, Dict, Any, Optional
 import google.generativeai as genai
+from django.conf import settings
 from PIL import Image
 
 # Setup specialized logging
@@ -66,9 +67,7 @@ class MathpixOCR:
 class AgentExtractionService:
     def __init__(self, gemini_key: str, mathpix_id: str = None, mathpix_key: str = None):
         genai.configure(api_key=gemini_key)
-        # Using 2.0 Flash with a large output limit
-        # Using 2.0 Flash as requested/previously working
-        self.model = genai.GenerativeModel("gemini-2.0-flash")
+        self.model = genai.GenerativeModel(settings.GEMINI_MODEL)
         self.mathpix = MathpixOCR(mathpix_id, mathpix_key) if mathpix_id else None
         self.gemini_key = gemini_key
 

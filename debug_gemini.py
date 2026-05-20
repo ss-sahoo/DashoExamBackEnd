@@ -12,7 +12,7 @@ def test_gemini():
     print(f"API Key start: {api_key[:10]}...")
     
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel("gemini-2.0-flash")
+    model = genai.GenerativeModel(settings.GEMINI_MODEL)
     
     subject = "Mathematics"
     text_content = "Question 1: What is 2+2? A) 3 B) 4 C) 5 D) 6. Answer: B. Solution: 2+2=4."
