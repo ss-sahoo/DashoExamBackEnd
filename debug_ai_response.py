@@ -17,6 +17,7 @@ os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'exam_flow_backend.settings')
 django.setup()
 
 from questions.services.agent_extraction_service import AgentExtractionService
+from django.conf import settings
 import logging
 import re
 
@@ -31,7 +32,7 @@ def debug_ai_response():
     
     # Initialize the service
     service = AgentExtractionService(
-        gemini_key='AIzaSyDlR87K380gV1uTpenEHufhTOYzjZUr52k'
+        gemini_key=settings.GEMINI_API_KEY
     )
     
     # Get the OCR content
@@ -126,8 +127,9 @@ def debug_ai_response():
         """
     
     # Call the AI directly
-    genai.configure(api_key='AIzaSyDlR87K380gV1uTpenEHufhTOYzjZUr52k')
-    model = genai.GenerativeModel('gemini-2.0-flash')
+    from django.conf import settings
+    genai.configure(api_key=settings.GEMINI_API_KEY)
+    model = genai.GenerativeModel(settings.GEMINI_MODEL)
     
     try:
         response = model.generate_content(prompt)

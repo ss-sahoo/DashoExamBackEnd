@@ -375,7 +375,7 @@ Be encouraging, clear, and educational in your responses."""
                     elif role == 'assistant':
                         chat_text += f"Assistant: {content}\n\n"
                 
-                model = genai.GenerativeModel('gemini-2.5-flash')
+                model = genai.GenerativeModel(settings.GEMINI_MODEL)
                 response = model.generate_content(chat_text)
                 answer = response.text
                 

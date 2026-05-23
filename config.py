@@ -43,7 +43,7 @@ OPENAI_API_KEY = get_config('OPENAI_API_KEY', default='')
 # Prefer GOOGLE_GEMINI_API_KEY and keep GEMINI_API_KEY as backward-compatible fallback.
 GOOGLE_GEMINI_API_KEY = get_config('GOOGLE_GEMINI_API_KEY', default='')
 GEMINI_API_KEY = GOOGLE_GEMINI_API_KEY or get_config('GEMINI_API_KEY', default='')
-GEMINI_MODEL = get_config('GEMINI_MODEL', default='gemini-1.5-flash')
+GEMINI_MODEL = get_config('GEMINI_MODEL', default='gemini-2.5-flash')
 GEMINI_TEMPERATURE = get_config('GEMINI_TEMPERATURE', default='0.7', cast=float)
 GEMINI_TOP_P = get_config('GEMINI_TOP_P', default='0.95', cast=float)
 GEMINI_MAX_TOKENS = get_config('GEMINI_MAX_TOKENS', default='8192', cast=int)

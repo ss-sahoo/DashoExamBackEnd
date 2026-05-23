@@ -82,7 +82,7 @@ class StructureAnalyzer:
     
     def __init__(self):
         self._client = None
-        self._model_name = getattr(settings, 'GEMINI_MODEL', 'gemini-2.0-flash')
+        self._model_name = settings.GEMINI_MODEL
     
     @property
     def client(self):
